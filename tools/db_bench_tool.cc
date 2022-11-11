@@ -3180,10 +3180,10 @@ class Benchmark {
 #ifndef ROCKSDB_LITE
       if (use_blob_db_) {
         // Stacked BlobDB
-        blob_db::DestroyBlobDB(FLAGS_db, options, blob_db::BlobDBOptions());
+	blob_db::DestroyBlobDB(FLAGS_db, options, blob_db::BlobDBOptions());
       }
 #endif  // !ROCKSDB_LITE
-      DestroyDB(FLAGS_db, options);
+      // DestroyDB(FLAGS_db, options);
       if (!FLAGS_wal_dir.empty()) {
         FLAGS_env->DeleteDir(FLAGS_wal_dir);
       }
@@ -3679,16 +3679,18 @@ class Benchmark {
           method = nullptr;
         } else {
           if (db_.db != nullptr) {
+            db_.db->Close();
             db_.DeleteDBs();
-            DestroyDB(FLAGS_db, open_options_);
+            //DestroyDB(FLAGS_db, open_options_);
           }
           Options options = open_options_;
           for (size_t i = 0; i < multi_dbs_.size(); i++) {
+            multi_dbs_[i].db->Close();
             delete multi_dbs_[i].db;
             if (!open_options_.wal_dir.empty()) {
               options.wal_dir = GetPathForMultiple(open_options_.wal_dir, i);
             }
-            DestroyDB(GetPathForMultiple(FLAGS_db, i), options);
+            // DestroyDB(GetPathForMultiple(FLAGS_db, i), options);
           }
           multi_dbs_.clear();
         }
