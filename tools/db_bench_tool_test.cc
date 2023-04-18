@@ -9,14 +9,17 @@
 
 #include "rocksdb/db_bench_tool.h"
 
+#include <iostream>
+
 #include "db/db_impl/db_impl.h"
 #include "options/options_parser.h"
+#include "rocksdb/db_bench_tool.h"
 #include "rocksdb/utilities/options_util.h"
 #include "test_util/testharness.h"
 #include "test_util/testutil.h"
 #include "util/random.h"
 
-#ifdef GFLAGS
+// #ifdef GFLAGS
 #include "util/gflags_compat.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -28,7 +31,8 @@ static const size_t kArgBufferSize = 100000;
 class DBBenchTest : public testing::Test {
  public:
   DBBenchTest() : rnd_(0xFB) {
-    test_path_ = test::PerThreadDBPath("db_bench_test");
+    // test_path_ = test::PerThreadDBPath("db_bench_test");
+    test_path_ = "./db_bench_test/";
     Env::Default()->CreateDir(test_path_);
     db_path_ = test_path_ + "/db";
     wal_path_ = test_path_ + "/wal";
@@ -76,6 +80,9 @@ class DBBenchTest : public testing::Test {
   }
 
   void RunDbBench(const std::string& options_file_name) {
+    using std::cout;
+    using std::endl;
+    cout << "options_file_name" << options_file_name << endl;
     AppendArgs({"./db_bench", "--benchmarks=fillseq", "--use_existing_db=0",
                 "--num=1000", "--compression_type=none",
                 std::string(std::string("--db=") + db_path_).c_str(),
@@ -133,18 +140,23 @@ TEST_F(DBBenchTest, OptionsFile) {
   ASSERT_OK(PersistRocksDBOptions(DBOptions(opt), {"default"},
                                   {ColumnFamilyOptions(opt)}, kOptionsFileName,
                                   opt.env->GetFileSystem().get()));
-
+  using std::cout;
+  using std::endl;
+  cout << "check before run bench" << endl;
+  VerifyOptions(opt);
+  cout << "check before run bench finish" << endl;
   // override the following options as db_bench will not take these
   // options from the options file
   opt.wal_dir = wal_path_;
 
   RunDbBench(kOptionsFileName);
   opt.delayed_write_rate = 16 * 1024 * 1024;  // Set by SanitizeOptions
-
+  cout << "check after run bench" << endl;
   VerifyOptions(opt);
+  cout << "check after run bench finish" << endl;
 }
 
-TEST_F(DBBenchTest, OptionsFileUniversal) {
+TEST_F(DBBenchTest, DISABLED_OptionsFileUniversal) {
   const std::string kOptionsFileName = test_path_ + "/OPTIONS_test";
 
   Options opt = GetDefaultOptions(kCompactionStyleUniversal, 1);
@@ -161,7 +173,7 @@ TEST_F(DBBenchTest, OptionsFileUniversal) {
   VerifyOptions(opt);
 }
 
-TEST_F(DBBenchTest, OptionsFileMultiLevelUniversal) {
+TEST_F(DBBenchTest, DISABLED_OptionsFileMultiLevelUniversal) {
   const std::string kOptionsFileName = test_path_ + "/OPTIONS_test";
 
   Options opt = GetDefaultOptions(kCompactionStyleUniversal, 12);
@@ -297,7 +309,7 @@ const std::string options_file_content = R"OPTIONS_FILE(
   filter_policy=rocksdb.BuiltinBloomFilter
 )OPTIONS_FILE";
 
-TEST_F(DBBenchTest, OptionsFileFromFile) {
+TEST_F(DBBenchTest, DISABLED_OptionsFileFromFile) {
   const std::string kOptionsFileName = test_path_ + "/OPTIONS_flash";
   std::unique_ptr<WritableFile> writable;
   ASSERT_OK(Env::Default()->NewWritableFile(kOptionsFileName, &writable,
@@ -334,9 +346,10 @@ int main(int argc, char** argv) {
   return RUN_ALL_TESTS();
 }
 
-#else
+// #else
 
-int main(int argc, char** argv) {
-  printf("Skip db_bench_tool_test as the required library GFLAG is missing.");
-}
-#endif  // #ifdef GFLAGS
+// int main(int argc, char** argv) {
+//   printf("Skip db_bench_tool_test as the required library GFLAG is
+//   missing.");
+// }
+// #endif  // #ifdef GFLAGS

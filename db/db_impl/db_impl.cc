@@ -12,10 +12,10 @@
 #ifdef OS_SOLARIS
 #include <alloca.h>
 #endif
-
 #include <algorithm>
 #include <cinttypes>
 #include <cstdio>
+#include <iostream>
 #include <map>
 #include <set>
 #include <sstream>
@@ -777,7 +777,6 @@ void DBImpl::PrintStatistics() {
 }
 
 Status DBImpl::StartPeriodicTaskScheduler() {
-
 #ifndef NDEBUG
   // It only used by test to disable scheduler
   bool disable_scheduler = false;
@@ -3840,7 +3839,6 @@ Status DBImpl::GetPropertiesOfTablesInRange(ColumnFamilyHandle* column_family,
   return s;
 }
 
-
 const std::string& DBImpl::GetName() const { return dbname_; }
 
 Env* DBImpl::GetEnv() const { return env_; }
@@ -3858,7 +3856,6 @@ SystemClock* DBImpl::GetSystemClock() const {
   return immutable_db_options_.clock;
 }
 
-
 Status DBImpl::StartIOTrace(const TraceOptions& trace_options,
                             std::unique_ptr<TraceWriter>&& trace_writer) {
   assert(trace_writer != nullptr);
@@ -3870,7 +3867,6 @@ Status DBImpl::EndIOTrace() {
   io_tracer_->EndIOTrace();
   return Status::OK();
 }
-
 
 Options DBImpl::GetOptions(ColumnFamilyHandle* column_family) const {
   InstrumentedMutexLock l(&mutex_);
@@ -4463,7 +4459,6 @@ void DBImpl::GetAllColumnFamilyMetaData(
     }
   }
 }
-
 
 Status DBImpl::CheckConsistency() {
   mutex_.AssertHeld();
@@ -5809,6 +5804,9 @@ void DBImpl::NotifyOnExternalFileIngested(
 
 Status DBImpl::StartTrace(const TraceOptions& trace_options,
                           std::unique_ptr<TraceWriter>&& trace_writer) {
+  using std::cout;
+  using std::endl;
+  cout << "Info: call DBImpl StartTrace" << endl;
   InstrumentedMutexLock lock(&trace_mutex_);
   tracer_.reset(new Tracer(immutable_db_options_.clock, trace_options,
                            std::move(trace_writer)));

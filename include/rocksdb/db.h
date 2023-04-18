@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include <iostream>
 #include <map>
 #include <memory>
 #include <string>
@@ -1775,7 +1776,6 @@ class DB {
 
   virtual Status VerifyChecksum() { return VerifyChecksum(ReadOptions()); }
 
-
   // Returns the unique ID which is read from IDENTITY file during the opening
   // of database by setting in the identity variable
   // Returns Status::OK if identity could be set properly
@@ -1790,7 +1790,6 @@ class DB {
 
   // Returns default column family handle
   virtual ColumnFamilyHandle* DefaultColumnFamily() const = 0;
-
 
   virtual Status GetPropertiesOfAllTables(ColumnFamilyHandle* column_family,
                                           TablePropertiesCollection* props) = 0;
@@ -1815,6 +1814,9 @@ class DB {
   // Trace DB operations. Use EndTrace() to stop tracing.
   virtual Status StartTrace(const TraceOptions& /*options*/,
                             std::unique_ptr<TraceWriter>&& /*trace_writer*/) {
+    using std::cout;
+    using std::endl;
+    cout << "ERROR: call Default virtual StartTrace" << endl;
     return Status::NotSupported("StartTrace() is not implemented.");
   }
 
@@ -1856,7 +1858,6 @@ class DB {
       std::unique_ptr<Replayer>* /*replayer*/) {
     return Status::NotSupported("NewDefaultReplayer() is not implemented.");
   }
-
 
   // Needed for StackableDB
   virtual DB* GetRootDB() { return this; }
@@ -1956,6 +1957,5 @@ Status RepairDB(const std::string& dbname, const DBOptions& db_options,
 // @param options These options will be used for the database and for ALL column
 //                families encountered during the repair
 Status RepairDB(const std::string& dbname, const Options& options);
-
 
 }  // namespace ROCKSDB_NAMESPACE

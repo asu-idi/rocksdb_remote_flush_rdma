@@ -66,7 +66,7 @@ endif(CCACHE_FOUND)
 
 option(WITH_JEMALLOC "build with JeMalloc" OFF)
 option(WITH_LIBURING "build with liburing" ON)
-option(WITH_SNAPPY "build with SNAPPY" OFF)
+option(WITH_SNAPPY "build with SNAPPY" ON)
 option(WITH_LZ4 "build with lz4" OFF)
 option(WITH_ZLIB "build with zlib" OFF)
 option(WITH_ZSTD "build with zstd" OFF)
@@ -867,6 +867,8 @@ set(SOURCES
         tools/ldb_tool.cc
         tools/sst_dump_tool.cc
         tools/trace_analyzer_tool.cc
+        # tools/db_bench_tool.cc
+        # tools/db_bench.cc
         trace_replay/block_cache_tracer.cc
         trace_replay/io_tracer.cc
         trace_replay/trace_record_handler.cc
@@ -1437,6 +1439,7 @@ if(WITH_TESTS)
         tools/reduce_levels_test.cc
         tools/sst_dump_test.cc
         tools/trace_analyzer_test.cc
+        tools/db_bench_tool_test.cc
         util/autovector_test.cc
         util/bloom_test.cc
         util/coding_test.cc
@@ -1516,7 +1519,12 @@ if(WITH_TESTS)
 
   foreach(sourcefile ${TESTS})
       get_filename_component(exename ${sourcefile} NAME_WE)
-      add_executable(${exename}${ARTIFACT_SUFFIX} ${sourcefile})
+      if(${exename} STREQUAL "db_bench_tool_test")
+        message(STATUS "add Test: db Bench tool test")
+        add_executable(${exename}${ARTIFACT_SUFFIX} ${sourcefile} tools/simulated_hybrid_file_system.cc tools/db_bench_tool.cc)
+      else()
+        add_executable(${exename}${ARTIFACT_SUFFIX} ${sourcefile})
+      endif()
       set_target_properties(${exename}${ARTIFACT_SUFFIX}
         PROPERTIES EXCLUDE_FROM_DEFAULT_BUILD_RELEASE 1
         EXCLUDE_FROM_DEFAULT_BUILD_MINRELEASE 1
@@ -1551,6 +1559,7 @@ if(WITH_TESTS)
 endif()
 
 if(WITH_BENCHMARK_TOOLS)
+  message(STATUS "built benchmark tools: db_bench${ARTIFACT_SUFFIX}")
   add_executable(db_bench${ARTIFACT_SUFFIX}
     tools/simulated_hybrid_file_system.cc
     tools/db_bench.cc
@@ -1592,6 +1601,7 @@ endif()
 
 option(WITH_TRACE_TOOLS "build with trace tools" ON)
 if(WITH_TRACE_TOOLS)
+  message(STATUS "built with trace tools")
   add_executable(block_cache_trace_analyzer${ARTIFACT_SUFFIX}
     tools/block_cache_analyzer/block_cache_trace_analyzer_tool.cc)
   target_link_libraries(block_cache_trace_analyzer${ARTIFACT_SUFFIX}
