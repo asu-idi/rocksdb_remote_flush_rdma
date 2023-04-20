@@ -95,3 +95,12 @@ fuzz/crash-*
 
 cmake-build-*
 third-party/folly/
+
+
+dev/db/*
+dev/trace
+dev/trace[0-9]
+dev/*.log
+dev/cache_result
+dev/result/
+dev/cache_trace_result/

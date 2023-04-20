@@ -590,6 +590,7 @@ endif()
 
 include_directories(${PROJECT_SOURCE_DIR})
 include_directories(${PROJECT_SOURCE_DIR}/include)
+include_directories(${PROJECT_SOURCE_DIR}/dev)
 
 if(USE_COROUTINES)
   if(USE_FOLLY OR USE_FOLLY_LITE)
@@ -863,6 +864,7 @@ set(SOURCES
         tools/block_cache_analyzer/block_cache_trace_analyzer.cc
         tools/dump/db_dump_tool.cc
         tools/io_tracer_parser_tool.cc
+        # tools/memtable_tracer_parser_tool.cc
         tools/ldb_cmd.cc
         tools/ldb_tool.cc
         tools/sst_dump_tool.cc
@@ -871,6 +873,7 @@ set(SOURCES
         # tools/db_bench.cc
         trace_replay/block_cache_tracer.cc
         trace_replay/io_tracer.cc
+        # trace_replay/memtable_tracer.cc
         trace_replay/trace_record_handler.cc
         trace_replay/trace_record_result.cc
         trace_replay/trace_record.cc
@@ -1557,6 +1560,28 @@ if(WITH_TESTS)
     add_dependencies(check c_test)
   endif()
 endif()
+set(WITH_DEV true)
+if(WITH_DEV)
+  set(DEVELOP 
+  dev/trace_query_test.cpp
+  dev/trace_io_test.cpp
+  dev/trace_block_cache_test.cpp
+  # dev/trace_memtable_test.cpp
+  dev/memtable_refactor_test.cpp
+  )
+  foreach(sourcefile ${DEVELOP})
+    message(STATUS "CHECK DEV: ${sourcefile}")
+    get_filename_component(exename ${sourcefile} NAME_WE)
+    add_executable(${exename}${ARTIFACT_SUFFIX} ${sourcefile})
+    set_target_properties(${exename}${ARTIFACT_SUFFIX}
+      PROPERTIES EXCLUDE_FROM_DEFAULT_BUILD_RELEASE 1
+      EXCLUDE_FROM_DEFAULT_BUILD_MINRELEASE 1
+      EXCLUDE_FROM_DEFAULT_BUILD_RELWITHDEBINFO 1
+      OUTPUT_NAME ${exename}${ARTIFACT_SUFFIX}
+    )
+    target_link_libraries(${exename}${ARTIFACT_SUFFIX} testutillib${ARTIFACT_SUFFIX} testharness gtest ${THIRDPARTY_LIBS} ${ROCKSDB_LIB})
+  endforeach(sourcefile ${DEVELOP})
+endif()
 
 if(WITH_BENCHMARK_TOOLS)
   message(STATUS "built benchmark tools: db_bench${ARTIFACT_SUFFIX}")
@@ -1611,7 +1636,14 @@ if(WITH_TRACE_TOOLS)
     tools/trace_analyzer.cc)
   target_link_libraries(trace_analyzer${ARTIFACT_SUFFIX}
     ${ROCKSDB_LIB} ${GFLAGS_LIB} ${FOLLY_LIBS})
+  
+  add_executable(io_tracer_parser${ARTIFACT_SUFFIX} tools/io_tracer_parser.cc)
+  target_link_libraries(io_tracer_parser${ARTIFACT_SUFFIX}
+  ${ROCKSDB_LIB} ${GFLAGS_LIB} ${FOLLY_LIBS})
 
+  # add_executable(memtable_tracer_parser${ARTIFACT_SUFFIX} tools/memtable_tracer_parser.cc)
+  # target_link_libraries(memtable_tracer_parser${ARTIFACT_SUFFIX}
+  # ${ROCKSDB_LIB} ${GFLAGS_LIB} ${FOLLY_LIBS})
 endif()
 
 if(WITH_CORE_TOOLS OR WITH_TOOLS)
