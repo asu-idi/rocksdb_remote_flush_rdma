@@ -20,6 +20,7 @@
 #include "rocksdb/system_clock.h"
 #include "test_util/sync_point.h"
 #include "util/crc32c.h"
+#include "util/logger.hpp"
 #include "util/random.h"
 #include "util/rate_limiter.h"
 
@@ -331,6 +332,7 @@ IOStatus WritableFileWriter::Flush(Env::IOPriority op_rate_limiter_priority) {
   TEST_KILL_RANDOM_WITH_WEIGHT("WritableFileWriter::Flush:0", REDUCE_ODDS2);
 
   if (buf_.CurrentSize() > 0) {
+    LOG("check current buffer: size= ", buf_.CurrentSize());
     if (use_direct_io()) {
       if (pending_sync_) {
         if (perform_data_verification_ && buffered_data_with_checksum_) {

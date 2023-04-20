@@ -52,10 +52,11 @@ void LocalLogger::output(const char *filename, const int &line,
                          const char *function_name, Args &&...args) {
   std::stringstream stream;
   auto time =
-      std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-  stream << "[" << std::localtime(&time)->tm_hour << ":"
-         << std::localtime(&time)->tm_min << ":"
-         << std::localtime(&time)->tm_sec << "] ";
+      std::chrono::steady_clock::time_point(std::chrono::steady_clock::now());
+  // stream << "[" << std::localtime(&time)->tm_hour << ":"
+  //        << std::localtime(&time)->tm_min << ":"
+  //        << std::localtime(&time)->tm_sec << "] ";
+  stream << "[" << time.time_since_epoch().count() << ']';
   LOG_PRINT_HEADER(stream, line, filename, function_name);
   LOG_INFO(stream, std::forward<Args>(args)...);
   char buffer[10001]{};

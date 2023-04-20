@@ -8,6 +8,7 @@
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 #include <cinttypes>
 #include <deque>
+#include <thread>
 
 #include "db/builder.h"
 #include "db/db_impl/db_impl.h"
@@ -22,6 +23,7 @@
 #include "test_util/sync_point.h"
 #include "util/cast_util.h"
 #include "util/concurrent_task_limiter_impl.h"
+#include "util/logger.hpp"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -204,7 +206,7 @@ Status DBImpl::FlushMemTableToOutputFile(
   // returned for snapshot read using this snapshot.
   // To address this, we make sure NotifyOnFlushBegin() executes after memtable
   // picking so that no new snapshot can be taken between the two functions.
-
+  LOG("Construct flush job");
   FlushJob flush_job(
       dbname_, cfd, immutable_db_options_, mutable_cf_options, max_memtable_id,
       file_options_for_compaction_, versions_.get(), &mutex_, &shutting_down_,
@@ -252,7 +254,12 @@ Status DBImpl::FlushMemTableToOutputFile(
   }
   TEST_SYNC_POINT_CALLBACK(
       "DBImpl::FlushMemTableToOutputFile:AfterPickMemtables", &flush_job);
-
+  LOG("flush job pick all Memtable finish");
+  for (auto* memtable : flush_job.GetMemTables()) {
+    LOG("FlushJob pick memtable:", memtable->GetID(),
+        " size=", memtable->get_data_size(),
+        " file-number=", memtable->GetFileNumber());
+  }
   // may temporarily unlock and lock the mutex.
   NotifyOnFlushBegin(cfd, &file_meta, mutable_cf_options, job_context->job_id,
                      flush_reason);
@@ -367,6 +374,7 @@ Status DBImpl::FlushMemTablesToOutputFiles(
     const autovector<BGFlushArg>& bg_flush_args, bool* made_progress,
     JobContext* job_context, LogBuffer* log_buffer, Env::Priority thread_pri) {
   if (immutable_db_options_.atomic_flush) {
+    LOG("[CHECK-failed] should not be atomic flush");
     return AtomicFlushMemTablesToOutputFiles(
         bg_flush_args, made_progress, job_context, log_buffer, thread_pri);
   }
@@ -848,8 +856,8 @@ void DBImpl::NotifyOnFlushBegin(ColumnFamilyData* cfd, FileMetaData* file_meta,
     }
   }
   mutex_.Lock();
-// no need to signal bg_cv_ as it will be signaled at the end of the
-// flush process.
+  // no need to signal bg_cv_ as it will be signaled at the end of the
+  // flush process.
 }
 
 void DBImpl::NotifyOnFlushCompleted(
@@ -1794,6 +1802,7 @@ Status DBImpl::Flush(const FlushOptions& flush_options,
                  cfh->GetName().c_str());
   Status s;
   if (immutable_db_options_.atomic_flush) {
+    LOG("[CHECK-failed] should not use atomic flush");
     s = AtomicFlushMemTables(flush_options, FlushReason::kManualFlush,
                              {cfh->cfd()});
   } else {
@@ -2084,6 +2093,7 @@ Status DBImpl::FlushMemTable(ColumnFamilyData* cfd,
   }
   Status s;
   if (!flush_options.allow_write_stall) {
+    LOG("not allow write stall, might wait")
     bool flush_needed = true;
     s = WaitUntilFlushWouldNotStallWrites(cfd, &flush_needed);
     TEST_SYNC_POINT("DBImpl::FlushMemTable:StallWaitDone");
@@ -2098,7 +2108,6 @@ Status DBImpl::FlushMemTable(ColumnFamilyData* cfd,
   {
     WriteContext context;
     InstrumentedMutexLock guard_lock(&mutex_);
-
     WriteThread::Writer w;
     WriteThread::Writer nonmem_w;
     if (needs_to_join_write_thread) {
@@ -2118,6 +2127,7 @@ Status DBImpl::FlushMemTable(ColumnFamilyData* cfd,
       // retry resume, it is possible that in some CFs,
       // cfd->imm()->NumNotFlushed() = 0. In this case, so no flush request will
       // be created and scheduled, status::OK() will be returned.
+      LOG("switch memtable to imm");
       s = SwitchMemtable(cfd, &context);
     }
     const uint64_t flush_memtable_id = std::numeric_limits<uint64_t>::max();
@@ -2180,9 +2190,11 @@ Status DBImpl::FlushMemTable(ColumnFamilyData* cfd,
           loop_cfd->Ref();
         }
       }
+      LOG("schedule pending flush");
       for (const auto& req : flush_reqs) {
         SchedulePendingFlush(req);
       }
+      LOG("MaybeScheduleFlushOrCompaction");
       MaybeScheduleFlushOrCompaction();
     }
 
@@ -2204,10 +2216,12 @@ Status DBImpl::FlushMemTable(ColumnFamilyData* cfd,
       cfds.push_back(flush_reqs[i].cfd_to_max_mem_id_to_persist.begin()->first);
       flush_memtable_ids.push_back(&(memtable_ids_to_wait[i]));
     }
+    LOG("wait for flush memtable success");
     s = WaitForFlushMemTables(
         cfds, flush_memtable_ids,
         (flush_reason == FlushReason::kErrorRecovery ||
          flush_reason == FlushReason::kErrorRecoveryRetryFlush));
+    LOG("flush memtable success, try delete cf data");
     InstrumentedMutexLock lock_guard(&mutex_);
     for (auto* tmp_cfd : cfds) {
       tmp_cfd->UnrefAndTryDelete();
@@ -2915,16 +2929,15 @@ Status DBImpl::BackgroundFlush(bool* made_progress, JobContext* job_context,
     auto bg_job_limits = GetBGJobLimits();
     for (const auto& arg : bg_flush_args) {
       ColumnFamilyData* cfd = arg.cfd_;
-      ROCKS_LOG_BUFFER(
-          log_buffer,
-          "Calling FlushMemTableToOutputFile with column "
-          "family [%s], flush slots available %d, compaction slots available "
-          "%d, "
-          "flush slots scheduled %d, compaction slots scheduled %d",
-          cfd->GetName().c_str(), bg_job_limits.max_flushes,
-          bg_job_limits.max_compactions, bg_flush_scheduled_,
+      LOG("Calling FlushMemTableToOutputFile with column "
+          "family [",
+          cfd->GetName().c_str(), "], flush slots available ",
+          bg_job_limits.max_flushes, ", compaction slots available ",
+          bg_job_limits.max_compactions, ", flush slots scheduled ",
+          bg_flush_scheduled_, ", compaction slots scheduled",
           bg_compaction_scheduled_);
     }
+    LOG("FlushMemTablesToOutputFiles");
     status = FlushMemTablesToOutputFiles(bg_flush_args, made_progress,
                                          job_context, log_buffer, thread_pri);
     TEST_SYNC_POINT("DBImpl::BackgroundFlush:BeforeFlush");
@@ -2968,7 +2981,7 @@ void DBImpl::BackgroundCallFlush(Env::Priority thread_pri) {
         pending_outputs_inserted_elem(new std::list<uint64_t>::iterator(
             CaptureCurrentFileNumberInPendingOutputs()));
     FlushReason reason;
-
+    LOG("background flush thread_id=", std::this_thread::get_id());
     Status s = BackgroundFlush(&made_progress, &job_context, &log_buffer,
                                &reason, thread_pri);
     if (!s.ok() && !s.IsShutdownInProgress() && !s.IsColumnFamilyDropped() &&

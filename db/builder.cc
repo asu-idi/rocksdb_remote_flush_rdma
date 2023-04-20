@@ -39,6 +39,7 @@
 #include "table/internal_iterator.h"
 #include "table/unique_id_impl.h"
 #include "test_util/sync_point.h"
+#include "util/logger.hpp"
 #include "util/stop_watch.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -104,6 +105,7 @@ Status BuildTable(
 
   std::string fname = TableFileName(ioptions.cf_paths, meta->fd.GetNumber(),
                                     meta->fd.GetPathId());
+  LOG("generate sst filename=", fname);
   std::vector<std::string> blob_file_paths;
   std::string file_checksum = kUnknownFileChecksum;
   std::string file_checksum_func_name = kUnknownFileChecksumFuncName;
@@ -218,7 +220,9 @@ Status BuildTable(
         break;
       }
       builder->Add(key, value);
-
+      LOG("[Trace] filesize=", " kv=", key.size(), ' ',
+          std::string{key.data(), key.size()}, ' ', value.size(), " ",
+          std::string{value.data()});
       s = meta->UpdateBoundaries(key, value, ikey.sequence, ikey.type);
       if (!s.ok()) {
         break;
@@ -245,6 +249,12 @@ Status BuildTable(
         auto tombstone = range_del_it->Tombstone();
         auto kv = tombstone.Serialize();
         builder->Add(kv.first.Encode(), kv.second);
+        LOG("[Trace] filesize=", builder->FileSize(),
+            " kv=", kv.first.Encode().data(), ' ', kv.second.data());
+        file_writer->Flush();
+        builder->Add(kv.first.Encode(), kv.second);
+        LOG("[Trace] filesize=", builder->FileSize(),
+            " kv=", kv.first.Encode().data(), ' ', kv.second.data());
         InternalKey tombstone_end = tombstone.SerializeEndKey();
         meta->UpdateBoundariesForRange(kv.first, tombstone_end, tombstone.seq_,
                                        tboptions.internal_comparator);
@@ -282,7 +292,9 @@ Status BuildTable(
           ioptions.compaction_style == CompactionStyle::kCompactionStyleFIFO
               ? meta->file_creation_time
               : meta->oldest_ancester_time);
+      LOG("[Trace] filesize=", builder->FileSize());
       s = builder->Finish();
+      LOG("[Trace] filesize=", builder->FileSize());
     }
     if (io_status->ok()) {
       *io_status = builder->io_status();
@@ -290,6 +302,8 @@ Status BuildTable(
 
     if (s.ok() && !empty) {
       uint64_t file_size = builder->FileSize();
+      LOG("[Trace] filesize=", builder->FileSize());
+
       meta->fd.file_size = file_size;
       meta->marked_for_compaction = builder->NeedCompact();
       assert(meta->fd.GetFileSize() > 0);

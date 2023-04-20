@@ -10,6 +10,7 @@
 #include "memtable/inlineskiplist.h"
 #include "rocksdb/memtablerep.h"
 #include "rocksdb/utilities/options_type.h"
+#include "util/logger.hpp"
 #include "util/string_util.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -362,7 +363,10 @@ std::string SkipListFactory::GetId() const {
 MemTableRep* SkipListFactory::CreateMemTableRep(
     const MemTableRep::KeyComparator& compare, Allocator* allocator,
     const SliceTransform* transform, Logger* /*logger*/) {
-  return new SkipListRep(compare, allocator, transform, lookahead_);
+  auto* ret = new SkipListRep(compare, allocator, transform, lookahead_);
+  LOG("CreateMemtable rep: skiplist approximate memsize= ",
+      ret->ApproximateMemoryUsage(), "ptr =", static_cast<void*>(ret));
+  return ret;
 }
 
 }  // namespace ROCKSDB_NAMESPACE

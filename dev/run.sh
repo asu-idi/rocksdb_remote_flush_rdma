@@ -9,12 +9,12 @@ make all -j 14
 cd $PROJECT_ROOT/dev
 cp ../build/trace_analyzer ./
 cp ../build/trace_query_test ./
-cp ../build/memtable_tracer_parser ./
-cp ../build/trace_memtable_test ./
+# cp ../build/memtable_tracer_parser ./
+# cp ../build/trace_memtable_test ./
 cp ../build/trace_io_test ./ 
 cp ../build/io_tracer_parser ./
-cp ../build/shared_memory_* ./
-# cp ../build/memtable_refactor_test ./
+# cp ../build/shared_memory_* ./
+cp ../build/memtable_refactor_test ./
 # cp ../build/memtable_comp_test ./
 
 rm -rf memtable_result/

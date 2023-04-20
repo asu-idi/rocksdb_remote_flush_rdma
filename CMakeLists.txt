@@ -1281,7 +1281,7 @@ if(NOT WIN32 OR ROCKSDB_INSTALL_ON_WINDOWS)
 endif()
 
 option(WITH_ALL_TESTS "Build all test, rather than a small subset" ON)
-
+set(WITH_TESTS false)
 if(WITH_TESTS OR WITH_BENCHMARK_TOOLS)
   add_subdirectory(third-party/gtest-1.8.1/fused-src/gtest)
   add_library(testharness STATIC
@@ -1579,10 +1579,11 @@ if(WITH_DEV)
       EXCLUDE_FROM_DEFAULT_BUILD_RELWITHDEBINFO 1
       OUTPUT_NAME ${exename}${ARTIFACT_SUFFIX}
     )
-    target_link_libraries(${exename}${ARTIFACT_SUFFIX} testutillib${ARTIFACT_SUFFIX} testharness gtest ${THIRDPARTY_LIBS} ${ROCKSDB_LIB})
+    target_link_libraries(${exename}${ARTIFACT_SUFFIX} ${THIRDPARTY_LIBS} ${ROCKSDB_LIB})
   endforeach(sourcefile ${DEVELOP})
 endif()
 
+set(WITH_BENCHMARK_TOOLS false)
 if(WITH_BENCHMARK_TOOLS)
   message(STATUS "built benchmark tools: db_bench${ARTIFACT_SUFFIX}")
   add_executable(db_bench${ARTIFACT_SUFFIX}

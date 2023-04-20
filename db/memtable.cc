@@ -41,6 +41,7 @@
 #include "table/merging_iterator.h"
 #include "util/autovector.h"
 #include "util/coding.h"
+#include "util/logger.hpp"
 #include "util/mutexlock.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -146,6 +147,7 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
 }
 
 MemTable::~MemTable() {
+  LOG("Memtable ", this->GetID(), "destruct, ptr=", this->table_.get());
   mem_tracker_.FreeMem();
   assert(refs_ == 0);
 }
