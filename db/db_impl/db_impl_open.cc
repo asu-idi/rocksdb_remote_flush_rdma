@@ -753,6 +753,7 @@ Status DBImpl::Recover(
       std::sort(wals.begin(), wals.end());
 
       bool corrupted_wal_found = false;
+      // INSERT Memtable check
       s = RecoverLogFiles(wals, &next_sequence, read_only, &corrupted_wal_found,
                           recovery_ctx);
       if (corrupted_wal_found && recovered_seq != nullptr) {
@@ -809,7 +810,7 @@ Status DBImpl::Recover(
   }
   return s;
 }
-
+// ********************************************
 Status DBImpl::PersistentStatsProcessFormatVersion() {
   mutex_.AssertHeld();
   Status s;
@@ -2145,7 +2146,6 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
     sfm->ReserveDiskBuffer(max_write_buffer_size,
                            impl->immutable_db_options_.db_paths[0].path);
   }
-
 
   if (s.ok()) {
     ROCKS_LOG_HEADER(impl->immutable_db_options_.info_log, "DB pointer %p",

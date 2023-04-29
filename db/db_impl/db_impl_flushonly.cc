@@ -1,44 +1,39 @@
-//  Copyright (c) 2011-present, Facebook, Inc.  All rights reserved.
-//  This source code is licensed under both the GPLv2 (found in the
-//  COPYING file in the root directory) and Apache 2.0 License
-//  (found in the LICENSE.Apache file in the root directory).
+#include "db/db_impl/db_impl_flushonly.h"
 
-#include "db/db_impl/db_impl_readonly.h"
+#include <string>
 
 #include "db/arena_wrapped_db_iter.h"
 #include "db/db_impl/compacted_db_impl.h"
 #include "db/db_impl/db_impl.h"
 #include "db/db_iter.h"
+#include "db/job_context.h"
 #include "db/merge_context.h"
 #include "logging/logging.h"
 #include "monitoring/perf_context_imp.h"
+#include "rocksdb/options.h"
 #include "util/cast_util.h"
+#include "util/logger.hpp"
 
 namespace ROCKSDB_NAMESPACE {
+DBImplFlushOnly::DBImplFlushOnly(const DBOptions& db_options,
+                                 const std::string& dbname)
+    : DBImpl(db_options, dbname, false, true, true /*read-only*/) {
+  LOG("CALL Flushonly db constructor");
 
-DBImplReadOnly::DBImplReadOnly(const DBOptions& db_options,
-                               const std::string& dbname)
-    : DBImpl(db_options, dbname, /*seq_per_batch*/ false,
-             /*batch_per_txn*/ true, /*read_only*/ true) {
-  ROCKS_LOG_INFO(immutable_db_options_.info_log,
-                 "Opening the db in read only mode");
-  LogFlush(immutable_db_options_.info_log);
+  LogFlush(immutable_db_options_.info_log);  // DEBUG
 }
-
-DBImplReadOnly::~DBImplReadOnly() {}
-
+DBImplFlushOnly::~DBImplFlushOnly() {}
 // Implementations of the DB interface
-Status DBImplReadOnly::Get(const ReadOptions& read_options,
-                           ColumnFamilyHandle* column_family, const Slice& key,
-                           PinnableSlice* pinnable_val) {
+Status DBImplFlushOnly::Get(const ReadOptions& read_options,
+                            ColumnFamilyHandle* column_family, const Slice& key,
+                            PinnableSlice* pinnable_val) {
   return Get(read_options, column_family, key, pinnable_val,
              /*timestamp*/ nullptr);
 }
-
-Status DBImplReadOnly::Get(const ReadOptions& read_options,
-                           ColumnFamilyHandle* column_family, const Slice& key,
-                           PinnableSlice* pinnable_val,
-                           std::string* timestamp) {
+Status DBImplFlushOnly::Get(const ReadOptions& read_options,
+                            ColumnFamilyHandle* column_family, const Slice& key,
+                            PinnableSlice* pinnable_val,
+                            std::string* timestamp) {
   assert(pinnable_val != nullptr);
   // TODO: stopwatch DB_GET needed?, perf timer needed?
   PERF_TIMER_GUARD(get_snapshot_time);
@@ -109,8 +104,8 @@ Status DBImplReadOnly::Get(const ReadOptions& read_options,
   return s;
 }
 
-Iterator* DBImplReadOnly::NewIterator(const ReadOptions& read_options,
-                                      ColumnFamilyHandle* column_family) {
+Iterator* DBImplFlushOnly::NewIterator(const ReadOptions& read_options,
+                                       ColumnFamilyHandle* column_family) {
   assert(column_family);
   if (read_options.timestamp) {
     const Status s = FailIfTsMismatchCf(
@@ -146,7 +141,7 @@ Iterator* DBImplReadOnly::NewIterator(const ReadOptions& read_options,
   return db_iter;
 }
 
-Status DBImplReadOnly::NewIterators(
+Status DBImplFlushOnly::NewIterators(
     const ReadOptions& read_options,
     const std::vector<ColumnFamilyHandle*>& column_families,
     std::vector<Iterator*>* iterators) {
@@ -200,123 +195,25 @@ Status DBImplReadOnly::NewIterators(
   return Status::OK();
 }
 
-namespace {
-// Return OK if dbname exists in the file system or create it if
-// create_if_missing
-Status OpenForReadOnlyCheckExistence(const DBOptions& db_options,
-                                     const std::string& dbname) {
-  Status s;
-  if (!db_options.create_if_missing) {
-    // Attempt to read "CURRENT" file
-    const std::shared_ptr<FileSystem>& fs = db_options.env->GetFileSystem();
-    std::string manifest_path;
-    uint64_t manifest_file_number;
-    s = VersionSet::GetCurrentManifestPath(dbname, fs.get(), &manifest_path,
-                                           &manifest_file_number);
-  } else {
-    // Historic behavior that doesn't necessarily make sense
-    s = db_options.env->CreateDirIfMissing(dbname);
-  }
-  return s;
-}
-}  // namespace
+namespace {}
 
-Status DB::OpenForReadOnly(const Options& options, const std::string& dbname,
-                           DB** dbptr, bool /*error_if_wal_file_exists*/) {
-  Status s = OpenForReadOnlyCheckExistence(options, dbname);
-  if (!s.ok()) {
-    return s;
-  }
-
-  *dbptr = nullptr;
-
-  // Try to first open DB as fully compacted DB
-  s = CompactedDBImpl::Open(options, dbname, dbptr);
-  if (s.ok()) {
-    return s;
-  }
-
-  DBOptions db_options(options);
-  ColumnFamilyOptions cf_options(options);
-  std::vector<ColumnFamilyDescriptor> column_families;
-  column_families.push_back(
-      ColumnFamilyDescriptor(kDefaultColumnFamilyName, cf_options));
-  std::vector<ColumnFamilyHandle*> handles;
-
-  s = DBImplReadOnly::OpenForReadOnlyWithoutCheck(
-      db_options, dbname, column_families, &handles, dbptr);
-  if (s.ok()) {
-    assert(handles.size() == 1);
-    // i can delete the handle since DBImpl is always holding a
-    // reference to default column family
-    delete handles[0];
-  }
-  return s;
-}
-
-Status DB::OpenForReadOnly(
+Status DBImplFlushOnly::OpenForFlushOnlyWithoutCheck(
     const DBOptions& db_options, const std::string& dbname,
     const std::vector<ColumnFamilyDescriptor>& column_families,
-    std::vector<ColumnFamilyHandle*>* handles, DB** dbptr,
-    bool error_if_wal_file_exists) {
-  // If dbname does not exist in the file system, should not do anything
-  Status s = OpenForReadOnlyCheckExistence(db_options, dbname);
-  if (!s.ok()) {
-    return s;
-  }
-
-  return DBImplReadOnly::OpenForReadOnlyWithoutCheck(
-      db_options, dbname, column_families, handles, dbptr,
-      error_if_wal_file_exists);
-}
-
-Status DBImplReadOnly::OpenForReadOnlyWithoutCheck(
-    const DBOptions& db_options, const std::string& dbname,
-    const std::vector<ColumnFamilyDescriptor>& column_families,
-    std::vector<ColumnFamilyHandle*>* handles, DB** dbptr,
+    std::vector<ColumnFamilyHandle*>* handles /*out*/, DB** dbptr, /*out*/
     bool error_if_wal_file_exists) {
   *dbptr = nullptr;
   handles->clear();
 
-  SuperVersionContext sv_context(/* create_superversion */ true);
-  DBImplReadOnly* impl = new DBImplReadOnly(db_options, dbname);
-  impl->mutex_.Lock();
-  Status s = impl->Recover(column_families, true /* read only */,
-                           error_if_wal_file_exists);
-  if (s.ok()) {
-    // set column family handles
-    for (auto cf : column_families) {
-      auto cfd =
-          impl->versions_->GetColumnFamilySet()->GetColumnFamily(cf.name);
-      if (cfd == nullptr) {
-        s = Status::InvalidArgument("Column family not found", cf.name);
-        break;
-      }
-      handles->push_back(new ColumnFamilyHandleImpl(cfd, impl, &impl->mutex_));
-    }
-  }
-  if (s.ok()) {
-    for (auto cfd : *impl->versions_->GetColumnFamilySet()) {
-      sv_context.NewSuperVersion();
-      cfd->InstallSuperVersion(&sv_context, &impl->mutex_);
-    }
-  }
-  impl->mutex_.Unlock();
-  sv_context.Clean();
-  if (s.ok()) {
-    *dbptr = impl;
-    for (auto* h : *handles) {
-      impl->NewThreadStatusCfInfo(
-          static_cast_with_check<ColumnFamilyHandleImpl>(h)->cfd());
-    }
-  } else {
-    for (auto h : *handles) {
-      delete h;
-    }
-    handles->clear();
-    delete impl;
-  }
-  return s;
-}
+  auto* impl = new DBImplFlushOnly(db_options, dbname);
 
+  impl->mutex_.Lock();
+  //   impl->column_family_memtables_;
+  impl->mutex_.Unlock();
+  *dbptr = impl;
+  //   for (auto* h : *handles) {
+  //     impl->NewThreadStatusCfInfo(
+  //         static_cast_with_check<ColumnFamilyHandleImpl>(h)->cfd());
+  //   }
+}
 }  // namespace ROCKSDB_NAMESPACE
