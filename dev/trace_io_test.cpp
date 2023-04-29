@@ -15,7 +15,7 @@
 #include "rocksdb/utilities/options_type.h"
 #include "util/logger.hpp"
 #include "utilities/merge_operators.h"
-#define ROOT_DIR "/data/rocksdb/"
+#define ROOT_DIR "/root/remove/rocksdb/"
 using namespace std;
 using namespace rocksdb;
 
