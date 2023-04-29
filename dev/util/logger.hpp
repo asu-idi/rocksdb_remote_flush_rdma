@@ -40,7 +40,8 @@ class LocalLogger {
 
  public:
   LocalLogger()
-      : _stream_("/data/rocksdb/dev/Log.log", std::ios::out | std::ios::app) {}
+      : _stream_("/root/remove/rocksdb/dev/Log.log",
+                 std::ios::out | std::ios::app) {}
   LocalLogger(std::string &logfile) : _stream_(logfile.c_str()) {}
   template <typename... Args>
   void output(const char *filename, const int &line, const char *function_name,
