@@ -16,6 +16,7 @@ cp ../build/trace_io_test ./
 cp ../build/io_tracer_parser ./
 cp ../build/shared_memory_* ./
 cp ../build/memtable_refactor_test ./
+cp ../build/open_secondary_test ./
 
 rm -rf memtable_result/
 mkdir memtable_result/

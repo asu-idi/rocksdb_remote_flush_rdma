@@ -1570,6 +1570,7 @@ if(WITH_DEV)
   dev/memtable_refactor_test.cpp
   dev/shared_memory_writter_test.cpp
   dev/shared_memory_reader_test.cpp
+  dev/open_secondary_test.cpp
   )
   foreach(sourcefile ${DEVELOP})
     message(STATUS "CHECK DEV: ${sourcefile}")

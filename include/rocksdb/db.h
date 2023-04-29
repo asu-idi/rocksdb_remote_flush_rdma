@@ -177,7 +177,17 @@ class DB {
                      const std::vector<ColumnFamilyDescriptor>& column_families,
                      std::vector<ColumnFamilyHandle*>* handles, DB** dbptr);
 
-  // OpenForReadOnly() creates a Read-only instance that supports reads alone.
+  static Status OpenForFlushOnly(const Options& options,
+                                 const std::string& name, DB** bptr,
+                                 bool err_if_wal_file_exist = false);
+
+  static Status OpenForFlushOnly(
+      const DBOptions& db_options, const std::string& name,
+      const std::vector<ColumnFamilyDescriptor>& column_families,
+      std::vector<ColumnFamilyHandle*>* handles, DB** dbptr,
+      bool error_if_wal_file_exists = false);
+  // OpenForReadOnly() creates a Read-only instance that supports reads
+  // alone.
   //
   // All DB interfaces that modify data, like put/delete, will return error.
   // Automatic Flush and Compactions are disabled and any manual calls
