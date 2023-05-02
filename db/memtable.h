@@ -653,6 +653,9 @@ class MemTable {
   void UpdateEntryChecksum(const ProtectionInfoKVOS64* kv_prot_info,
                            const Slice& key, const Slice& value, ValueType type,
                            SequenceNumber s, char* checksum_ptr);
+
+ public:
+  static Status CloneToRemote(const void* memtable_ptr);
 };
 
 extern const char* EncodeKey(std::string* scratch, const Slice& target);
