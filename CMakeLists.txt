@@ -33,7 +33,8 @@
 # 4. make -j
 
 cmake_minimum_required(VERSION 3.10)
-
+set(CMAKE_CXX_COMPILER /usr/bin/clang++-12)
+set(CMAKE_C_COMPILER /usr/bin/clang-12)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake/modules/")
 include(ReadVersion)
 include(GoogleTest)
@@ -776,8 +777,11 @@ set(SOURCES
         logging/log_buffer.cc
         memory/arena.cc
         memory/concurrent_arena.cc
+        # memory/shared_arena.cc
+        memory/concurrent_shared_arena.cc
         memory/jemalloc_nodump_allocator.cc
         memory/memkind_kmem_allocator.cc
+        memory/shared_memory_allocator.cc
         memory/memory_allocator.cc
         memtable/alloc_tracker.cc
         memtable/hash_linklist_rep.cc
@@ -1281,7 +1285,7 @@ if(NOT WIN32 OR ROCKSDB_INSTALL_ON_WINDOWS)
 endif()
 
 option(WITH_ALL_TESTS "Build all test, rather than a small subset" ON)
-set(WITH_TESTS false)
+# set(WITH_TESTS false)
 if(WITH_TESTS OR WITH_BENCHMARK_TOOLS)
   add_subdirectory(third-party/gtest-1.8.1/fused-src/gtest)
   add_library(testharness STATIC

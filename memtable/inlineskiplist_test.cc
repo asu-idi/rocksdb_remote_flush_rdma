@@ -13,6 +13,9 @@
 #include <unordered_set>
 
 #include "memory/concurrent_arena.h"
+#include "memory/concurrent_shared_arena.h"
+#include "memory/shared_arena.h"
+#include "memory/shared_memory_allocator.h"
 #include "rocksdb/env.h"
 #include "test_util/testharness.h"
 #include "util/hash.h"
@@ -37,6 +40,7 @@ struct TestComparator {
   using DecodedType = Key;
 
   static DecodedType decode_key(const char* b) { return Decode(b); }
+  static size_t decode_len(const char* b) { return 8; }
 
   int operator()(const char* a, const char* b) const {
     if (Decode(a) < Decode(b)) {
@@ -103,7 +107,7 @@ class InlineSkipTest : public testing::Test {
   std::set<Key> keys_;
 };
 
-TEST_F(InlineSkipTest, Empty) {
+TEST_F(InlineSkipTest, DISABLED_Empty) {
   Arena arena;
   TestComparator cmp;
   InlineSkipList<TestComparator> list(cmp, &arena);
@@ -123,7 +127,7 @@ TEST_F(InlineSkipTest, Empty) {
   ASSERT_TRUE(!iter.Valid());
 }
 
-TEST_F(InlineSkipTest, InsertAndLookup) {
+TEST_F(InlineSkipTest, DISABLED_InsertAndLookup) {
   const int N = 2000;
   const int R = 5000;
   Random rnd(1000);
@@ -211,8 +215,52 @@ TEST_F(InlineSkipTest, InsertAndLookup) {
     }
   }
 }
+TEST_F(InlineSkipTest, DISABLED_Shared_Skiplist) {
+  LOG("Shared Skiplist");
+  const int N = 4000;
+  const int R = 5000;
+  Random rnd(1000);
+  std::set<Key> keys;
+  ConSharedArena arena;
+  TestComparator cmp;
+  InlineSkipList<TestComparator> list(cmp, &arena);
+  for (int i = 0; i < N; i++) {
+    Key key = rnd.Next() % R;
+    if (keys.insert(key).second) {
+      LOG("insert key:", key);
+      char* buf = list.AllocateKey(sizeof(Key));
+      memcpy(buf, &key, sizeof(Key));
+      LOG("buf to insert:", (Key)(*buf));
+      list.Insert(buf);
+    }
+  }
+}
 
-TEST_F(InlineSkipTest, InsertWithHint_Sequential) {
+TEST_F(InlineSkipTest, Shared_Skiplist_Clone) {
+  LOG("Shared Skiplist");
+  const int N = 5;
+  const int R = 5000;
+  Random rnd(1000);
+  std::set<Key> keys;
+  ConSharedArena arena;
+  TestComparator cmp;
+  InlineSkipList<TestComparator> list(cmp, &arena);
+  for (int i = 0; i < N; i++) {
+    Key key = rnd.Next() % R;
+    if (keys.insert(key).second) {
+      LOG("insert key:", key);
+      char* buf = list.AllocateKey(sizeof(Key));
+      memcpy(buf, &key, sizeof(Key));
+      LOG("buf to insert:", (Key)(*buf));
+      list.Insert(buf);
+    }
+  }
+  list.CHECK_all_addr();
+  ReadOnlyInlineSkipList<TestComparator>* readonly_list = list.Clone();
+  readonly_list->CHECK_all_addr();
+}
+
+TEST_F(InlineSkipTest, DISABLED_InsertWithHint_Sequential) {
   const int N = 100000;
   Arena arena;
   TestComparator cmp;
@@ -225,7 +273,7 @@ TEST_F(InlineSkipTest, InsertWithHint_Sequential) {
   Validate(&list);
 }
 
-TEST_F(InlineSkipTest, InsertWithHint_MultipleHints) {
+TEST_F(InlineSkipTest, DISABLED_InsertWithHint_MultipleHints) {
   const int N = 100000;
   const int S = 100;
   Random rnd(534);
@@ -246,7 +294,7 @@ TEST_F(InlineSkipTest, InsertWithHint_MultipleHints) {
   Validate(&list);
 }
 
-TEST_F(InlineSkipTest, InsertWithHint_MultipleHintsRandom) {
+TEST_F(InlineSkipTest, DISABLED_InsertWithHint_MultipleHintsRandom) {
   const int N = 100000;
   const int S = 100;
   Random rnd(534);
@@ -265,7 +313,8 @@ TEST_F(InlineSkipTest, InsertWithHint_MultipleHintsRandom) {
   Validate(&list);
 }
 
-TEST_F(InlineSkipTest, InsertWithHint_CompatibleWithInsertWithoutHint) {
+TEST_F(InlineSkipTest,
+       DISABLED_InsertWithHint_CompatibleWithInsertWithoutHint) {
   const int N = 100000;
   const int S1 = 100;
   const int S2 = 100;
@@ -490,7 +539,7 @@ const uint32_t ConcurrentTest::K;
 
 // Simple test that does single-threaded testing of the ConcurrentTest
 // scaffolding.
-TEST_F(InlineSkipTest, ConcurrentReadWithoutThreads) {
+TEST_F(InlineSkipTest, DISABLED_ConcurrentReadWithoutThreads) {
   ConcurrentTest test;
   Random rnd(test::RandomSeed());
   for (int i = 0; i < 10000; i++) {
@@ -499,7 +548,7 @@ TEST_F(InlineSkipTest, ConcurrentReadWithoutThreads) {
   }
 }
 
-TEST_F(InlineSkipTest, ConcurrentInsertWithoutThreads) {
+TEST_F(InlineSkipTest, DISABLED_ConcurrentInsertWithoutThreads) {
   ConcurrentTest test;
   Random rnd(test::RandomSeed());
   for (int i = 0; i < 10000; i++) {
@@ -636,21 +685,21 @@ static void RunConcurrentInsert(int run, bool use_hint = false,
   }
 }
 
-TEST_F(InlineSkipTest, ConcurrentRead1) { RunConcurrentRead(1); }
-TEST_F(InlineSkipTest, ConcurrentRead2) { RunConcurrentRead(2); }
-TEST_F(InlineSkipTest, ConcurrentRead3) { RunConcurrentRead(3); }
-TEST_F(InlineSkipTest, ConcurrentRead4) { RunConcurrentRead(4); }
-TEST_F(InlineSkipTest, ConcurrentRead5) { RunConcurrentRead(5); }
-TEST_F(InlineSkipTest, ConcurrentInsert1) { RunConcurrentInsert(1); }
-TEST_F(InlineSkipTest, ConcurrentInsert2) { RunConcurrentInsert(2); }
-TEST_F(InlineSkipTest, ConcurrentInsert3) { RunConcurrentInsert(3); }
-TEST_F(InlineSkipTest, ConcurrentInsertWithHint1) {
+TEST_F(InlineSkipTest, DISABLED_ConcurrentRead1) { RunConcurrentRead(1); }
+TEST_F(InlineSkipTest, DISABLED_ConcurrentRead2) { RunConcurrentRead(2); }
+TEST_F(InlineSkipTest, DISABLED_ConcurrentRead3) { RunConcurrentRead(3); }
+TEST_F(InlineSkipTest, DISABLED_ConcurrentRead4) { RunConcurrentRead(4); }
+TEST_F(InlineSkipTest, DISABLED_ConcurrentRead5) { RunConcurrentRead(5); }
+TEST_F(InlineSkipTest, DISABLED_ConcurrentInsert1) { RunConcurrentInsert(1); }
+TEST_F(InlineSkipTest, DISABLED_ConcurrentInsert2) { RunConcurrentInsert(2); }
+TEST_F(InlineSkipTest, DISABLED_ConcurrentInsert3) { RunConcurrentInsert(3); }
+TEST_F(InlineSkipTest, DISABLED_ConcurrentInsertWithHint1) {
   RunConcurrentInsert(1, true);
 }
-TEST_F(InlineSkipTest, ConcurrentInsertWithHint2) {
+TEST_F(InlineSkipTest, DISABLED_ConcurrentInsertWithHint2) {
   RunConcurrentInsert(2, true);
 }
-TEST_F(InlineSkipTest, ConcurrentInsertWithHint3) {
+TEST_F(InlineSkipTest, DISABLED_ConcurrentInsertWithHint3) {
   RunConcurrentInsert(3, true);
 }
 

@@ -40,6 +40,7 @@
 #include "table/iterator_wrapper.h"
 #include "table/merging_iterator.h"
 #include "util/autovector.h"
+#include "util/cast_util.h"
 #include "util/coding.h"
 #include "util/logger.hpp"
 #include "util/mutexlock.h"
@@ -68,6 +69,19 @@ ImmutableMemTableOptions::ImmutableMemTableOptions(
       allow_data_in_errors(ioptions.allow_data_in_errors),
       protection_bytes_per_key(
           mutable_cf_options.memtable_protection_bytes_per_key) {}
+
+Status MemTable::CloneToRemote(const void* memtable_ptr) {
+  auto* local_memtable =
+      reinterpret_cast<MemTable*>(const_cast<void*>(memtable_ptr));
+  // ImmutableMemTableOptions
+  // auto* shared_memtable =
+  //     new MemTable(local_memtable->GetInternalKeyComparator(),
+  //     local_memtable.);
+  // auto* memtable_ =
+  //   new MemTable(internal_comparator_, ioptions_, mutable_cf_options,
+  //                write_buffer_manager_, earliest_seq, id_);
+  return Status::OK();
+}
 
 MemTable::MemTable(const InternalKeyComparator& cmp,
                    const ImmutableOptions& ioptions,
