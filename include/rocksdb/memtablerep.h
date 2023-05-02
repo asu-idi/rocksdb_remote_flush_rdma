@@ -38,13 +38,16 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include <cstddef>
 #include <memory>
 #include <stdexcept>
 #include <unordered_set>
 
+#include "memory/concurrent_shared_arena.h"
 #include "rocksdb/customizable.h"
 #include "rocksdb/slice.h"
-
+#include "rocksdb/status.h"
+#include "util/logger.hpp"
 namespace ROCKSDB_NAMESPACE {
 
 class Arena;
@@ -71,7 +74,9 @@ class MemTableRep {
       // contract. Refer to MemTable::Add for details.
       return GetLengthPrefixedSlice(key);
     }
-
+    virtual size_t decode_len(const char* key) const {
+      return GetLengthPrefixedSlice(key).size();
+    }
     // Compare a and b. Return a negative value if a is less than b, 0 if they
     // are equal, and a positive value if a is greater than b
     virtual int operator()(const char* prefix_len_key1,
@@ -169,7 +174,7 @@ class MemTableRep {
   // does nothing.  After MarkReadOnly() is called, this table rep will
   // not be written to (ie No more calls to Allocate(), Insert(),
   // or any writes done directly to entries accessed through the iterator.)
-  virtual void MarkReadOnly() {}
+  virtual void MarkReadOnly() { LOG("Default MarkReadOnly"); }
 
   // Notify this table rep that it has been flushed to stable storage.
   // By default, does nothing.
@@ -213,6 +218,13 @@ class MemTableRep {
   // Report an approximation of how much memory has been used other than memory
   // that was allocated through the allocator.  Safe to call from any thread.
   virtual size_t ApproximateMemoryUsage() = 0;
+
+  virtual MemTableRep* CloneReadOnlyMemtableRep(
+      Allocator* allocator = new ConSharedArena) {
+    LOG("[ERROR] default Clone Api.");
+    //  TODO: make this pure virtual
+    return nullptr;
+  }
 
   virtual ~MemTableRep() {}
 

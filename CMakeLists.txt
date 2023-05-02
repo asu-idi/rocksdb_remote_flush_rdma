@@ -787,6 +787,7 @@ set(SOURCES
         memtable/hash_linklist_rep.cc
         memtable/hash_skiplist_rep.cc
         memtable/skiplistrep.cc
+        memtable/readonly_skiplistrep.cc
         memtable/vectorrep.cc
         memtable/write_buffer_manager.cc
         monitoring/histogram.cc

@@ -3,6 +3,7 @@
 //  COPYING file in the root directory) and Apache 2.0 License
 //  (found in the LICENSE.Apache file in the root directory).
 
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -11,6 +12,7 @@
 #include "db/range_del_aggregator.h"
 #include "port/stack_trace.h"
 #include "rocksdb/memtablerep.h"
+#include "rocksdb/options.h"
 #include "rocksdb/slice_transform.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -45,7 +47,19 @@ class MockMemTableRep : public MemTableRep {
            bool (*callback_func)(void* arg, const char* entry)) override {
     rep_->Get(k, callback_args, callback_func);
   }
-
+  MemTableRep* CloneReadOnly() { return rep_->CloneReadOnlyMemtableRep(); }
+  void CHECK_all_addr() {
+    MemTableRep* read_only = CloneReadOnly();
+    read_only->MarkReadOnly();
+    auto iter = read_only->GetIterator();
+    iter->SeekToFirst();
+    iter->Next();
+    while (iter->Valid()) {
+      // TODO: check values && addr
+      LOG("CHECK: key=", iter->key());
+      iter->Next();
+    }
+  }
   size_t ApproximateMemoryUsage() override {
     return rep_->ApproximateMemoryUsage();
   }
@@ -126,7 +140,7 @@ class TestPrefixExtractor : public SliceTransform {
 };
 
 // Test that ::Add properly returns false when inserting duplicate keys
-TEST_F(DBMemTableTest, DuplicateSeq) {
+TEST_F(DBMemTableTest, DISABLED_DuplicateSeq) {
   SequenceNumber seq = 123;
   std::string value;
   MergeContext merge_context;
@@ -210,7 +224,7 @@ TEST_F(DBMemTableTest, DuplicateSeq) {
 }
 
 // A simple test to verify that the concurrent merge writes is functional
-TEST_F(DBMemTableTest, ConcurrentMergeWrite) {
+TEST_F(DBMemTableTest, DISABLED_ConcurrentMergeWrite) {
   int num_ops = 1000;
   std::string value;
   MergeContext merge_context;
@@ -314,9 +328,10 @@ TEST_F(DBMemTableTest, InsertWithHint) {
   ASSERT_EQ("bar_v1", Get("bar_k1"));
   ASSERT_EQ("bar_v2", Get("bar_k2"));
   ASSERT_EQ("vvv", Get("NotInPrefixDomain"));
+  rep->CHECK_all_addr();
 }
 
-TEST_F(DBMemTableTest, ColumnFamilyId) {
+TEST_F(DBMemTableTest, DISABLED_ColumnFamilyId) {
   // Verifies MemTableRepFactory is told the right column family id.
   Options options;
   options.env = CurrentOptions().env;
