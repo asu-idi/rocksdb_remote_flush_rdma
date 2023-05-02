@@ -62,7 +62,6 @@
 #include "util/coding.h"
 #include "util/logger.hpp"
 #include "util/random.h"
-
 namespace ROCKSDB_NAMESPACE {
 
 template <class Comparator>
@@ -80,7 +79,8 @@ class ReadOnlyInlineSkipList {
                                   const Comparator cmp);
   ReadOnlyInlineSkipList(const ReadOnlyInlineSkipList&) = delete;
   ReadOnlyInlineSkipList& operator=(const ReadOnlyInlineSkipList&) = delete;
-  void CHECK_all_addr();
+
+  void CHECK_all_addr() const;
   class Iterator {
    public:
     explicit Iterator(const ReadOnlyInlineSkipList* list);
@@ -90,6 +90,7 @@ class ReadOnlyInlineSkipList {
     void Next();
     void Prev();
     void Seek(const char* target);
+    void SeekToFirst();
 
    private:
     const ReadOnlyInlineSkipList* list_;
@@ -110,7 +111,7 @@ class ReadOnlyInlineSkipList {
   char* AllocateKey(size_t key_size);
 };
 template <class Comparator>
-void ReadOnlyInlineSkipList<Comparator>::CHECK_all_addr() {
+void ReadOnlyInlineSkipList<Comparator>::CHECK_all_addr() const {
   Node* ptr = head_;
   while (true) {
     ptr = ptr->next();
@@ -118,7 +119,7 @@ void ReadOnlyInlineSkipList<Comparator>::CHECK_all_addr() {
       break;
     }
     DecodedKey key_val = compare_.decode_key(ptr->key());
-    LOG("key:", std::hex, (long long)ptr, std::dec, " ", key_val);
+    // LOG("key:", std::hex, (long long)ptr, std::dec, " ", key_val.data());
   }
 }
 
@@ -153,7 +154,7 @@ inline void ReadOnlyInlineSkipList<Comparator>::Iterator::SetList(
 }
 template <class Comparator>
 inline bool ReadOnlyInlineSkipList<Comparator>::Iterator::Valid() const {
-  return node_ != nullptr;
+  return node_ != nullptr && node_ != list_->head_;
 }
 template <class Comparator>
 inline const char* ReadOnlyInlineSkipList<Comparator>::Iterator::key() const {
@@ -174,9 +175,21 @@ inline void ReadOnlyInlineSkipList<Comparator>::Iterator::Prev() {
 template <class Comparator>
 inline void ReadOnlyInlineSkipList<Comparator>::Iterator::Seek(
     const char* target) {
-  assert(false);
+  node_ = list_->head_;
+  node_ = node_->next();
+  while (node_ != list_->head_ && list_->LessThan(node_->key(), target)) {
+    node_ = node_->next();
+  }
+  // find first value >= target
+  if (node_ == list_->head_) {
+    LOG("[WARN] Seek val return header node");
+  }
 }
 
+template <class Comparator>
+inline void ReadOnlyInlineSkipList<Comparator>::Iterator::SeekToFirst() {
+  node_ = list_->head_->next();
+}
 template <class Comparator>
 char* ReadOnlyInlineSkipList<Comparator>::AllocateKey(size_t key_size) {
   return const_cast<char*>(AllocateNode(key_size)->Key());
@@ -1220,8 +1233,8 @@ ReadOnlyInlineSkipList<Comparator>::ReadOnlyInlineSkipList(
     insert->SetNext(new_node);
     nxt->SetPrev(new_node);
     insert = insert->next();
-    LOG("insert key:", std::hex, (long long)key_ptr, std::dec, ' ', key_decoded,
-        ' ', key_len);
+    // LOG("insert key:", std::hex, (long long)key_ptr, std::dec, ' ',
+    //     key_decoded.data(), ' ', (size_t)key_len);
     iter.Next();
   }
 }

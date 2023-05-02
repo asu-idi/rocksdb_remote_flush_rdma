@@ -6,8 +6,11 @@
 #include <random>
 
 #include "db/memtable.h"
+#include "memory/allocator.h"
 #include "memory/arena.h"
+#include "memory/concurrent_shared_arena.h"
 #include "memtable/inlineskiplist.h"
+#include "memtable/readonly_skiplisrep.h"
 #include "rocksdb/memtablerep.h"
 #include "rocksdb/utilities/options_type.h"
 #include "util/logger.hpp"
@@ -164,6 +167,8 @@ class SkipListRep : public MemTableRep {
     }
   }
 
+  MemTableRep* CloneReadOnlyMemtableRep(
+      Allocator* allocator = new ConSharedArena) override;
   ~SkipListRep() override {}
 
   // Iteration over the contents of a skip list
@@ -341,6 +346,13 @@ class SkipListRep : public MemTableRep {
     }
   }
 };
+MemTableRep* SkipListRep::CloneReadOnlyMemtableRep(Allocator* allocator) {
+  LOG("Clone from memtableRep");
+  void* mem = allocator->AllocateAligned(sizeof(ReadOnlySkipListRep));
+  MemTableRep* ret =
+      new (mem) ReadOnlySkipListRep(cmp_, allocator_, this->skip_list_.Clone());
+  return ret;
+}
 }  // namespace
 
 static std::unordered_map<std::string, OptionTypeInfo> skiplist_factory_info = {
