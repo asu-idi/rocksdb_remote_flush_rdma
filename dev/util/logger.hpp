@@ -40,7 +40,7 @@ class LocalLogger {
 
  public:
   LocalLogger()
-      : _stream_("/root/remove/rocksdb/dev/Log.log",
+      : _stream_("/root/code/rocksdb_remote_flush/dev/Log.log",
                  std::ios::out | std::ios::app) {}
   LocalLogger(std::string &logfile) : _stream_(logfile.c_str()) {}
   template <typename... Args>

@@ -118,7 +118,7 @@ void ReadOnlyInlineSkipList<Comparator>::CHECK_all_addr() const {
     if (ptr == head_) {
       break;
     }
-    DecodedKey key_val = compare_.decode_key(ptr->key());
+    // DecodedKey key_val = compare_.decode_key(ptr->key());
     // LOG("key:", std::hex, (long long)ptr, std::dec, " ", key_val.data());
   }
 }
@@ -1221,9 +1221,6 @@ ReadOnlyInlineSkipList<Comparator>::ReadOnlyInlineSkipList(
   iter.SeekToFirst();
   while (iter.Valid()) {
     const char* key_ptr = iter.key();
-    using Decodekey =
-        typename std::remove_reference<Comparator>::type::DecodedType;
-    const Decodekey key_decoded = compare_.decode_key(key_ptr);
     size_t key_len = compare_.decode_len(key_ptr);
     Node* nxt = insert->next();
     Node* new_node = AllocateNode(key_len);
@@ -1233,6 +1230,9 @@ ReadOnlyInlineSkipList<Comparator>::ReadOnlyInlineSkipList(
     insert->SetNext(new_node);
     nxt->SetPrev(new_node);
     insert = insert->next();
+    // using Decodekey =
+    //     typename std::remove_reference<Comparator>::type::DecodedType;
+    // const Decodekey key_decoded = compare_.decode_key(key_ptr);
     // LOG("insert key:", std::hex, (long long)key_ptr, std::dec, ' ',
     //     key_decoded.data(), ' ', (size_t)key_len);
     iter.Next();

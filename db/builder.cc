@@ -220,9 +220,6 @@ Status BuildTable(
         break;
       }
       builder->Add(key, value);
-      LOG("[Trace] filesize=", " kv=", key.size(), ' ',
-          std::string{key.data(), key.size()}, ' ', value.size(), " ",
-          std::string{value.data()});
       s = meta->UpdateBoundaries(key, value, ikey.sequence, ikey.type);
       if (!s.ok()) {
         break;
@@ -248,10 +245,6 @@ Status BuildTable(
            range_del_it->Next()) {
         auto tombstone = range_del_it->Tombstone();
         auto kv = tombstone.Serialize();
-        builder->Add(kv.first.Encode(), kv.second);
-        LOG("[Trace] filesize=", builder->FileSize(),
-            " kv=", kv.first.Encode().data(), ' ', kv.second.data());
-        file_writer->Flush();
         builder->Add(kv.first.Encode(), kv.second);
         LOG("[Trace] filesize=", builder->FileSize(),
             " kv=", kv.first.Encode().data(), ' ', kv.second.data());
