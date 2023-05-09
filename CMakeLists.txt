@@ -33,8 +33,10 @@
 # 4. make -j
 
 cmake_minimum_required(VERSION 3.10)
-set(CMAKE_CXX_COMPILER /usr/bin/clang++-12)
-set(CMAKE_C_COMPILER /usr/bin/clang-12)
+set(CMAKE_CXX_COMPILER /usr/bin/clang++)
+set(CMAKE_C_COMPILER /usr/bin/clang)
+message(STATUS "cxx_compiler: ${CMAKE_CXX_COMPILER}")
+message(STATUS "c_compiler: ${CMAKE_C_COMPILER}")
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake/modules/")
 include(ReadVersion)
 include(GoogleTest)

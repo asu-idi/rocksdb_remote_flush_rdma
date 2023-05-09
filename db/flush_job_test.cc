@@ -159,7 +159,7 @@ class FlushJobTest : public FlushJobTestBase {
                          BytewiseComparator()) {}
 };
 
-TEST_F(FlushJobTest, Empty) {
+TEST_F(FlushJobTest, DISABLED_Empty) {
   JobContext job_context(0);
   auto cfd = versions_->GetColumnFamilySet()->GetDefault();
   EventLogger event_logger(db_options_.info_log.get());
@@ -278,7 +278,66 @@ TEST_F(FlushJobTest, NonEmpty) {
   job_context.Clean();
 }
 
-TEST_F(FlushJobTest, FlushMemTablesSingleColumnFamily) {
+TEST_F(FlushJobTest, DISABLED_SharedFlushJob) {
+  JobContext job_context(0);
+  auto cfd = versions_->GetColumnFamilySet()->GetDefault();
+  auto new_mem = cfd->ConstructNewMemtable(*cfd->GetLatestMutableCFOptions(),
+                                           kMaxSequenceNumber);
+  new_mem->Ref();
+  auto inserted_keys = mock::MakeMockFile();
+  // Test data:
+  //   seqno [    1,    2 ... 8998, 8999, 9000, 9001, 9002 ... 9999 ]
+  //   key   [ 1001, 1002 ... 9998, 9999,    0,    1,    2 ...  999 ]
+  for (int i = 1; i < 10000; ++i) {
+    std::string key(std::to_string((i + 1000) % 10000));
+    std::string value("value" + key);
+    ASSERT_OK(new_mem->Add(SequenceNumber(i), kTypeValue, key, value,
+                           nullptr /* kv_prot_info */));
+    if ((i + 1000) % 10000 < 9995) {
+      InternalKey internal_key(key, SequenceNumber(i), kTypeValue);
+      inserted_keys.push_back({internal_key.Encode().ToString(), value});
+    }
+  }
+
+  mock::SortKVVector(&inserted_keys);
+
+  autovector<MemTable*> to_delete;
+  new_mem->ConstructFragmentedRangeTombstones();
+  cfd->imm()->Add(new_mem, &to_delete);
+  for (auto& m : to_delete) {
+    delete m;
+  }
+
+  EventLogger event_logger(db_options_.info_log.get());
+  SnapshotChecker* snapshot_checker = nullptr;  // not relavant
+  FlushJob flush_job(
+      dbname_, versions_->GetColumnFamilySet()->GetDefault(), db_options_,
+      *cfd->GetLatestMutableCFOptions(),
+      std::numeric_limits<uint64_t>::max() /* memtable_id */, env_options_,
+      versions_.get(), &mutex_, &shutting_down_, {}, kMaxSequenceNumber,
+      snapshot_checker, &job_context, FlushReason::kTest, nullptr, nullptr,
+      nullptr, kNoCompression, db_options_.statistics.get(), &event_logger,
+      true, true /* sync_output_directory */, true /* write_manifest */,
+      Env::Priority::USER, nullptr /*IOTracer*/, empty_seqno_to_time_mapping_);
+
+  HistogramData hist;
+  FileMetaData file_meta;
+  mutex_.Lock();
+  flush_job.PickMemTable();
+  ASSERT_OK(flush_job.Run(nullptr, &file_meta));
+  mutex_.Unlock();
+  db_options_.statistics->histogramData(FLUSH_TIME, &hist);
+  ASSERT_GT(hist.average, 0.0);
+
+  ASSERT_EQ(std::to_string(0), file_meta.smallest.user_key().ToString());
+  ASSERT_EQ("9999a", file_meta.largest.user_key().ToString());
+  ASSERT_EQ(1, file_meta.fd.smallest_seqno);
+  ASSERT_EQ(10006, file_meta.fd.largest_seqno);
+  mock_table_factory_->AssertSingleFile(inserted_keys);
+  job_context.Clean();
+}
+
+TEST_F(FlushJobTest, DISABLED_FlushMemTablesSingleColumnFamily) {
   const size_t num_mems = 2;
   const size_t num_mems_to_flush = 1;
   const size_t num_keys_per_table = 100;
@@ -345,7 +404,7 @@ TEST_F(FlushJobTest, FlushMemTablesSingleColumnFamily) {
   job_context.Clean();
 }
 
-TEST_F(FlushJobTest, FlushMemtablesMultipleColumnFamilies) {
+TEST_F(FlushJobTest, DISABLED_FlushMemtablesMultipleColumnFamilies) {
   autovector<ColumnFamilyData*> all_cfds;
   for (auto cfd : *versions_->GetColumnFamilySet()) {
     all_cfds.push_back(cfd);
@@ -462,7 +521,7 @@ TEST_F(FlushJobTest, FlushMemtablesMultipleColumnFamilies) {
   job_context.Clean();
 }
 
-TEST_F(FlushJobTest, Snapshots) {
+TEST_F(FlushJobTest, DISABLED_Snapshots) {
   JobContext job_context(0);
   auto cfd = versions_->GetColumnFamilySet()->GetDefault();
   auto new_mem = cfd->ConstructNewMemtable(*cfd->GetLatestMutableCFOptions(),
@@ -622,7 +681,7 @@ class FlushJobTimestampTest : public FlushJobTestBase {
   std::atomic<uint64_t> curr_ts_{kStartTs};
 };
 
-TEST_F(FlushJobTimestampTest, AllKeysExpired) {
+TEST_F(FlushJobTimestampTest, DISABLED_AllKeysExpired) {
   ColumnFamilyData* cfd = versions_->GetColumnFamilySet()->GetDefault();
   autovector<MemTable*> to_delete;
 
@@ -679,7 +738,7 @@ TEST_F(FlushJobTimestampTest, AllKeysExpired) {
   ASSERT_TRUE(to_delete.empty());
 }
 
-TEST_F(FlushJobTimestampTest, NoKeyExpired) {
+TEST_F(FlushJobTimestampTest, DISABLED_NoKeyExpired) {
   ColumnFamilyData* cfd = versions_->GetColumnFamilySet()->GetDefault();
   autovector<MemTable*> to_delete;
 

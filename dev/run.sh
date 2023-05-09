@@ -3,6 +3,8 @@ PROJECT_ROOT="$(pwd)/../"
 cd $PROJECT_ROOT/dev
 rm -rf trace
 rm -rf ./db/*
+cd $PROJECT_ROOT
+mkdir build
 cd $PROJECT_ROOT/build
 cmake ..
 make all -j $(nproc)
@@ -10,9 +12,10 @@ cd $PROJECT_ROOT/dev
 
 cp ../build/trace_analyzer ./
 cp ../build/trace_query_test ./
+cp ../build/flush_job_test ./
 # cp ../build/memtable_tracer_parser ./
 # cp ../build/trace_memtable_test ./
-cp ../build/trace_io_test ./ 
+cp ../build/trace_io_test ./
 cp ../build/io_tracer_parser ./
 cp ../build/shared_memory_* ./
 cp ../build/memtable_refactor_test ./
@@ -44,4 +47,3 @@ chown -R $(whoami) ../
 # #   -print_top_k_access=3 \
 # #   -output_prefix=test \
 # #   -trace_path=/data/rocksdb/dev/trace
-
