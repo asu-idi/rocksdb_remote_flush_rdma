@@ -22,11 +22,13 @@
 
 namespace ROCKSDB_NAMESPACE {
 
-class Arena : public Allocator {
+class Arena : public BasicArena {
  public:
   // No copying allowed
   Arena(const Arena&) = delete;
   void operator=(const Arena&) = delete;
+
+  const char* name() const override { return "Arena"; }
 
   static constexpr size_t kInlineSize = 2048;
   static constexpr size_t kMinBlockSize = 4096;
@@ -63,22 +65,22 @@ class Arena : public Allocator {
   // Returns an estimate of the total memory usage of data allocated
   // by the arena (exclude the space allocated but not yet used for future
   // allocations).
-  size_t ApproximateMemoryUsage() const {
+  size_t ApproximateMemoryUsage() const override {
     return blocks_memory_ + blocks_.size() * sizeof(char*) -
            alloc_bytes_remaining_;
   }
 
-  size_t MemoryAllocatedBytes() const { return blocks_memory_; }
+  size_t MemoryAllocatedBytes() const override { return blocks_memory_; }
 
-  size_t AllocatedAndUnused() const { return alloc_bytes_remaining_; }
+  size_t AllocatedAndUnused() const override { return alloc_bytes_remaining_; }
 
   // If an allocation is too big, we'll allocate an irregular block with the
   // same size of that allocation.
-  size_t IrregularBlockNum() const { return irregular_block_num; }
+  size_t IrregularBlockNum() const override { return irregular_block_num; }
 
   size_t BlockSize() const override { return kBlockSize; }
 
-  bool IsInInlineBlock() const {
+  bool IsInInlineBlock() const override {
     return blocks_.empty() && huge_blocks_.empty();
   }
 

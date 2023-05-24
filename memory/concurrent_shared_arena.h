@@ -17,17 +17,19 @@
 #include <deque>
 
 #include "memory/allocator.h"
+#include "memory/shared_std.hpp"
 #include "port/mmap.h"
 #include "rocksdb/env.h"
 
 namespace ROCKSDB_NAMESPACE {
 
-class ConSharedArena : public Allocator {
+class ConSharedArena : public BasicArena {
  public:
   // No copying allowed
   ConSharedArena(const ConSharedArena&) = delete;
   void operator=(const ConSharedArena&) = delete;
 
+  const char* name() const override { return "ConcurrentSharedArena"; }
   static constexpr size_t kInlineSize = 4096;
   static constexpr size_t kMinBlockSize = 4096;
   static constexpr size_t kMaxBlockSize = 2u << 30;
@@ -43,7 +45,9 @@ class ConSharedArena : public Allocator {
                           AllocTracker* tracker = nullptr,
                           size_t huge_page_size = 0);
   ~ConSharedArena();
-
+  static ConSharedArena* CreateSharedConSharedArena(
+      size_t block_size = kMinBlockSize, AllocTracker* tracker = nullptr,
+      size_t huge_page_size = 0);
   char* Allocate(size_t bytes) override;
 
   // huge_page_size: if >0, will try to allocate from huage page TLB.
@@ -64,22 +68,22 @@ class ConSharedArena : public Allocator {
   // Returns an estimate of the total memory usage of data allocated
   // by the ConSharedArena (exclude the space allocated but not yet used for
   // future allocations).
-  size_t ApproximateMemoryUsage() const {
+  size_t ApproximateMemoryUsage() const override {
     return blocks_memory_ + blocks_.size() * sizeof(char*) -
            alloc_bytes_remaining_;
   }
 
-  size_t MemoryAllocatedBytes() const { return blocks_memory_; }
+  size_t MemoryAllocatedBytes() const override { return blocks_memory_; }
 
-  size_t AllocatedAndUnused() const { return alloc_bytes_remaining_; }
+  size_t AllocatedAndUnused() const override { return alloc_bytes_remaining_; }
 
   // If an allocation is too big, we'll allocate an irregular block with the
   // same size of that allocation.
-  size_t IrregularBlockNum() const { return irregular_block_num; }
+  size_t IrregularBlockNum() const override { return irregular_block_num; }
 
   size_t BlockSize() const override { return kBlockSize; }
 
-  bool IsInInlineBlock() const { return blocks_.empty(); }
+  bool IsInInlineBlock() const override { return blocks_.empty(); }
 
   // check and adjust the block_size so that the return value is
   //  1. in the range of [kMinBlockSize, kMaxBlockSize].
@@ -92,7 +96,7 @@ class ConSharedArena : public Allocator {
   // Number of bytes allocated in one block
   const size_t kBlockSize;
   // Allocated memory blocks
-  std::deque<std::unique_ptr<char, void (*)(char*)>> blocks_;
+  std::shared_deque<std::unique_ptr<char, void (*)(char*)>> blocks_;
   // Huge page allocations
   // std::deque<MemMapping> huge_blocks_;
   size_t irregular_block_num = 0;

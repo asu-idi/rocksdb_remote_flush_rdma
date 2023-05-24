@@ -29,8 +29,19 @@ class Allocator {
                                 Logger* logger = nullptr) = 0;
 
   virtual size_t BlockSize() const = 0;
+  virtual const char* name() const { return "should not use this allocator"; };
 };
 
+class BasicArena : public Allocator {
+ public:
+  virtual size_t ApproximateMemoryUsage() const = 0;
+  virtual size_t MemoryAllocatedBytes() const = 0;
+  virtual size_t AllocatedAndUnused() const = 0;
+  virtual size_t IrregularBlockNum() const = 0;
+  virtual bool IsInInlineBlock()
+      const = 0;  // TODO: remove unneccessary functions
+  const char* name() const override { return "should not use this allocator"; };
+};
 class AllocTracker {
  public:
   explicit AllocTracker(WriteBufferManager* write_buffer_manager);

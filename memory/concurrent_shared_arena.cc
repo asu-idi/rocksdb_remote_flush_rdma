@@ -22,6 +22,13 @@
 
 namespace ROCKSDB_NAMESPACE {
 
+ConSharedArena* ConSharedArena::CreateSharedConSharedArena(
+    size_t block_size, AllocTracker* tracker, size_t huge_page_size) {
+  void* mem = shm_alloc(sizeof(ConSharedArena));
+  auto* arena = new (mem) ConSharedArena(block_size, tracker, huge_page_size);
+  return arena;
+}
+
 size_t ConSharedArena::OptimizeBlockSize(size_t block_size) {
   // Make sure block_size is in optimal range
   block_size = std::max(ConSharedArena::kMinBlockSize, block_size);
@@ -110,14 +117,12 @@ char* ConSharedArena::AllocateFromHugePage(size_t bytes) {
 
 char* ConSharedArena::AllocateAligned(size_t bytes, size_t huge_page_size,
                                       Logger* logger) {
-  LOG("recheck");
   if (MemMapping::kHugePageSupported && hugetlb_size_ > 0 &&
       huge_page_size > 0 && bytes > 0) {
     // Allocate from a huge page TLB table.
     size_t reserved_size =
         ((bytes - 1U) / huge_page_size + 1U) * huge_page_size;
     assert(reserved_size >= bytes);
-    LOG("recheck");
     char* addr = AllocateFromHugePage(reserved_size);
     if (addr == nullptr) {
       ROCKS_LOG_WARN(logger,
