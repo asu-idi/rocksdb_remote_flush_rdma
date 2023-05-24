@@ -39,6 +39,7 @@
 #include <stdlib.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <stdexcept>
 #include <unordered_set>
@@ -220,7 +221,7 @@ class MemTableRep {
   virtual size_t ApproximateMemoryUsage() = 0;
 
   virtual MemTableRep* CloneReadOnlyMemtableRep(
-      Allocator* allocator = new ConSharedArena) {
+      Allocator* allocator = ConSharedArena::CreateSharedConSharedArena()) {
     LOG("[ERROR] default Clone Api.");
     //  TODO: make this pure virtual
     return nullptr;
@@ -316,6 +317,20 @@ class MemTableRepFactory : public Customizable {
                                  const std::string& id,
                                  std::shared_ptr<MemTableRepFactory>* factory);
 
+  virtual MemTableRep* CreateMemtableRepFromShm(
+      const MemTableRep::KeyComparator&, Allocator*, const SliceTransform*,
+      Logger* logger) {
+    LOG("should not call default CreateMemtableRepFromShm");
+    return nullptr;
+  }
+  virtual MemTableRep* CreateMemtableRepFromShm(
+      const MemTableRep::KeyComparator& key_cmp, Allocator* allocator,
+      const SliceTransform* slice_transform, Logger* logger,
+      uint32_t /*cf_id*/) {
+    return CreateMemtableRepFromShm(key_cmp, allocator, slice_transform,
+                                    logger);
+  }
+
   virtual MemTableRep* CreateMemTableRep(const MemTableRep::KeyComparator&,
                                          Allocator*, const SliceTransform*,
                                          Logger* logger) = 0;
@@ -362,6 +377,10 @@ class SkipListFactory : public MemTableRepFactory {
   virtual MemTableRep* CreateMemTableRep(const MemTableRep::KeyComparator&,
                                          Allocator*, const SliceTransform*,
                                          Logger* logger) override;
+  using MemTableRepFactory::CreateMemtableRepFromShm;
+  virtual MemTableRep* CreateMemtableRepFromShm(
+      const MemTableRep::KeyComparator&, Allocator*, const SliceTransform*,
+      Logger* logger) override;
 
   bool IsInsertConcurrentlySupported() const override { return true; }
 

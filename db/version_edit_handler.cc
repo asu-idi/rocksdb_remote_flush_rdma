@@ -14,6 +14,7 @@
 
 #include "db/blob/blob_file_reader.h"
 #include "db/blob/blob_source.h"
+#include "db/column_family.h"
 #include "db/version_edit.h"
 #include "logging/logging.h"
 #include "monitoring/persistent_stats_history.h"
@@ -26,18 +27,21 @@ void VersionEditHandlerBase::Iterate(log::Reader& reader,
   std::string scratch;
   assert(log_read_status);
   assert(log_read_status->ok());
-
+  LOG("DEBUG");
   [[maybe_unused]] size_t recovered_edits = 0;
   Status s = Initialize();
+  LOG("DEBUG");
   while (reader.LastRecordEnd() < max_manifest_read_size_ && s.ok() &&
          reader.ReadRecord(&record, &scratch) && log_read_status->ok()) {
+    LOG("DEBUG");
     VersionEdit edit;
     s = edit.DecodeFrom(record);
     if (!s.ok()) {
       break;
     }
-
+    LOG("DEBUG");
     s = read_buffer_.AddEdit(&edit);
+    LOG("DEBUG");
     if (!s.ok()) {
       break;
     }
@@ -45,7 +49,9 @@ void VersionEditHandlerBase::Iterate(log::Reader& reader,
     if (edit.is_in_atomic_group_) {
       if (read_buffer_.IsFull()) {
         for (auto& e : read_buffer_.replay_buffer()) {
+          LOG("DEBUG");
           s = ApplyVersionEdit(e, &cfd);
+          LOG("DEBUG");
           if (!s.ok()) {
             break;
           }
@@ -57,18 +63,21 @@ void VersionEditHandlerBase::Iterate(log::Reader& reader,
         read_buffer_.Clear();
       }
     } else {
+      LOG("DEBUG");
       s = ApplyVersionEdit(edit, &cfd);
+      LOG("DEBUG");
       if (s.ok()) {
         ++recovered_edits;
       }
     }
   }
+  LOG("DEBUG");
   if (!log_read_status->ok()) {
     s = *log_read_status;
   }
-
+  LOG("DEBUG");
   CheckIterationResult(reader, &s);
-
+  LOG("DEBUG");
   if (!s.ok()) {
     if (s.IsCorruption()) {
       // when we find a Corruption error, something is
@@ -170,6 +179,10 @@ VersionEditHandler::VersionEditHandler(
 }
 
 Status VersionEditHandler::Initialize() {
+  LOG("call VersionEditHandler::Initialize,CHECK remote_flush:");
+  for (auto& cf : this->column_families_) {
+    LOG("remote_flush:", cf.options.server_use_remote_flush ? "true" : "false");
+  }
   Status s;
   if (!initialized_) {
     for (const auto& cf_desc : column_families_) {
@@ -179,10 +192,16 @@ Status VersionEditHandler::Initialize() {
     if (default_cf_iter == name_to_options_.end()) {
       s = Status::InvalidArgument("Default column family not specified");
     }
+    LOG("CHECK default cf remote_flush:",
+        default_cf_iter->second.server_use_remote_flush ? "true" : "false");
     if (s.ok()) {
       VersionEdit default_cf_edit;
       default_cf_edit.AddColumnFamily(kDefaultColumnFamilyName);
       default_cf_edit.SetColumnFamily(0);
+      auto& options_cf = default_cf_iter->second;
+      LOG("CHECK Init cf options: ", options_cf.server_use_remote_flush
+                                         ? "remote_flush triggered on"
+                                         : "remote flush not set");
       ColumnFamilyData* cfd =
           CreateCfAndInit(default_cf_iter->second, default_cf_edit);
       assert(cfd != nullptr);
@@ -197,6 +216,7 @@ Status VersionEditHandler::Initialize() {
 
 Status VersionEditHandler::ApplyVersionEdit(VersionEdit& edit,
                                             ColumnFamilyData** cfd) {
+  LOG("VersionEditHandler::ApplyVersionEdit")
   Status s;
   if (edit.is_column_family_add_) {
     s = OnColumnFamilyAdd(edit, cfd);
@@ -218,6 +238,7 @@ Status VersionEditHandler::ApplyVersionEdit(VersionEdit& edit,
 
 Status VersionEditHandler::OnColumnFamilyAdd(VersionEdit& edit,
                                              ColumnFamilyData** cfd) {
+  LOG("call OnColumnFamilyAdd ");
   bool cf_in_not_found = false;
   bool cf_in_builders = false;
   CheckColumnFamilyId(edit, &cf_in_not_found, &cf_in_builders);
@@ -480,18 +501,26 @@ void VersionEditHandler::CheckIterationResult(const log::Reader& reader,
 
 ColumnFamilyData* VersionEditHandler::CreateCfAndInit(
     const ColumnFamilyOptions& cf_options, const VersionEdit& edit) {
+  LOG("CreateCfAndInit,CHECK cf remote_flush:",
+      cf_options.server_use_remote_flush ? "true" : "false");
   ColumnFamilyData* cfd = version_set_->CreateColumnFamily(cf_options, &edit);
+  LOG("DEBUG");
   assert(cfd != nullptr);
   cfd->set_initialized();
+  LOG("DEBUG");
   assert(builders_.find(edit.column_family_) == builders_.end());
   builders_.emplace(edit.column_family_,
                     VersionBuilderUPtr(new BaseReferencedVersionBuilder(cfd)));
+  LOG("DEBUG");
   if (track_missing_files_) {
+    LOG("DEBUG");
     cf_to_missing_files_.emplace(edit.column_family_,
                                  std::unordered_set<uint64_t>());
+    LOG("DEBUG");
     cf_to_missing_blob_files_high_.emplace(edit.column_family_,
                                            kInvalidBlobFileNumber);
   }
+  LOG("CreateCfAndInit finish");
   return cfd;
 }
 

@@ -3,6 +3,7 @@
 //  COPYING file in the root directory) and Apache 2.0 License
 //  (found in the LICENSE.Apache file in the root directory).
 //
+#include <cassert>
 #include <random>
 
 #include "db/memtable.h"
@@ -12,6 +13,7 @@
 #include "memtable/inlineskiplist.h"
 #include "memtable/readonly_skiplisrep.h"
 #include "rocksdb/memtablerep.h"
+#include "rocksdb/slice_transform.h"
 #include "rocksdb/utilities/options_type.h"
 #include "util/logger.hpp"
 #include "util/string_util.h"
@@ -35,8 +37,12 @@ class SkipListRep : public MemTableRep {
         cmp_(compare),
         transform_(transform),
         lookahead_(lookahead) {
-    LOG("CHECK SkiplistRep allocator:", allocator);
+    LOG("CHECK SkiplistRep allocator:", std::hex, (long long)allocator,
+        std::dec, allocator->name());
   }
+  static SkipListRep* CreateSharedSkipListRep(
+      const MemTableRep::KeyComparator& compare, Allocator* allocator,
+      const SliceTransform* transform, const size_t lookahead);
 
   KeyHandle Allocate(const size_t len, char** buf) override {
     *buf = skip_list_.AllocateKey(len);
@@ -353,6 +359,17 @@ MemTableRep* SkipListRep::CloneReadOnlyMemtableRep(Allocator* allocator) {
       new (mem) ReadOnlySkipListRep(cmp_, allocator_, this->skip_list_.Clone());
   return ret;
 }
+
+// TODO: ptr: compare transform
+SkipListRep* SkipListRep::CreateSharedSkipListRep(
+    const MemTableRep::KeyComparator& compare, Allocator* allocator,
+    const SliceTransform* transform, const size_t lookahead) {
+  assert(strcmp(allocator->name(), "ConcurrentSharedArena") == 0);
+  auto mem = allocator->AllocateAligned(sizeof(SkipListRep));
+  auto* ptr = new (mem) SkipListRep(compare, allocator, transform, lookahead);
+  return ptr;
+}
+
 }  // namespace
 
 static std::unordered_map<std::string, OptionTypeInfo> skiplist_factory_info = {
@@ -377,9 +394,21 @@ std::string SkipListFactory::GetId() const {
 MemTableRep* SkipListFactory::CreateMemTableRep(
     const MemTableRep::KeyComparator& compare, Allocator* allocator,
     const SliceTransform* transform, Logger* /*logger*/) {
+  LOG("allocator->name()", allocator->name());
+  assert(strcmp(allocator->name(), "ConcurrentSharedArena") != 0);
   auto* ret = new SkipListRep(compare, allocator, transform, lookahead_);
   LOG("CreateMemtable rep: skiplist approximate memsize= ",
       ret->ApproximateMemoryUsage(), "ptr =", static_cast<void*>(ret));
+  return ret;
+}
+
+MemTableRep* SkipListFactory::CreateMemtableRepFromShm(
+    const MemTableRep::KeyComparator& compare, Allocator* allocator,
+    const SliceTransform* transform, Logger* logger) {
+  LOG("allocator->name() ", allocator->name());
+  assert(strcmp(allocator->name(), "ConcurrentSharedArena") == 0);
+  auto* ret = SkipListRep::CreateSharedSkipListRep(compare, allocator,
+                                                   transform, lookahead_);
   return ret;
 }
 

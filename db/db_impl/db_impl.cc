@@ -276,9 +276,10 @@ DBImpl::DBImpl(const DBOptions& options, const std::string& dbname,
                                  table_cache_.get(), write_buffer_manager_,
                                  &write_controller_, &block_cache_tracer_,
                                  io_tracer_, db_id_, db_session_id_));
+  LOG("Open ColumnFamilyMemTablesImpl");
   column_family_memtables_.reset(
       new ColumnFamilyMemTablesImpl(versions_->GetColumnFamilySet()));
-
+  LOG("Open ColumnFamilyMemTablesImpl finish");
   DumpRocksDBBuildVersion(immutable_db_options_.info_log.get());
   DumpDBFileSummary(immutable_db_options_, dbname_, db_session_id_);
   immutable_db_options_.Dump(immutable_db_options_.info_log.get());
@@ -601,21 +602,27 @@ Status DBImpl::CloseHelper() {
     auto cfd = PopFirstFromCompactionQueue();
     cfd->UnrefAndTryDelete();
   }
-
+  LOG("DEBUG");
   if (default_cf_handle_ != nullptr || persist_stats_cf_handle_ != nullptr) {
+    LOG("DEBUG");
     // we need to delete handle outside of lock because it does its own locking
     mutex_.Unlock();
     if (default_cf_handle_) {
+      LOG("DEBUG");
       delete default_cf_handle_;
+      LOG("DEBUG");
       default_cf_handle_ = nullptr;
     }
     if (persist_stats_cf_handle_) {
+      LOG("DEBUG");
       delete persist_stats_cf_handle_;
+      LOG("DEBUG");
       persist_stats_cf_handle_ = nullptr;
     }
+    LOG("DEBUG");
     mutex_.Lock();
   }
-
+  LOG("DEBUG");
   // Clean up obsolete files due to SuperVersion release.
   // (1) Need to delete to obsolete files before closing because RepairDB()
   // scans all existing files in the file system and builds manifest file.
@@ -675,7 +682,7 @@ Status DBImpl::CloseHelper() {
   // we can guarantee that after versions_.reset(), table cache is empty
   // so the cache can be safely destroyed.
   table_cache_->EraseUnRefEntries();
-
+  LOG("DEBUG");
   for (auto& txn_entry : recovered_transactions_) {
     delete txn_entry.second;
   }
@@ -683,12 +690,13 @@ Status DBImpl::CloseHelper() {
   // versions need to be destroyed before table_cache since it can hold
   // references to table_cache.
   versions_.reset();
+  LOG("DEBUG");
   mutex_.Unlock();
   if (db_lock_ != nullptr) {
     // TODO: Check for unlock error
     env_->UnlockFile(db_lock_).PermitUncheckedError();
   }
-
+  LOG("DEBUG");
   ROCKS_LOG_INFO(immutable_db_options_.info_log, "Shutdown complete");
   LogFlush(immutable_db_options_.info_log);
 
@@ -700,18 +708,18 @@ Status DBImpl::CloseHelper() {
         immutable_db_options_.sst_file_manager.get());
     sfm->Close();
   }
-
+  LOG("DEBUG");
   if (immutable_db_options_.info_log && own_info_log_) {
     Status s = immutable_db_options_.info_log->Close();
     if (!s.ok() && !s.IsNotSupported() && ret.ok()) {
       ret = s;
     }
   }
-
+  LOG("DEBUG");
   if (write_buffer_manager_ && wbm_stall_) {
     write_buffer_manager_->RemoveDBFromQueue(wbm_stall_.get());
   }
-
+  LOG("DEBUG");
   IOStatus io_s = directories_.Close(IOOptions(), nullptr /* dbg */);
   if (!io_s.ok()) {
     ret = io_s;
@@ -722,16 +730,17 @@ Status DBImpl::CloseHelper() {
     // retry. In this case, we wrap this exception to something else.
     return Status::Incomplete(ret.ToString());
   }
-
+  LOG("DEBUG");
   return ret;
 }
 
 Status DBImpl::CloseImpl() { return CloseHelper(); }
 
 DBImpl::~DBImpl() {
+  LOG("DEBUG");
   // TODO: remove this.
   init_logger_creation_s_.PermitUncheckedError();
-
+  LOG("DEBUG");
   InstrumentedMutexLock closing_lock_guard(&closing_mutex_);
   if (closed_) {
     return;
@@ -741,10 +750,12 @@ DBImpl::~DBImpl() {
 
   {
     const Status s = MaybeReleaseTimestampedSnapshotsAndCheck();
+    LOG("DEBUG");
     s.PermitUncheckedError();
   }
 
   closing_status_ = CloseImpl();
+  LOG("DEBUG");
   closing_status_.PermitUncheckedError();
 }
 
@@ -2100,6 +2111,7 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
   bool done = false;
   std::string* timestamp =
       ucmp->timestamp_size() > 0 ? get_impl_options.timestamp : nullptr;
+  LOG("");
   if (!skip_memtable) {
     // Get value associated with key
     if (get_impl_options.get_value) {
@@ -2111,6 +2123,7 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
               &max_covering_tombstone_seq, read_options,
               false /* immutable_memtable */, get_impl_options.callback,
               get_impl_options.is_blob_index)) {
+        LOG("");
         done = true;
 
         if (get_impl_options.value) {
@@ -2127,6 +2140,7 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
                               &merge_context, &max_covering_tombstone_seq,
                               read_options, get_impl_options.callback,
                               get_impl_options.is_blob_index)) {
+        LOG("");
         done = true;
 
         if (get_impl_options.value) {
@@ -2143,17 +2157,20 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
                        &max_covering_tombstone_seq, read_options,
                        false /* immutable_memtable */, nullptr, nullptr,
                        false)) {
+        LOG("");
         done = true;
         RecordTick(stats_, MEMTABLE_HIT);
       } else if ((s.ok() || s.IsMergeInProgress()) &&
                  sv->imm->GetMergeOperands(lkey, &s, &merge_context,
                                            &max_covering_tombstone_seq,
                                            read_options)) {
+        LOG("");
         done = true;
         RecordTick(stats_, MEMTABLE_HIT);
       }
     }
     if (!done && !s.ok() && !s.IsMergeInProgress()) {
+      LOG("");
       ReturnAndCleanupSuperVersion(cfd, sv);
       return s;
     }
@@ -2163,6 +2180,7 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
   PinnedIteratorsManager pinned_iters_mgr;
   if (!done) {
     PERF_TIMER_GUARD(get_from_output_files_time);
+    LOG("");
     sv->current->Get(
         read_options, lkey, get_impl_options.value, get_impl_options.columns,
         timestamp, &s, &merge_context, &max_covering_tombstone_seq,
@@ -2174,13 +2192,14 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
         get_impl_options.get_value);
     RecordTick(stats_, MEMTABLE_MISS);
   }
-
+  LOG("");
   {
     PERF_TIMER_GUARD(get_post_process_time);
 
     RecordTick(stats_, NUMBER_KEYS_READ);
     size_t size = 0;
     if (s.ok()) {
+      LOG("");
       if (get_impl_options.get_value) {
         if (get_impl_options.value) {
           size = get_impl_options.value->size();
@@ -2255,9 +2274,9 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
       RecordTick(stats_, BYTES_READ, size);
       PERF_COUNTER_ADD(get_read_bytes, size);
     }
-
+    LOG("");
     ReturnAndCleanupSuperVersion(cfd, sv);
-
+    LOG("");
     RecordInHistogram(stats_, BYTES_PER_READ, size);
   }
   return s;
@@ -4629,7 +4648,9 @@ Status DB::DestroyColumnFamilyHandle(ColumnFamilyHandle* column_family) {
     return Status::InvalidArgument(
         "Cannot destroy the handle returned by DefaultColumnFamily()");
   }
+  LOG("DEBUG");
   delete column_family;
+  LOG("DEBUG");
   return Status::OK();
 }
 

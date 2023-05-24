@@ -118,6 +118,7 @@ void ReadOnlyInlineSkipList<Comparator>::CHECK_all_addr() const {
     if (ptr == head_) {
       break;
     }
+    LOG("");
     // DecodedKey key_val = compare_.decode_key(ptr->key());
     // LOG("key:", std::hex, (long long)ptr, std::dec, " ", key_val.data());
   }
@@ -154,6 +155,12 @@ inline void ReadOnlyInlineSkipList<Comparator>::Iterator::SetList(
 }
 template <class Comparator>
 inline bool ReadOnlyInlineSkipList<Comparator>::Iterator::Valid() const {
+  LOG("Check iter valid");
+  if (node_ == nullptr) {
+    LOG("");
+  } else if (node_ == list_->head_) {
+    LOG("");
+  }
   return node_ != nullptr && node_ != list_->head_;
 }
 template <class Comparator>
@@ -188,7 +195,11 @@ inline void ReadOnlyInlineSkipList<Comparator>::Iterator::Seek(
 
 template <class Comparator>
 inline void ReadOnlyInlineSkipList<Comparator>::Iterator::SeekToFirst() {
+  LOG("Seek to first");
   node_ = list_->head_->next();
+  if (node_ == list_->head_) {
+    LOG("unvalid");
+  }
 }
 template <class Comparator>
 char* ReadOnlyInlineSkipList<Comparator>::AllocateKey(size_t key_size) {
@@ -229,6 +240,10 @@ class InlineSkipList {
   // No copying allowed
   InlineSkipList(const InlineSkipList&) = delete;
   InlineSkipList& operator=(const InlineSkipList&) = delete;
+
+  static InlineSkipList<Comparator>* CreateSharedInlineSkipList(
+      Comparator cmp, Allocator* allocator, int32_t max_height = 12,
+      int32_t branching_factor = 4);
 
   // Allocates a key and a skip-list node, returning a pointer to the key
   // portion of the node.  This method is thread-safe if the allocator
@@ -512,6 +527,20 @@ struct InlineSkipList<Comparator>::Node {
   // stored _earlier_, so level 1 is at next_[-1].
   std::atomic<Node*> next_[1];
 };
+
+// ptrs: allocator
+template <class Comparator>
+InlineSkipList<Comparator>*
+InlineSkipList<Comparator>::CreateSharedInlineSkipList(
+    Comparator cmp, Allocator* allocator, int32_t max_height,
+    int32_t branching_factor) {
+  assert(strcmp(allocator->name(), "ConcurrentSharedArena") == 0);
+  LOG("allocate shared inlineSkiplist");
+  void* mem = allocator->AllocateAligned(sizeof(InlineSkipList<Comparator>));
+  auto* ret = new (mem)
+      InlineSkipList<Comparator>(cmp, allocator, max_height, branching_factor);
+  return ret;
+}
 
 template <class Comparator>
 inline InlineSkipList<Comparator>::Iterator::Iterator(
@@ -1213,7 +1242,9 @@ ReadOnlyInlineSkipList<Comparator>* InlineSkipList<Comparator>::Clone() {
 template <class Comparator>
 ReadOnlyInlineSkipList<Comparator>::ReadOnlyInlineSkipList(
     const InlineSkipList<Comparator>& raw_skip_list_, const Comparator cmp)
-    : allocator_(new ConSharedArena), compare_(cmp), head_(AllocateNode(0)) {
+    : allocator_(ConSharedArena::CreateSharedConSharedArena()),
+      compare_(cmp),
+      head_(AllocateNode(0)) {
   head_->SetNext(head_);
   head_->SetPrev(head_);
   Node* insert = head_;

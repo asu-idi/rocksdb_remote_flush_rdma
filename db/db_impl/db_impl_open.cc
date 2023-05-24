@@ -6,6 +6,7 @@
 // Copyright (c) 2011 The LevelDB Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
+#include <cassert>
 #include <cinttypes>
 
 #include "db/builder.h"
@@ -20,6 +21,7 @@
 #include "logging/logging.h"
 #include "monitoring/persistent_stats_history.h"
 #include "options/options_helper.h"
+#include "rocksdb/options.h"
 #include "rocksdb/table.h"
 #include "rocksdb/wal_filter.h"
 #include "test_util/sync_point.h"
@@ -518,9 +520,16 @@ Status DBImpl::Recover(
   assert(db_id_.empty());
   Status s;
   bool missing_table_file = false;
+  LOG("Versions recover");
   if (!immutable_db_options_.best_efforts_recovery) {
+    LOG("recover not best effort");
+    for (auto& cf : column_families) {
+      LOG("user_remote_flush: ",
+          cf.options.server_use_remote_flush ? "true" : "false");
+    }
     s = versions_->Recover(column_families, read_only, &db_id_);
   } else {
+    LOG("recover best effort");
     assert(!files_in_dbname.empty());
     s = versions_->TryRecover(column_families, read_only, files_in_dbname,
                               &db_id_, &missing_table_file);
@@ -530,10 +539,12 @@ Status DBImpl::Recover(
           new ColumnFamilyMemTablesImpl(versions_->GetColumnFamilySet()));
     }
   }
+  LOG("Versions recover finish");
   if (!s.ok()) {
     return s;
   }
   if (s.ok() && !read_only) {
+    LOG("DEBUG");
     for (auto cfd : *versions_->GetColumnFamilySet()) {
       // Try to trivially move files down the LSM tree to start from bottommost
       // level when level_compaction_dynamic_level_bytes is enabled. This should
@@ -553,6 +564,7 @@ Status DBImpl::Recover(
               CompactionStyle::kCompactionStyleLevel &&
           cfd->ioptions()->level_compaction_dynamic_level_bytes &&
           !cfd->GetLatestMutableCFOptions()->disable_auto_compactions) {
+        LOG("DEBUG");
         int to_level = cfd->ioptions()->num_levels - 1;
         // last level is reserved
         if (cfd->ioptions()->allow_ingest_behind ||
@@ -577,6 +589,7 @@ Status DBImpl::Recover(
             if (!moved) {
               // lsm_state will look like "[1,2,3,4,5,6,0]" for an LSM with
               // 7 levels
+              LOG("DEBUG");
               std::string lsm_state = "[";
               for (int i = 0; i < cfd->ioptions()->num_levels; ++i) {
                 lsm_state += std::to_string(
@@ -599,9 +612,11 @@ Status DBImpl::Recover(
                 "[%s] Moving %zu files from from_level-%d to from_level-%d",
                 cfd->GetName().c_str(), level_files.size(), from_level,
                 to_level);
+            LOG("DEBUG");
             VersionEdit edit;
             edit.SetColumnFamily(cfd->GetID());
             for (const FileMetaData* f : level_files) {
+              LOG("DEBUG");
               edit.DeleteFile(from_level, f->fd.GetNumber());
               edit.AddFile(to_level, f->fd.GetNumber(), f->fd.GetPathId(),
                            f->fd.GetFileSize(), f->smallest, f->largest,
@@ -620,6 +635,7 @@ Status DBImpl::Recover(
                              cfd->GetName().c_str(), f->fd.GetNumber(),
                              from_level, to_level, f->fd.GetFileSize());
             }
+            LOG("DEBUG");
             recovery_ctx->UpdateVersionEdits(cfd, edit);
           }
           --to_level;
@@ -627,12 +643,13 @@ Status DBImpl::Recover(
       }
     }
   }
+  LOG("DEBUG");
   s = SetupDBId(read_only, recovery_ctx);
   ROCKS_LOG_INFO(immutable_db_options_.info_log, "DB ID: %s\n", db_id_.c_str());
   if (s.ok() && !read_only) {
     s = DeleteUnreferencedSstFiles(recovery_ctx);
   }
-
+  LOG("DEBUG");
   if (immutable_db_options_.paranoid_checks && s.ok()) {
     s = CheckConsistency();
   }
@@ -646,7 +663,7 @@ Status DBImpl::Recover(
       }
     }
   }
-
+  LOG("DEBUG");
   std::vector<std::string> files_in_wal_dir;
   if (s.ok()) {
     // Initial max_total_in_memory_state_ before recovery wals. Log recovery
@@ -761,6 +778,7 @@ Status DBImpl::Recover(
       }
       if (!s.ok()) {
         // Clear memtables if recovery failed
+        LOG("CreateNewMemtable");
         for (auto cfd : *versions_->GetColumnFamilySet()) {
           cfd->CreateNewMemtable(*cfd->GetLatestMutableCFOptions(),
                                  kMaxSequenceNumber);
@@ -768,7 +786,7 @@ Status DBImpl::Recover(
       }
     }
   }
-
+  LOG("DEBUG");
   if (read_only) {
     // If we are opening as read-only, we need to update options_file_number_
     // to reflect the most recent OPTIONS file. It does not matter for regular
@@ -808,6 +826,7 @@ Status DBImpl::Recover(
       versions_->options_file_size_ = options_file_size;
     }
   }
+  LOG("DEBUG");
   return s;
 }
 // ********************************************
@@ -1055,6 +1074,7 @@ Status DBImpl::RecoverLogFiles(const std::vector<uint64_t>& wal_numbers,
                                SequenceNumber* next_sequence, bool read_only,
                                bool* corrupted_wal_found,
                                RecoveryContext* recovery_ctx) {
+  LOG("call DBImpl::RecoverLogFiles,CEHCK operations");
   struct LogReporter : public log::Reader::Reporter {
     Env* env;
     Logger* info_log;
@@ -1481,7 +1501,7 @@ Status DBImpl::RecoverLogFiles(const std::vector<uint64_t>& wal_numbers,
 
   event_logger_.Log() << "job" << job_id << "event"
                       << "recovery_finished";
-
+  LOG("");
   return status;
 }
 
@@ -1707,6 +1727,9 @@ Status DBImpl::WriteLevel0TableForRecovery(int job_id, ColumnFamilyData* cfd,
 Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
   DBOptions db_options(options);
   ColumnFamilyOptions cf_options(options);
+  // note: server_use_remote_flush bind to cf_options
+  LOG("DB::Open check cf options remote_flush:",
+      cf_options.server_use_remote_flush ? "true" : "false");
   std::vector<ColumnFamilyDescriptor> column_families;
   column_families.push_back(
       ColumnFamilyDescriptor(kDefaultColumnFamilyName, cf_options));
@@ -1714,8 +1737,13 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
     column_families.push_back(
         ColumnFamilyDescriptor(kPersistentStatsColumnFamilyName, cf_options));
   }
+  for (auto& column_family : column_families) {
+    LOG("CHECK:remote_flush:",
+        column_family.options.server_use_remote_flush ? "true" : "false");
+  }
   std::vector<ColumnFamilyHandle*> handles;
   Status s = DB::Open(db_options, dbname, column_families, &handles, dbptr);
+  LOG("FINISH DB OPEN");
   if (s.ok()) {
     if (db_options.persist_stats_to_disk) {
       assert(handles.size() == 2);
@@ -1876,8 +1904,9 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
     max_write_buffer_size =
         std::max(max_write_buffer_size, cf.options.write_buffer_size);
   }
-
+  LOG("BEGIN IMPL CONSTRUCT");
   DBImpl* impl = new DBImpl(db_options, dbname, seq_per_batch, batch_per_txn);
+  LOG("FINISH IMPL CONSTRUCT");
   if (!impl->immutable_db_options_.info_log) {
     s = impl->init_logger_creation_s_;
     delete impl;
@@ -1923,10 +1952,18 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
 
   // Handles create_if_missing, error_if_exists
   uint64_t recovered_seq(kMaxSequenceNumber);
+  LOG("Call recover,check impl->column_families:");
+  for (auto& cf : column_families) {
+    LOG("cf options:=", cf.options.server_use_remote_flush == true
+                            ? "remote_flush"
+                            : "remote flush not used");
+  }
+  LOG("CHECK FINISH");
   s = impl->Recover(column_families, false /* read_only */,
                     false /* error_if_wal_file_exists */,
                     false /* error_if_data_exists_in_wals */, &recovered_seq,
                     &recovery_ctx);
+  LOG("Call recover finish");
   if (s.ok()) {
     uint64_t new_log_number = impl->versions_->NewFileNumber();
     log::Writer* new_log = nullptr;

@@ -538,10 +538,13 @@ class DB {
     assert(value != nullptr);
     PinnableSlice pinnable_val(value);
     assert(!pinnable_val.IsPinned());
+    LOG("");
     auto s = Get(options, column_family, key, &pinnable_val);
+    LOG("");
     if (s.ok() && pinnable_val.IsPinned()) {
       value->assign(pinnable_val.data(), pinnable_val.size());
     }  // else value is already assigned
+    LOG("");
     return s;
   }
   virtual Status Get(const ReadOptions& options,

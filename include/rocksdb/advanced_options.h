@@ -1108,7 +1108,7 @@ struct AdvancedColumnFamilyOptions {
   // Default: 0 (no protection)
   // Supported values: 0, 1, 2, 4, 8.
   uint32_t memtable_protection_bytes_per_key = 0;
-
+  bool server_use_remote_flush = false;
   // Create ColumnFamilyOptions with default values for all fields
   AdvancedColumnFamilyOptions();
   // Create ColumnFamilyOptions from Options

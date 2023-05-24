@@ -172,7 +172,8 @@ struct MutableCFOptions {
             options.memtable_protection_bytes_per_key),
         sample_for_compression(
             options.sample_for_compression),  // TODO: is 0 fine here?
-        compression_per_level(options.compression_per_level) {
+        compression_per_level(options.compression_per_level),
+        server_use_remote_flush(options.server_use_remote_flush) {
     RefreshDerivedOptions(options.num_levels, options.compaction_style);
   }
 
@@ -220,7 +221,8 @@ struct MutableCFOptions {
         bottommost_compression(kDisableCompressionOption),
         last_level_temperature(Temperature::kUnknown),
         memtable_protection_bytes_per_key(0),
-        sample_for_compression(0) {}
+        sample_for_compression(0),
+        server_use_remote_flush(false) {}
 
   explicit MutableCFOptions(const Options& options);
 
@@ -317,14 +319,16 @@ struct MutableCFOptions {
   // Derived options
   // Per-level target file size.
   std::vector<uint64_t> max_file_size;
+  bool server_use_remote_flush;
 };
 
 uint64_t MultiplyCheckOverflow(uint64_t op1, double op2);
 
 // Get the max file size in a given level.
-uint64_t MaxFileSizeForLevel(const MutableCFOptions& cf_options,
-    int level, CompactionStyle compaction_style, int base_level = 1,
-    bool level_compaction_dynamic_level_bytes = false);
+uint64_t MaxFileSizeForLevel(const MutableCFOptions& cf_options, int level,
+                             CompactionStyle compaction_style,
+                             int base_level = 1,
+                             bool level_compaction_dynamic_level_bytes = false);
 
 // Get the max size of an L0 file for which we will pin its meta-blocks when
 // `pin_l0_filter_and_index_blocks_in_cache` is set.

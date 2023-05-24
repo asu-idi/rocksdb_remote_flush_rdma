@@ -25,6 +25,7 @@
 #include "db/blob/blob_file_reader.h"
 #include "db/blob/blob_log_format.h"
 #include "db/blob/blob_source.h"
+#include "db/column_family.h"
 #include "db/compaction/compaction.h"
 #include "db/compaction/file_pri.h"
 #include "db/dbformat.h"
@@ -2263,7 +2264,7 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
                   bool* is_blob, bool do_merge) {
   Slice ikey = k.internal_key();
   Slice user_key = k.user_key();
-
+  LOG("Version::get :", ikey.data(), ',', user_key.data());
   assert(status->ok() || status->IsMergeInProgress());
 
   if (key_exists != nullptr) {
@@ -2304,7 +2305,7 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
                 &storage_info_.file_indexer_, user_comparator(),
                 internal_comparator());
   FdWithKeyRange* f = fp.GetNextFile();
-
+  LOG("");
   while (f != nullptr) {
     if (*max_covering_tombstone_seq > 0) {
       // The remaining files we look at will only contain covered keys, so we
@@ -2314,11 +2315,12 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
     if (get_context.sample()) {
       sample_file_read_inc(f->file_metadata);
     }
-
+    LOG("");
     bool timer_enabled =
         GetPerfLevel() >= PerfLevel::kEnableTimeExceptForMutex &&
         get_perf_context()->per_level_perf_context_enabled;
     StopWatchNano timer(clock_, timer_enabled /* auto_start */);
+    LOG("");
     *status = table_cache_->Get(
         read_options, *internal_comparator(), *f->file_metadata, ikey,
         &get_context, mutable_cf_options_.prefix_extractor,
@@ -2327,31 +2329,37 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
                         fp.IsHitFileLastInLevel()),
         fp.GetHitFileLevel(), max_file_size_for_l0_meta_pin_);
     // TODO: examine the behavior for corrupted key
+    LOG("");
     if (timer_enabled) {
       PERF_COUNTER_BY_LEVEL_ADD(get_from_table_nanos, timer.ElapsedNanos(),
                                 fp.GetHitFileLevel());
     }
+    LOG("");
     if (!status->ok()) {
       if (db_statistics_ != nullptr) {
         get_context.ReportCounters();
       }
       return;
     }
-
+    LOG("");
     // report the counters before returning
     if (get_context.State() != GetContext::kNotFound &&
         get_context.State() != GetContext::kMerge &&
         db_statistics_ != nullptr) {
       get_context.ReportCounters();
     }
+    LOG("");
     switch (get_context.State()) {
       case GetContext::kNotFound:
+        LOG("");
         // Keep searching in other files
         break;
       case GetContext::kMerge:
+        LOG("");
         // TODO: update per-level perfcontext user_key_return_count for kMerge
         break;
       case GetContext::kFound:
+        LOG("");
         if (fp.GetHitFileLevel() == 0) {
           RecordTick(db_statistics_, GET_HIT_L0);
         } else if (fp.GetHitFileLevel() == 1) {
@@ -4857,15 +4865,23 @@ VersionSet::VersionSet(const std::string& dbname,
 VersionSet::~VersionSet() {
   // we need to delete column_family_set_ because its destructor depends on
   // VersionSet
+  LOG("DEBUG");
   column_family_set_.reset();
+  LOG("DEBUG");
   for (auto& file : obsolete_files_) {
     if (file.metadata->table_reader_handle) {
+      LOG("DEBUG");
       table_cache_->Release(file.metadata->table_reader_handle);
+      LOG("DEBUG");
       TableCache::Evict(table_cache_, file.metadata->fd.GetNumber());
     }
+    LOG("DEBUG");
     file.DeleteMetadata();
+    LOG("DEBUG");
   }
+  LOG("DEBUG");
   obsolete_files_.clear();
+  LOG("DEBUG");
   io_status_.PermitUncheckedError();
 }
 
@@ -5651,6 +5667,7 @@ Status VersionSet::Recover(
     std::string* db_id, bool no_error_if_files_missing) {
   // Read "CURRENT" file, which contains a pointer to the current manifest
   // file
+  LOG("VersionSet::Recover begin");
   std::string manifest_path;
   Status s = GetCurrentManifestPath(dbname_, fs_.get(), &manifest_path,
                                     &manifest_file_number_);
@@ -5686,7 +5703,9 @@ Status VersionSet::Recover(
         read_only, column_families, const_cast<VersionSet*>(this),
         /*track_missing_files=*/false, no_error_if_files_missing, io_tracer_,
         EpochNumberRequirement::kMightMissing);
+    LOG("VersionEditHandler iterate");
     handler.Iterate(reader, &log_read_status);
+    LOG("VersionEditHandler iterate finish");
     s = handler.status();
     if (s.ok()) {
       log_number = handler.GetVersionEditParams().log_number_;
@@ -5722,7 +5741,7 @@ Status VersionSet::Recover(
                      cfd->GetName().c_str(), cfd->GetID(), cfd->GetLogNumber());
     }
   }
-
+  LOG("VersionSet::Recover finish");
   return s;
 }
 
@@ -6813,6 +6832,7 @@ void VersionSet::GetObsoleteFiles(std::vector<ObsoleteFileInfo>* files,
 
 ColumnFamilyData* VersionSet::CreateColumnFamily(
     const ColumnFamilyOptions& cf_options, const VersionEdit* edit) {
+  LOG("call VersionSet::CreateColumnFamily");
   assert(edit->is_column_family_add_);
 
   MutableCFOptions dummy_cf_options;
@@ -6836,9 +6856,14 @@ ColumnFamilyData* VersionSet::CreateColumnFamily(
   AppendVersion(new_cfd, v);
   // GetLatestMutableCFOptions() is safe here without mutex since the
   // cfd is not available to client
+  LOG("CHECK : new_cfd: remote_flush",
+      new_cfd->GetLatestMutableCFOptions()->server_use_remote_flush ? "true"
+                                                                    : "false");
   new_cfd->CreateNewMemtable(*new_cfd->GetLatestMutableCFOptions(),
                              LastSequence());
+  LOG("DEBUG");
   new_cfd->SetLogNumber(edit->log_number_);
+  LOG("DEBUG");
   return new_cfd;
 }
 

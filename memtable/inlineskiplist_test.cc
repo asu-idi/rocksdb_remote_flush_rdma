@@ -236,27 +236,52 @@ TEST_F(InlineSkipTest, DISABLED_Shared_Skiplist) {
   }
 }
 
-TEST_F(InlineSkipTest, Shared_Skiplist_Clone) {
+TEST_F(InlineSkipTest, DISABLED_ConSharedSkiplist) {
+  LOG("Shared Skiplist");
+  const int N = 4000;
+  const int R = 5000;
+  Random rnd(1000);
+  std::set<Key> keys;
+  ConSharedArena* arena_ptr = ConSharedArena::CreateSharedConSharedArena();
+  // ConSharedArena arena;
+  // InlineSkipList<TestComparator> list(cmp, &arena);
+  TestComparator cmp;
+  auto* list_p = InlineSkipList<TestComparator>::CreateSharedInlineSkipList(
+      cmp, arena_ptr);
+  for (int i = 0; i < N; i++) {
+    Key key = rnd.Next() % R;
+    if (keys.insert(key).second) {
+      LOG("insert key:", key);
+      char* buf = list_p->AllocateKey(sizeof(Key));
+      memcpy(buf, &key, sizeof(Key));
+      LOG("buf to insert:", (Key)(*buf));
+      list_p->Insert(buf);
+    }
+  }
+}
+TEST_F(InlineSkipTest, ConSharedSkiplist_Clone) {
   LOG("Shared Skiplist");
   const int N = 5;
   const int R = 5000;
   Random rnd(1000);
   std::set<Key> keys;
-  ConSharedArena arena;
+  ConSharedArena* arena = ConSharedArena::CreateSharedConSharedArena();
   TestComparator cmp;
-  InlineSkipList<TestComparator> list(cmp, &arena);
+  InlineSkipList<TestComparator>* list =
+      InlineSkipList<TestComparator>::CreateSharedInlineSkipList(cmp, arena);
+  // InlineSkipList<TestComparator> list(cmp, &arena);
   for (int i = 0; i < N; i++) {
     Key key = rnd.Next() % R;
     if (keys.insert(key).second) {
       LOG("insert key:", key);
-      char* buf = list.AllocateKey(sizeof(Key));
+      char* buf = list->AllocateKey(sizeof(Key));
       memcpy(buf, &key, sizeof(Key));
       LOG("buf to insert:", (Key)(*buf));
-      list.Insert(buf);
+      list->Insert(buf);
     }
   }
-  list.CHECK_all_addr();
-  ReadOnlyInlineSkipList<TestComparator>* readonly_list = list.Clone();
+  list->CHECK_all_addr();
+  ReadOnlyInlineSkipList<TestComparator>* readonly_list = list->Clone();
   readonly_list->CHECK_all_addr();
 }
 

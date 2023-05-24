@@ -28,6 +28,10 @@ class ConSharedArena : public BasicArena {
   // No copying allowed
   ConSharedArena(const ConSharedArena&) = delete;
   void operator=(const ConSharedArena&) = delete;
+  // auto operator new(size_t size) -> void* = delete;
+  // void operator delete(void* ptr) = delete;
+  // auto operator new[](size_t size) -> void* = delete;
+  // void operator delete[](void* ptr) = delete;
 
   const char* name() const override { return "ConcurrentSharedArena"; }
   static constexpr size_t kInlineSize = 4096;
