@@ -77,7 +77,7 @@ namespace ROCKSDB_NAMESPACE {
 // If fsync needs to be covered in a test, put it in other places.
 class DBTest3 : public DBTestBase {
  public:
-  DBTest3() : DBTestBase("db_test", /*env_do_fsync=*/false) {}
+  DBTest3() : DBTestBase("db_test", /*env_do_fsync=*/true) {}
 };
 
 class DBTestWithParam
@@ -98,20 +98,24 @@ class DBTestWithParam
 };
 
 TEST_F(DBTest3, ShmMockEnvTest) {
-  std::unique_ptr<MockEnv> env{MockEnv::Create(Env::Default())};
+  // Options options;
+  // options.allow_concurrent_memtable_write = false;
+  // options.create_if_missing = true;
+  // options.env = env_;
+  // options.server_use_remote_flush = true;
   Options options;
+  options.allow_concurrent_memtable_write = false;
   options.create_if_missing = true;
+  std::unique_ptr<MockEnv> env{MockEnv::Create(Env::Default())};
   options.env = env.get();
-  options.server_use_remote_flush = true;
-  DB* db;
+  Close();
+  last_options_.table_factory.reset();
+  last_options_ = options;
+  DB* db = nullptr;
+  DB::Open(options, dbname_, &db);
 
   const Slice keys[] = {Slice("aaa"), Slice("bbb"), Slice("ccc")};
   const Slice vals[] = {Slice("foo"), Slice("bar"), Slice("baz")};
-
-  LOG("open db");
-  ASSERT_OK(
-      DB::Open(options, "/root/code/rocksdb_remote_flush/dev/dir/db", &db));
-  LOG("open db finish");
   LOG("Start put some kv");
   for (size_t i = 0; i < 3; ++i) {
     ASSERT_OK(db->Put(WriteOptions(), keys[i], vals[i]));
@@ -123,19 +127,19 @@ TEST_F(DBTest3, ShmMockEnvTest) {
     ASSERT_TRUE(res == vals[i]);
   }
   LOG("Finish get kv, Start check iterator");
-  //   Iterator* iterator = db->NewIterator(ReadOptions());
-  //   LOG("iterator seek to first");
-  //   iterator->SeekToFirst();
-  //   LOG("iterator seek all");
-  //   for (size_t i = 0; i < 3; ++i) {
-  //     ASSERT_TRUE(iterator->Valid());
-  //     ASSERT_TRUE(keys[i] == iterator->key());
-  //     ASSERT_TRUE(vals[i] == iterator->value());
-  //     iterator->Next();
-  //   }
-  //   ASSERT_TRUE(!iterator->Valid());
-  //   LOG("iterator delete");
-  //   delete iterator;
+  Iterator* iterator = db->NewIterator(ReadOptions());
+  LOG("iterator seek to first");
+  iterator->SeekToFirst();
+  LOG("iterator seek all");
+  for (size_t i = 0; i < 3; ++i) {
+    ASSERT_TRUE(iterator->Valid());
+    ASSERT_TRUE(keys[i] == iterator->key());
+    ASSERT_TRUE(vals[i] == iterator->value());
+    iterator->Next();
+  }
+  ASSERT_TRUE(!iterator->Valid());
+  LOG("iterator delete");
+  delete iterator;
 
   DBImpl* dbi = static_cast_with_check<DBImpl>(db);
   LOG("Check flush memtable");

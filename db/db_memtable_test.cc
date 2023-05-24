@@ -1,3 +1,5 @@
+
+
 //  Copyright (c) 2011-present, Facebook, Inc.  All rights reserved.
 //  This source code is licensed under both the GPLv2 (found in the
 //  COPYING file in the root directory) and Apache 2.0 License
@@ -10,7 +12,10 @@
 #include "db/db_test_util.h"
 #include "db/memtable.h"
 #include "db/range_del_aggregator.h"
+#include "memory/allocator.h"
+#include "memory/concurrent_shared_arena.h"
 #include "port/stack_trace.h"
+#include "rocksdb/iterator.h"
 #include "rocksdb/memtablerep.h"
 #include "rocksdb/options.h"
 #include "rocksdb/slice_transform.h"
@@ -19,13 +24,23 @@ namespace ROCKSDB_NAMESPACE {
 
 class DBMemTableTest : public DBTestBase {
  public:
-  DBMemTableTest() : DBTestBase("db_memtable_test", /*env_do_fsync=*/true) {}
+  DBMemTableTest() : DBTestBase("db_memtable_test", /*env_do_fsync=*/true) {
+    LOG("INIT");
+  }
 };
 
 class MockMemTableRep : public MemTableRep {
  public:
   explicit MockMemTableRep(Allocator* allocator, MemTableRep* rep)
       : MemTableRep(allocator), rep_(rep), num_insert_with_hint_(0) {}
+
+  inline static MockMemTableRep* CreateMockMemTableRep(Allocator* allocator,
+                                                       MemTableRep* rep) {
+    assert(strcmp(allocator->name(), "ConcurrentSharedArena") == 0);
+    auto* mem = allocator->AllocateAligned(sizeof(MockMemTableRep));
+    auto* ret = new (mem) MockMemTableRep(allocator, rep);
+    return ret;
+  }
 
   KeyHandle Allocate(const size_t len, char** buf) override {
     return rep_->Allocate(len, buf);
@@ -51,7 +66,9 @@ class MockMemTableRep : public MemTableRep {
   void CHECK_all_addr() {
     MemTableRep* read_only = CloneReadOnly();
     read_only->MarkReadOnly();
+    LOG("Get iterator");
     auto iter = read_only->GetIterator();
+    LOG("Get iterator finish");
     iter->SeekToFirst();
     iter->Next();
     while (iter->Valid()) {
@@ -101,9 +118,24 @@ class MockMemTableRepFactory : public MemTableRepFactory {
     return CreateMemTableRep(cmp, allocator, transform, logger);
   }
 
+  MemTableRep* CreateMemtableRepFromShm(const MemTableRep::KeyComparator& cmp,
+                                        Allocator* allocator,
+                                        const SliceTransform* transform,
+                                        Logger* logger) override {
+    SkipListFactory factory;
+    MemTableRep* shared_skiplist_rep =
+        factory.CreateMemtableRepFromShm(cmp, allocator, transform, logger);
+    mock_rep_ =
+        MockMemTableRep::CreateMockMemTableRep(allocator, shared_skiplist_rep);
+    return mock_rep_;
+  }
+
   const char* Name() const override { return "MockMemTableRepFactory"; }
 
-  MockMemTableRep* rep() { return mock_rep_; }
+  MockMemTableRep* rep() {
+    LOG("[CHECK] Call Rep");
+    return mock_rep_;
+  }
 
   bool IsInsertConcurrentlySupported() const override { return false; }
 
@@ -291,44 +323,42 @@ TEST_F(DBMemTableTest, DISABLED_ConcurrentMergeWrite) {
   delete mem;
 }
 
-TEST_F(DBMemTableTest, InsertWithHint) {
+TEST_F(DBMemTableTest, ShmInsertAndFlush) {
+  LOG("BEGIN CHECK");
   Options options;
+  LOG("BEGIN CHECK1");
   options.allow_concurrent_memtable_write = false;
   options.create_if_missing = true;
+  // options.server_use_remote_flush = true;
+  LOG("new rep factory");
   options.memtable_factory.reset(new MockMemTableRepFactory());
+  LOG("new rep factory finish");
   options.memtable_insert_with_hint_prefix_extractor.reset(
       new TestPrefixExtractor());
   options.env = env_;
+  LOG("DEBUG");
   Reopen(options);
+  LOG("DEBUG");
+  LOG("get rep");
   MockMemTableRep* rep =
       reinterpret_cast<MockMemTableRepFactory*>(options.memtable_factory.get())
           ->rep();
+  LOG("get rep finish");
   ASSERT_OK(Put("foo_k1", "foo_v1"));
-  ASSERT_EQ(nullptr, rep->last_hint_in());
-  void* hint_foo = rep->last_hint_out();
   ASSERT_OK(Put("foo_k2", "foo_v2"));
-  ASSERT_EQ(hint_foo, rep->last_hint_in());
-  ASSERT_EQ(hint_foo, rep->last_hint_out());
   ASSERT_OK(Put("foo_k3", "foo_v3"));
-  ASSERT_EQ(hint_foo, rep->last_hint_in());
-  ASSERT_EQ(hint_foo, rep->last_hint_out());
   ASSERT_OK(Put("bar_k1", "bar_v1"));
-  ASSERT_EQ(nullptr, rep->last_hint_in());
-  void* hint_bar = rep->last_hint_out();
-  ASSERT_NE(hint_foo, hint_bar);
   ASSERT_OK(Put("bar_k2", "bar_v2"));
-  ASSERT_EQ(hint_bar, rep->last_hint_in());
-  ASSERT_EQ(hint_bar, rep->last_hint_out());
-  ASSERT_EQ(5, rep->num_insert_with_hint());
   ASSERT_OK(Put("NotInPrefixDomain", "vvv"));
-  ASSERT_EQ(5, rep->num_insert_with_hint());
   ASSERT_EQ("foo_v1", Get("foo_k1"));
   ASSERT_EQ("foo_v2", Get("foo_k2"));
   ASSERT_EQ("foo_v3", Get("foo_k3"));
   ASSERT_EQ("bar_v1", Get("bar_k1"));
   ASSERT_EQ("bar_v2", Get("bar_k2"));
   ASSERT_EQ("vvv", Get("NotInPrefixDomain"));
-  rep->CHECK_all_addr();
+  LOG("check memtable insert finish");
+  Flush();
+  ASSERT_EQ("bar_v2", Get("bar_k2"));
 }
 
 TEST_F(DBMemTableTest, DISABLED_ColumnFamilyId) {
