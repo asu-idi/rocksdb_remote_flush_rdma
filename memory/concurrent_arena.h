@@ -17,6 +17,7 @@
 #include "port/lang.h"
 #include "port/likely.h"
 #include "util/core_local.h"
+#include "util/logger.hpp"
 #include "util/mutexlock.h"
 #include "util/thread_local.h"
 
@@ -39,8 +40,9 @@ class Logger;
 // only if ConcurrentArena actually notices concurrent use, and they
 // adjust their size so that there is no fragmentation waste when the
 // shard blocks are allocated from the underlying main arena.
-class ConcurrentArena : public Allocator {
+class ConcurrentArena : public BasicArena {
  public:
+  const char* name() const override { return "ConcurrentArena"; }
   // block_size and huge_page_size are the same as for Arena (and are
   // in fact just passed to the constructor of arena_.  The core-local
   // shards compute their shard_block_size as a fraction of block_size
@@ -67,26 +69,30 @@ class ConcurrentArena : public Allocator {
                         });
   }
 
-  size_t ApproximateMemoryUsage() const {
+  size_t ApproximateMemoryUsage() const override {
     std::unique_lock<SpinMutex> lock(arena_mutex_, std::defer_lock);
     lock.lock();
     return arena_.ApproximateMemoryUsage() - ShardAllocatedAndUnused();
   }
 
-  size_t MemoryAllocatedBytes() const {
+  size_t MemoryAllocatedBytes() const override {
     return memory_allocated_bytes_.load(std::memory_order_relaxed);
   }
 
-  size_t AllocatedAndUnused() const {
+  size_t AllocatedAndUnused() const override {
     return arena_allocated_and_unused_.load(std::memory_order_relaxed) +
            ShardAllocatedAndUnused();
   }
 
-  size_t IrregularBlockNum() const {
+  size_t IrregularBlockNum() const override {
     return irregular_block_num_.load(std::memory_order_relaxed);
   }
 
   size_t BlockSize() const override { return arena_.BlockSize(); }
+  bool IsInInlineBlock() const override {
+    LOG("should not use this function");
+    return false;
+  }
 
  private:
   struct Shard {

@@ -34,6 +34,8 @@ class Logger;
 // TODO: multi thread
 class SharedArena : public Allocator {
  public:
+  const char* name() const override { return "SharedArena"; }
+
   SharedArena(const SharedArena&) = delete;
   void operator=(const SharedArena&) = delete;
   explicit SharedArena(size_t block_size = Arena::kMinBlockSize,
