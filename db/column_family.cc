@@ -25,12 +25,15 @@
 #include "db/db_impl/db_impl.h"
 #include "db/internal_stats.h"
 #include "db/job_context.h"
+#include "db/memtable.h"
 #include "db/range_del_aggregator.h"
 #include "db/table_properties_collector.h"
 #include "db/version_set.h"
 #include "db/write_controller.h"
 #include "file/sst_file_manager_impl.h"
 #include "logging/logging.h"
+#include "memory/concurrent_shared_arena.h"
+#include "memory/shared_mem_basic.h"
 #include "monitoring/thread_status_util.h"
 #include "options/options_helper.h"
 #include "port/port.h"
@@ -662,13 +665,15 @@ ColumnFamilyData::~ColumnFamilyData() {
     // If it's dropped, it's already removed from column family set
     // If column_family_set_ == nullptr, this is dummy CFD and not in
     // ColumnFamilySet
+    LOG("DEBUG");
     column_family_set_->RemoveColumnFamily(this);
+    LOG("DEBUG");
   }
-
+  LOG("DEBUG");
   if (current_ != nullptr) {
     current_->Unref();
   }
-
+  LOG("DEBUG");
   // It would be wrong if this ColumnFamilyData is in flush_queue_ or
   // compaction_queue_ and we destroyed it
   assert(!queued_for_flush_);
@@ -677,21 +682,31 @@ ColumnFamilyData::~ColumnFamilyData() {
 
   if (dummy_versions_ != nullptr) {
     // List must be empty
+    LOG("DEBUG");
     assert(dummy_versions_->Next() == dummy_versions_);
     bool deleted __attribute__((__unused__));
     deleted = dummy_versions_->Unref();
     assert(deleted);
   }
-
+  LOG("DEBUG");
   if (mem_ != nullptr) {
-    delete mem_->Unref();
+    if (this->initial_cf_options().server_use_remote_flush == true) {
+      // TODO: check memtable free!
+      mem_->Unref();
+    } else {
+      delete mem_->Unref();
+    }
+    LOG("DEBUG");
   }
   autovector<MemTable*> to_delete;
+  LOG("DEBUG");
   imm_.current()->Unref(&to_delete);
   for (MemTable* m : to_delete) {
+    LOG("DEBUG");
     delete m;
+    LOG("DEBUG");
   }
-
+  LOG("DEBUG");
   if (db_paths_registered_) {
     // TODO(cc): considering using ioptions_.fs, currently some tests rely on
     // EnvWrapper, that's the main reason why we use env here.
@@ -708,10 +723,13 @@ ColumnFamilyData::~ColumnFamilyData() {
 bool ColumnFamilyData::UnrefAndTryDelete() {
   int old_refs = refs_.fetch_sub(1);
   assert(old_refs > 0);
-
+  LOG("DEBUG");
   if (old_refs == 1) {
+    LOG("DEBUG");
     assert(super_version_ == nullptr);
+    LOG("DEBUG");
     delete this;
+    LOG("DEBUG");
     return true;
   }
 
@@ -719,15 +737,18 @@ bool ColumnFamilyData::UnrefAndTryDelete() {
     // Only the super_version_ holds me
     SuperVersion* sv = super_version_;
     super_version_ = nullptr;
-
+    LOG("DEBUG");
     // Release SuperVersion references kept in ThreadLocalPtr.
     local_sv_.reset();
-
+    LOG("DEBUG");
     if (sv->Unref()) {
       // Note: sv will delete this ColumnFamilyData during Cleanup()
       assert(sv->cfd == this);
+      LOG("DEBUG");
       sv->Cleanup();
+      LOG("DEBUG");
       delete sv;
+      LOG("DEBUG");
       return true;
     }
   }
@@ -1098,9 +1119,20 @@ uint64_t ColumnFamilyData::GetLiveSstFilesSize() const {
 
 MemTable* ColumnFamilyData::ConstructNewMemtable(
     const MutableCFOptions& mutable_cf_options, SequenceNumber earliest_seq) {
-  auto* memtable_ =
-      new MemTable(internal_comparator_, ioptions_, mutable_cf_options,
-                   write_buffer_manager_, earliest_seq, id_);
+  MemTable* memtable_ = nullptr;
+  if (mutable_cf_options.server_use_remote_flush == false) {
+    memtable_ =
+        new MemTable(internal_comparator_, ioptions_, mutable_cf_options,
+                     write_buffer_manager_, earliest_seq, id_);
+  } else {
+    LOG("alloc memtable in shared_mem");
+    // TODO: move allocator to shared mem
+    auto* allocator = ConSharedArena::CreateSharedConSharedArena();
+    void* mem = allocator->AllocateAligned(sizeof(MemTable));
+    memtable_ =
+        new (mem) MemTable(internal_comparator_, ioptions_, mutable_cf_options,
+                           write_buffer_manager_, earliest_seq, id_);
+  }
   LOG("ColumnFamilyData::ConstructNewMemtable Alloc memtable finish: ptr =",
       static_cast<void*>(memtable_), ' ', memtable_->GetID());
   return memtable_;
@@ -1109,10 +1141,19 @@ MemTable* ColumnFamilyData::ConstructNewMemtable(
 void ColumnFamilyData::CreateNewMemtable(
     const MutableCFOptions& mutable_cf_options, SequenceNumber earliest_seq) {
   if (mem_ != nullptr) {
-    delete mem_->Unref();
+    if (this->initial_cf_options().server_use_remote_flush == true) {
+      // TODO: check memtable free!
+      LOG("CHECK");
+      mem_->Unref();
+    } else {
+      delete mem_->Unref();
+    }
+    LOG("DEBUG");
   }
-  SetMemtable(ConstructNewMemtable(mutable_cf_options, earliest_seq));
+  MemTable* ptr = ConstructNewMemtable(mutable_cf_options, earliest_seq);
+  SetMemtable(ptr);
   mem_->Ref();
+  LOG("DEBUG");
 }
 
 bool ColumnFamilyData::NeedsCompaction() const {
@@ -1607,7 +1648,9 @@ ColumnFamilyData* ColumnFamilySet::CreateColumnFamily(
     const std::string& name, uint32_t id, Version* dummy_versions,
     const ColumnFamilyOptions& options) {
   assert(column_families_.find(name) == column_families_.end());
-  ColumnFamilyData* new_cfd = new ColumnFamilyData(
+  LOG("CreateColumnFamily: new cfd,check remote flush:",
+      options.server_use_remote_flush ? "true" : "false");
+  auto* new_cfd = new ColumnFamilyData(
       id, name, dummy_versions, table_cache_, write_buffer_manager_, options,
       *db_options_, &file_options_, this, block_cache_tracer_, io_tracer_,
       db_id_, db_session_id_);
@@ -1623,6 +1666,7 @@ ColumnFamilyData* ColumnFamilySet::CreateColumnFamily(
   if (id == 0) {
     default_cfd_cache_ = new_cfd;
   }
+  LOG("CreateColumnFamily: new cfd finish");
   return new_cfd;
 }
 

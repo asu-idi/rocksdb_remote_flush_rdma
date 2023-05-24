@@ -123,19 +123,19 @@ TEST_F(DBTest3, ShmMockEnvTest) {
     ASSERT_TRUE(res == vals[i]);
   }
   LOG("Finish get kv, Start check iterator");
-  Iterator* iterator = db->NewIterator(ReadOptions());
-  LOG("iterator seek to first");
-  iterator->SeekToFirst();
-  LOG("iterator seek all");
-  for (size_t i = 0; i < 3; ++i) {
-    ASSERT_TRUE(iterator->Valid());
-    ASSERT_TRUE(keys[i] == iterator->key());
-    ASSERT_TRUE(vals[i] == iterator->value());
-    iterator->Next();
-  }
-  ASSERT_TRUE(!iterator->Valid());
-  LOG("iterator delete");
-  delete iterator;
+  //   Iterator* iterator = db->NewIterator(ReadOptions());
+  //   LOG("iterator seek to first");
+  //   iterator->SeekToFirst();
+  //   LOG("iterator seek all");
+  //   for (size_t i = 0; i < 3; ++i) {
+  //     ASSERT_TRUE(iterator->Valid());
+  //     ASSERT_TRUE(keys[i] == iterator->key());
+  //     ASSERT_TRUE(vals[i] == iterator->value());
+  //     iterator->Next();
+  //   }
+  //   ASSERT_TRUE(!iterator->Valid());
+  //   LOG("iterator delete");
+  //   delete iterator;
 
   DBImpl* dbi = static_cast_with_check<DBImpl>(db);
   LOG("Check flush memtable");

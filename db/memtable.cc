@@ -23,7 +23,10 @@
 #include "db/read_callback.h"
 #include "db/wide/wide_column_serialization.h"
 #include "logging/logging.h"
+#include "memory/allocator.h"
 #include "memory/arena.h"
+#include "memory/concurrent_arena.h"
+#include "memory/concurrent_shared_arena.h"
 #include "memory/memory_usage.h"
 #include "monitoring/perf_context_imp.h"
 #include "monitoring/statistics.h"
@@ -68,18 +71,13 @@ ImmutableMemTableOptions::ImmutableMemTableOptions(
       info_log(ioptions.logger),
       allow_data_in_errors(ioptions.allow_data_in_errors),
       protection_bytes_per_key(
-          mutable_cf_options.memtable_protection_bytes_per_key) {}
+          mutable_cf_options.memtable_protection_bytes_per_key),
+      server_use_remtoe_flush(mutable_cf_options.server_use_remote_flush) {}
 
 Status MemTable::CloneToRemote(const void* memtable_ptr) {
   auto* local_memtable =
       reinterpret_cast<MemTable*>(const_cast<void*>(memtable_ptr));
-  // ImmutableMemTableOptions
-  // auto* shared_memtable =
-  //     new MemTable(local_memtable->GetInternalKeyComparator(),
-  //     local_memtable.);
-  // auto* memtable_ =
-  //   new MemTable(internal_comparator_, ioptions_, mutable_cf_options,
-  //                write_buffer_manager_, earliest_seq, id_);
+
   return Status::OK();
 }
 
@@ -93,19 +91,40 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
       refs_(0),
       kArenaBlockSize(Arena::OptimizeBlockSize(moptions_.arena_block_size)),
       mem_tracker_(write_buffer_manager),
-      arena_(moptions_.arena_block_size,
-             (write_buffer_manager != nullptr &&
-              (write_buffer_manager->enabled() ||
-               write_buffer_manager->cost_to_cache()))
-                 ? &mem_tracker_
-                 : nullptr,
-             mutable_cf_options.memtable_huge_page_size),
-      table_(ioptions.memtable_factory->CreateMemTableRep(
-          comparator_, &arena_, mutable_cf_options.prefix_extractor.get(),
-          ioptions.logger, column_family_id)),
-      range_del_table_(SkipListFactory().CreateMemTableRep(
-          comparator_, &arena_, nullptr /* transform */, ioptions.logger,
-          column_family_id)),
+      arena_(mutable_cf_options.server_use_remote_flush
+                 ? static_cast<BasicArena*>(
+                       ConSharedArena::CreateSharedConSharedArena(
+                           mutable_cf_options.arena_block_size,
+                           //  (write_buffer_manager != nullptr &&
+                           // (write_buffer_manager->enabled() ||
+                           //  write_buffer_manager->cost_to_cache()))
+                           //    ? &mem_tracker_:
+                           nullptr, mutable_cf_options.memtable_huge_page_size))
+                 : static_cast<BasicArena*>(new ConcurrentArena(
+                       moptions_.arena_block_size,
+                       //  (write_buffer_manager != nullptr &&
+                       //   (write_buffer_manager->enabled() ||
+                       //    write_buffer_manager->cost_to_cache()))
+                       //      ? &mem_tracker_:
+                       nullptr, mutable_cf_options.memtable_huge_page_size))),
+      // TODO: fix ConSharedArena
+      table_(mutable_cf_options.server_use_remote_flush
+                 ? ioptions.memtable_factory->CreateMemtableRepFromShm(
+                       comparator_, arena_,
+                       mutable_cf_options.prefix_extractor.get(),
+                       ioptions.logger, column_family_id)
+                 : ioptions.memtable_factory->CreateMemTableRep(
+                       comparator_, arena_,
+                       mutable_cf_options.prefix_extractor.get(),
+                       ioptions.logger, column_family_id)),
+      range_del_table_(
+          mutable_cf_options.server_use_remote_flush
+              ? ioptions.memtable_factory->CreateMemtableRepFromShm(
+                    comparator_, arena_, nullptr /* transform */,
+                    ioptions.logger, column_family_id)
+              : SkipListFactory().CreateMemTableRep(
+                    comparator_, arena_, nullptr /* transform */,
+                    ioptions.logger, column_family_id)),
       is_range_del_table_empty_(true),
       data_size_(0),
       num_entries_(0),
@@ -130,6 +149,7 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
       oldest_key_time_(std::numeric_limits<uint64_t>::max()),
       atomic_flush_seqno_(kMaxSequenceNumber),
       approximate_memory_usage_(0) {
+  LOG("");
   UpdateFlushState();
   // something went wrong if we need to flush before inserting anything
   assert(!ShouldScheduleFlush());
@@ -138,7 +158,7 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
   if ((prefix_extractor_ || moptions_.memtable_whole_key_filtering) &&
       moptions_.memtable_prefix_bloom_bits > 0) {
     bloom_filter_.reset(
-        new DynamicBloom(&arena_, moptions_.memtable_prefix_bloom_bits,
+        new DynamicBloom(arena_, moptions_.memtable_prefix_bloom_bits,
                          6 /* hard coded 6 probes */,
                          moptions_.memtable_huge_page_size, ioptions.logger));
   }
@@ -158,17 +178,19 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
                                                            new_cache.get()),
         std::memory_order_relaxed);
   }
+  LOG("");
 }
 
 MemTable::~MemTable() {
   LOG("Memtable ", this->GetID(), "destruct, ptr=", this->table_.get());
   mem_tracker_.FreeMem();
+  LOG("finish ");
   assert(refs_ == 0);
 }
 
 size_t MemTable::ApproximateMemoryUsage() {
   autovector<size_t> usages = {
-      arena_.ApproximateMemoryUsage(), table_->ApproximateMemoryUsage(),
+      arena_->ApproximateMemoryUsage(), table_->ApproximateMemoryUsage(),
       range_del_table_->ApproximateMemoryUsage(),
       ROCKSDB_NAMESPACE::ApproximateMemoryUsage(insert_hints_)};
   size_t total_usage = 0;
@@ -199,7 +221,7 @@ bool MemTable::ShouldFlushNow() {
   // shouldn't flush.
   auto allocated_memory = table_->ApproximateMemoryUsage() +
                           range_del_table_->ApproximateMemoryUsage() +
-                          arena_.MemoryAllocatedBytes();
+                          arena_->MemoryAllocatedBytes();
 
   approximate_memory_usage_.store(allocated_memory, std::memory_order_relaxed);
 
@@ -242,7 +264,7 @@ bool MemTable::ShouldFlushNow() {
   // NOTE: the average percentage of waste space of this approach can be counted
   // as: "arena block size * 0.25 / write buffer size". User who specify a small
   // write buffer size and/or big arena block size may suffer.
-  return arena_.AllocatedAndUnused() < kArenaBlockSize / 4;
+  return arena_->AllocatedAndUnused() < kArenaBlockSize / 4;
 }
 
 void MemTable::UpdateFlushState() {
@@ -893,7 +915,6 @@ Status MemTable::Add(SequenceNumber s, ValueType type,
 
 // Callback from MemTable::Get()
 namespace {
-
 struct Saver {
   Status* status;
   const LookupKey* key;

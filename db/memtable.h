@@ -59,6 +59,7 @@ struct ImmutableMemTableOptions {
   Logger* info_log;
   bool allow_data_in_errors;
   uint32_t protection_bytes_per_key;
+  bool server_use_remtoe_flush;
 };
 
 // Batched counters to updated when inserting keys in one write batch.
@@ -151,7 +152,7 @@ class MemTable {
   size_t MemoryAllocatedBytes() const {
     return table_->ApproximateMemoryUsage() +
            range_del_table_->ApproximateMemoryUsage() +
-           arena_.MemoryAllocatedBytes();
+           arena_->MemoryAllocatedBytes();
   }
 
   // Returns a vector of unique random memtable entries of size 'sample_size'.
@@ -544,7 +545,7 @@ class MemTable {
   int refs_;
   const size_t kArenaBlockSize;
   AllocTracker mem_tracker_;
-  ConcurrentArena arena_;
+  BasicArena* arena_;
   std::unique_ptr<MemTableRep> table_;
   std::unique_ptr<MemTableRep> range_del_table_;
   std::atomic_bool is_range_del_table_empty_;
