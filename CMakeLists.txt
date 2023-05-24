@@ -780,6 +780,7 @@ set(SOURCES
         memory/arena.cc
         memory/concurrent_arena.cc
         # memory/shared_arena.cc
+        memory/shared_mem_basic.cc
         memory/concurrent_shared_arena.cc
         memory/jemalloc_nodump_allocator.cc
         memory/memkind_kmem_allocator.cc
@@ -1363,6 +1364,7 @@ if(WITH_TESTS)
         db/db_tailing_iter_test.cc
         db/db_test.cc
         db/db_test2.cc
+        db/db_test3.cc
         db/db_logical_block_size_cache_test.cc
         db/db_universal_compaction_test.cc
         db/db_wal_test.cc
