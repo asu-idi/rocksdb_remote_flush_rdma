@@ -63,14 +63,19 @@ SpecialEnv::SpecialEnv(Env* base, bool time_elapse_only_sleep)
 }
 DBTestBase::DBTestBase(const std::string path, bool env_do_fsync)
     : mem_env_(nullptr), encrypted_env_(nullptr), option_config_(kDefault) {
+  LOG("TestBase Init");
   Env* base_env = Env::Default();
+  LOG("TestBase base_env get");
   ConfigOptions config_options;
   EXPECT_OK(test::CreateEnvFromSystem(config_options, &base_env, &env_guard_));
+  LOG("TestBase CreateEnv finish");
   EXPECT_NE(nullptr, base_env);
   if (getenv("MEM_ENV")) {
     mem_env_ = MockEnv::Create(base_env, base_env->GetSystemClock());
+    LOG("TestBase MEM_ENV finish");
   }
   if (getenv("ENCRYPTED_ENV")) {
+    LOG("TestBase ENCRYPTED_ENV");
     std::shared_ptr<EncryptionProvider> provider;
     std::string provider_id = getenv("ENCRYPTED_ENV");
     if (provider_id.find("=") == std::string::npos &&
@@ -81,15 +86,20 @@ DBTestBase::DBTestBase(const std::string path, bool env_do_fsync)
                                                    &provider));
     encrypted_env_ = NewEncryptedEnv(mem_env_ ? mem_env_ : base_env, provider);
   }
+  LOG("NewSpecial Env");
   env_ = new SpecialEnv(encrypted_env_ ? encrypted_env_
                                        : (mem_env_ ? mem_env_ : base_env));
+  LOG("NewSpecial Env finish");
   env_->SetBackgroundThreads(1, Env::LOW);
   env_->SetBackgroundThreads(1, Env::HIGH);
   env_->skip_fsync_ = !env_do_fsync;
   dbname_ = test::PerThreadDBPath(env_, path);
   alternative_wal_dir_ = dbname_ + "/wal";
   alternative_db_log_dir_ = dbname_ + "/db_log_dir";
+  LOG("Option create");
   auto options = CurrentOptions();
+  options.server_use_remote_flush = true;  // trigger remote flush
+  LOG("Option create finish");
   options.env = env_;
   auto delete_options = options;
   delete_options.wal_dir = alternative_wal_dir_;
@@ -97,7 +107,10 @@ DBTestBase::DBTestBase(const std::string path, bool env_do_fsync)
   // Destroy it for not alternative WAL dir is used.
   EXPECT_OK(DestroyDB(dbname_, options));
   db_ = nullptr;
+  LOG("Reopen");
+  assert(options.server_use_remote_flush == true);
   Reopen(options);
+  LOG("Reopen finish");
   Random::GetTLSInstance()->Reset(0xdeadbeef);
 }
 
@@ -122,7 +135,6 @@ DBTestBase::~DBTestBase() {
 }
 
 bool DBTestBase::ShouldSkipOptions(int option_config, int skip_mask) {
-
   if ((skip_mask & kSkipUniversalCompaction) &&
       (option_config == kUniversalCompaction ||
        option_config == kUniversalCompactionMultiLevel ||
@@ -667,12 +679,15 @@ void DBTestBase::Close() {
     EXPECT_OK(db_->DestroyColumnFamilyHandle(h));
   }
   handles_.clear();
+  LOG("DEBUG", std::hex, (long long)db_, std::dec);
   delete db_;
+  LOG("DEBUG");
   db_ = nullptr;
 }
 
 void DBTestBase::DestroyAndReopen(const Options& options) {
   // Destroy using last options
+  LOG("destroy and reopen");
   Destroy(last_options_);
   Reopen(options);
 }
@@ -1139,7 +1154,6 @@ std::string DBTestBase::FilesPerLevel(int cf) {
   result.resize(last_non_zero_offset);
   return result;
 }
-
 
 std::vector<uint64_t> DBTestBase::GetBlobFileNumbers() {
   VersionSet* const versions = dbfull()->GetVersionSet();
@@ -1647,7 +1661,6 @@ void DBTestBase::VerifyDBInternal(
   ASSERT_FALSE(iter->Valid());
   iter->~InternalIterator();
 }
-
 
 uint64_t DBTestBase::GetNumberOfSstFilesForColumnFamily(
     DB* db, std::string column_family_name) {

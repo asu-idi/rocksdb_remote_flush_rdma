@@ -1577,6 +1577,7 @@ if(WITH_DEV)
   dev/trace_block_cache_test.cpp
   # dev/trace_memtable_test.cpp
   dev/memtable_refactor_test.cpp
+  dev/db_test4.cpp
   dev/shared_memory_writter_test.cpp
   dev/shared_memory_reader_test.cpp
   dev/open_secondary_test.cpp

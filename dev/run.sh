@@ -23,6 +23,7 @@ cp ../build/open_secondary_test ./
 cp ../build/inlineskiplist_test ./
 cp ../build/db_memtable_test ./
 cp ../build/db_test3 ./
+cp ../build/db_test4 ./
 
 rm -rf memtable_result/
 mkdir memtable_result/
