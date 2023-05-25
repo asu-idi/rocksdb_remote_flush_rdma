@@ -24,6 +24,7 @@
 #include "rocksdb/compaction_job_stats.h"
 #include "rocksdb/db.h"
 #include "rocksdb/env.h"
+#include "rocksdb/file_system.h"
 #include "rocksdb/options.h"
 #include "trace_replay/block_cache_tracer.h"
 #include "util/hash_containers.h"
@@ -714,6 +715,7 @@ class ColumnFamilySet {
   WriteBufferManager* write_buffer_manager() { return write_buffer_manager_; }
 
   WriteController* write_controller() { return write_controller_; }
+  FileOptions GetFileOptions() { return file_options_; }
 
  private:
   friend class ColumnFamilyData;

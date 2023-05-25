@@ -718,6 +718,8 @@ set(SOURCES
         db/external_sst_file_ingestion_job.cc
         db/file_indexer.cc
         db/flush_job.cc
+        db/remote_flush_job.cc
+        db/flush_job_basic.cc
         db/flush_scheduler.cc
         db/forward_iterator.cc
         db/import_column_family_job.cc

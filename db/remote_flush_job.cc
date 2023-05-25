@@ -7,7 +7,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
-#include "db/flush_job.h"
+#include "db/remote_flush_job.h"
 
 #include <algorithm>
 #include <cinttypes>
@@ -51,7 +51,7 @@
 
 namespace ROCKSDB_NAMESPACE {
 
-FlushJob::FlushJob(
+RemoteFlushJob::RemoteFlushJob(
     const std::string& dbname, ColumnFamilyData* cfd,
     const ImmutableDBOptions& db_options,
     const MutableCFOptions& mutable_cf_options, uint64_t max_memtable_id,
@@ -104,12 +104,12 @@ FlushJob::FlushJob(
       db_impl_seqno_time_mapping_(seqno_time_mapping) {
   // Update the thread status to indicate flush.
   ReportStartedFlush();
-  TEST_SYNC_POINT("FlushJob::FlushJob()");
+  TEST_SYNC_POINT("RemoteFlushJob::RemoteFlushJob()");
 }
 
-FlushJob::~FlushJob() { ThreadStatusUtil::ResetThreadStatus(); }
+RemoteFlushJob::~RemoteFlushJob() { ThreadStatusUtil::ResetThreadStatus(); }
 
-void FlushJob::ReportStartedFlush() {
+void RemoteFlushJob::ReportStartedFlush() {
   ThreadStatusUtil::SetColumnFamily(cfd_, cfd_->ioptions()->env,
                                     db_options_.enable_thread_tracking);
   ThreadStatusUtil::SetThreadOperation(ThreadStatus::OP_FLUSH);
@@ -118,7 +118,7 @@ void FlushJob::ReportStartedFlush() {
   IOSTATS_RESET(bytes_written);
 }
 
-void FlushJob::ReportFlushInputSize(const autovector<MemTable*>& mems) {
+void RemoteFlushJob::ReportFlushInputSize(const autovector<MemTable*>& mems) {
   uint64_t input_size = 0;
   for (auto* mem : mems) {
     input_size += mem->ApproximateMemoryUsage();
@@ -127,13 +127,13 @@ void FlushJob::ReportFlushInputSize(const autovector<MemTable*>& mems) {
       ThreadStatus::FLUSH_BYTES_MEMTABLES, input_size);
 }
 
-void FlushJob::RecordFlushIOStats() {
+void RemoteFlushJob::RecordFlushIOStats() {
   RecordTick(stats_, FLUSH_WRITE_BYTES, IOSTATS(bytes_written));
   ThreadStatusUtil::IncreaseThreadOperationProperty(
       ThreadStatus::FLUSH_BYTES_WRITTEN, IOSTATS(bytes_written));
   IOSTATS_RESET(bytes_written);
 }
-void FlushJob::PickMemTable() {
+void RemoteFlushJob::PickMemTable() {
   db_mutex_->AssertHeld();
   assert(!pick_memtable_called);
   pick_memtable_called = true;
@@ -176,15 +176,16 @@ void FlushJob::PickMemTable() {
   base_->Ref();  // it is likely that we do not need this reference
 }
 
-Status FlushJob::Run(LogsWithPrepTracker* prep_tracker, FileMetaData* file_meta,
-                     bool* switched_to_mempurge) {
-  TEST_SYNC_POINT("FlushJob::Start");
+Status RemoteFlushJob::Run(LogsWithPrepTracker* prep_tracker,
+                           FileMetaData* file_meta,
+                           bool* switched_to_mempurge) {
+  TEST_SYNC_POINT("RemoteFlushJob::Start");
   db_mutex_->AssertHeld();
   assert(pick_memtable_called);
   // Mempurge threshold can be dynamically changed.
   // For sake of consistency, mempurge_threshold is
   // saved locally to maintain consistency in each
-  // FlushJob::Run call.
+  // RemoteFlushJob::Run call.
   double mempurge_threshold =
       mutable_cf_options_.experimental_mempurge_threshold;
 
@@ -264,7 +265,7 @@ Status FlushJob::Run(LogsWithPrepTracker* prep_tracker, FileMetaData* file_meta,
   if (!s.ok()) {
     cfd_->imm()->RollbackMemtableFlush(mems_, meta_.fd.GetNumber());
   } else if (write_manifest_) {
-    TEST_SYNC_POINT("FlushJob::InstallResults");
+    TEST_SYNC_POINT("RemoteFlushJob::InstallResults");
     // Replace immutable memtable with the generated Table
     s = cfd_->imm()->TryInstallMemtableFlushResults(
         cfd_, mutable_cf_options_, mems_, prep_tracker, versions_, db_mutex_,
@@ -324,13 +325,13 @@ Status FlushJob::Run(LogsWithPrepTracker* prep_tracker, FileMetaData* file_meta,
   return s;
 }
 
-void FlushJob::Cancel() {
+void RemoteFlushJob::Cancel() {
   db_mutex_->AssertHeld();
   assert(base_ != nullptr);
   base_->Unref();
 }
 
-Status FlushJob::MemPurge() {
+Status RemoteFlushJob::MemPurge() {
   Status s;
   db_mutex_->AssertHeld();
   db_mutex_->Unlock();
@@ -566,10 +567,10 @@ Status FlushJob::MemPurge() {
         // we do not call SchedulePendingFlush().
         cfd_->imm()->Add(new_mem, &job_context_->memtables_to_free);
         new_mem->Ref();
-        // Piggyback FlushJobInfo on the first flushed memtable.
+        // Piggyback RemoteFlushJobInfo on the first flushed memtable.
         db_mutex_->AssertHeld();
         meta_.fd.file_size = 0;
-        mems_[0]->SetFlushJobInfo(GetFlushJobInfo());
+        mems_[0]->SetFlushJobInfo(GetRemoteFlushJobInfo());
         db_mutex_->Unlock();
       } else {
         s = Status::Aborted(Slice("Mempurge filled more than one memtable."));
@@ -608,7 +609,7 @@ Status FlushJob::MemPurge() {
   return s;
 }
 
-bool FlushJob::MemPurgeDecider(double threshold) {
+bool RemoteFlushJob::MemPurgeDecider(double threshold) {
   // Never trigger mempurge if threshold is not a strictly positive value.
   if (!(threshold > 0.0)) {
     return false;
@@ -779,7 +780,7 @@ bool FlushJob::MemPurgeDecider(double threshold) {
           threshold);
 }
 
-Status FlushJob::WriteLevel0Table() {
+Status RemoteFlushJob::WriteLevel0Table() {
   AutoThreadOperationStageUpdater stage_updater(
       ThreadStatus::STAGE_FLUSH_WRITE_L0);
   db_mutex_->AssertHeld();
@@ -819,7 +820,7 @@ Status FlushJob::WriteLevel0Table() {
     uint64_t mems_size = mems_.size();
     (void)mems_size;  // avoids unused variable error when
                       // TEST_SYNC_POINT_CALLBACK not used.
-    TEST_SYNC_POINT_CALLBACK("FlushJob::WriteLevel0Table:num_memtables",
+    TEST_SYNC_POINT_CALLBACK("RemoteFlushJob::WriteLevel0Table:num_memtables",
                              &mems_size);
     assert(job_context_);
     for (MemTable* m : mems_) {
@@ -857,8 +858,9 @@ Status FlushJob::WriteLevel0Table() {
                      cfd_->GetName().c_str(), job_context_->job_id,
                      meta_.fd.GetNumber());
 
-      TEST_SYNC_POINT_CALLBACK("FlushJob::WriteLevel0Table:output_compression",
-                               &output_compression_);
+      TEST_SYNC_POINT_CALLBACK(
+          "RemoteFlushJob::WriteLevel0Table:output_compression",
+          &output_compression_);
       int64_t _current_time = 0;
       auto status = clock_->GetCurrentTime(&_current_time);
       // Safe to proceed even if GetCurrentTime fails. So, log and proceed.
@@ -878,7 +880,7 @@ Status FlushJob::WriteLevel0Table() {
       uint64_t oldest_ancester_time = std::min(current_time, oldest_key_time);
 
       TEST_SYNC_POINT_CALLBACK(
-          "FlushJob::WriteLevel0Table:oldest_ancester_time",
+          "RemoteFlushJob::WriteLevel0Table:oldest_ancester_time",
           &oldest_ancester_time);
       meta_.oldest_ancester_time = oldest_ancester_time;
       meta_.file_creation_time = current_time;
@@ -927,7 +929,7 @@ Status FlushJob::WriteLevel0Table() {
         }
       }
       if (tboptions.reason == TableFileCreationReason::kFlush) {
-        TEST_SYNC_POINT("DBImpl::FlushJob:Flush");
+        TEST_SYNC_POINT("DBImpl::RemoteFlushJob:Flush");
         RecordTick(stats_, MEMTABLE_PAYLOAD_BYTES_AT_FLUSH,
                    memtable_payload_bytes);
         RecordTick(stats_, MEMTABLE_GARBAGE_BYTES_AT_FLUSH,
@@ -949,7 +951,7 @@ Status FlushJob::WriteLevel0Table() {
           IOOptions(), nullptr,
           DirFsyncOptions(DirFsyncOptions::FsyncReason::kNewFileSynced));
     }
-    TEST_SYNC_POINT_CALLBACK("FlushJob::WriteLevel0Table", &mems_);
+    TEST_SYNC_POINT_CALLBACK("RemoteFlushJob::WriteLevel0Table", &mems_);
     db_mutex_->Lock();
   }
   base_->Unref();
@@ -959,7 +961,7 @@ Status FlushJob::WriteLevel0Table() {
   const bool has_output = meta_.fd.GetFileSize() > 0;
 
   if (s.ok() && has_output) {
-    TEST_SYNC_POINT("DBImpl::FlushJob:SSTFileCreated");
+    TEST_SYNC_POINT("DBImpl::RemoteFlushJob:SSTFileCreated");
     // if we have more than 1 background thread, then we cannot
     // insert files directly into higher levels because some other
     // threads could be concurrently producing compacted files for
@@ -975,8 +977,8 @@ Status FlushJob::WriteLevel0Table() {
                    meta_.unique_id, meta_.compensated_range_deletion_size);
     edit_->SetBlobFileAdditions(std::move(blob_file_additions));
   }
-  // Piggyback FlushJobInfo on the first first flushed memtable.
-  mems_[0]->SetFlushJobInfo(GetFlushJobInfo());
+  // Piggyback RemoteFlushJobInfo on the first first flushed memtable.
+  mems_[0]->SetFlushJobInfo(GetRemoteFlushJobInfo());
 
   // Note that here we treat flush as level 0 compaction in internal stats
   InternalStats::CompactionStats stats(CompactionReason::kFlush, 1);
@@ -1013,7 +1015,7 @@ Status FlushJob::WriteLevel0Table() {
   return s;
 }
 
-Env::IOPriority FlushJob::GetRateLimiterPriorityForWrite() {
+Env::IOPriority RemoteFlushJob::GetRateLimiterPriorityForWrite() {
   if (versions_ && versions_->GetColumnFamilySet() &&
       versions_->GetColumnFamilySet()->write_controller()) {
     WriteController* write_controller =
@@ -1026,7 +1028,7 @@ Env::IOPriority FlushJob::GetRateLimiterPriorityForWrite() {
   return Env::IO_HIGH;
 }
 
-std::unique_ptr<FlushJobInfo> FlushJob::GetFlushJobInfo() const {
+std::unique_ptr<FlushJobInfo> RemoteFlushJob::GetRemoteFlushJobInfo() const {
   db_mutex_->AssertHeld();
   std::unique_ptr<FlushJobInfo> info(new FlushJobInfo{});
   info->cf_id = cfd_->GetID();
