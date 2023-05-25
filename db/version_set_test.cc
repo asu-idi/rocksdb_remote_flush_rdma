@@ -1153,11 +1153,11 @@ class VersionSetTestBase {
     immutable_options_.fs = fs_;
     immutable_options_.clock = env_->GetSystemClock().get();
 
-    versions_.reset(
-        new VersionSet(dbname_, &db_options_, env_options_, table_cache_.get(),
-                       &write_buffer_manager_, &write_controller_,
-                       /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
-                       /*db_id*/ "", /*db_session_id*/ ""));
+    versions_.reset(new VersionSet(
+        ColumnFamilyOptions(), dbname_, &db_options_, env_options_,
+        table_cache_.get(), &write_buffer_manager_, &write_controller_,
+        /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
+        /*db_id*/ "", /*db_session_id*/ ""));
     reactive_versions_ = std::make_shared<ReactiveVersionSet>(
         dbname_, &db_options_, env_options_, table_cache_.get(),
         &write_buffer_manager_, &write_controller_, nullptr);
@@ -1186,7 +1186,8 @@ class VersionSetTestBase {
     if (db_options_.write_dbid_to_manifest) {
       DBOptions tmp_db_options;
       tmp_db_options.env = env_;
-      std::unique_ptr<DBImpl> impl(new DBImpl(tmp_db_options, dbname_));
+      std::unique_ptr<DBImpl> impl(
+          new DBImpl(ColumnFamilyOptions(), tmp_db_options, dbname_));
       std::string db_id;
       impl->GetDbIdentityFromIdentityFile(&db_id);
       new_db.SetDBId(db_id);
@@ -1257,11 +1258,11 @@ class VersionSetTestBase {
   }
 
   void ReopenDB() {
-    versions_.reset(
-        new VersionSet(dbname_, &db_options_, env_options_, table_cache_.get(),
-                       &write_buffer_manager_, &write_controller_,
-                       /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
-                       /*db_id*/ "", /*db_session_id*/ ""));
+    versions_.reset(new VersionSet(
+        ColumnFamilyOptions(), dbname_, &db_options_, env_options_,
+        table_cache_.get(), &write_buffer_manager_, &write_controller_,
+        /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
+        /*db_id*/ "", /*db_session_id*/ ""));
     EXPECT_OK(versions_->Recover(column_families_, false));
   }
 
@@ -1763,11 +1764,11 @@ TEST_F(VersionSetTest, WalAddition) {
 
   // Recover a new VersionSet.
   {
-    std::unique_ptr<VersionSet> new_versions(
-        new VersionSet(dbname_, &db_options_, env_options_, table_cache_.get(),
-                       &write_buffer_manager_, &write_controller_,
-                       /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
-                       /*db_id*/ "", /*db_session_id*/ ""));
+    std::unique_ptr<VersionSet> new_versions(new VersionSet(
+        ColumnFamilyOptions(), dbname_, &db_options_, env_options_,
+        table_cache_.get(), &write_buffer_manager_, &write_controller_,
+        /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
+        /*db_id*/ "", /*db_session_id*/ ""));
     ASSERT_OK(new_versions->Recover(column_families_, /*read_only=*/false));
     const auto& wals = new_versions->GetWalSet().GetWals();
     ASSERT_EQ(wals.size(), 1);
@@ -1830,11 +1831,11 @@ TEST_F(VersionSetTest, WalCloseWithoutSync) {
 
   // Recover a new VersionSet.
   {
-    std::unique_ptr<VersionSet> new_versions(
-        new VersionSet(dbname_, &db_options_, env_options_, table_cache_.get(),
-                       &write_buffer_manager_, &write_controller_,
-                       /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
-                       /*db_id*/ "", /*db_session_id*/ ""));
+    std::unique_ptr<VersionSet> new_versions(new VersionSet(
+        ColumnFamilyOptions(), dbname_, &db_options_, env_options_,
+        table_cache_.get(), &write_buffer_manager_, &write_controller_,
+        /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
+        /*db_id*/ "", /*db_session_id*/ ""));
     ASSERT_OK(new_versions->Recover(column_families_, false));
     const auto& wals = new_versions->GetWalSet().GetWals();
     ASSERT_EQ(wals.size(), 2);
@@ -1883,11 +1884,11 @@ TEST_F(VersionSetTest, WalDeletion) {
 
   // Recover a new VersionSet, only the non-closed WAL should show up.
   {
-    std::unique_ptr<VersionSet> new_versions(
-        new VersionSet(dbname_, &db_options_, env_options_, table_cache_.get(),
-                       &write_buffer_manager_, &write_controller_,
-                       /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
-                       /*db_id*/ "", /*db_session_id*/ ""));
+    std::unique_ptr<VersionSet> new_versions(new VersionSet(
+        ColumnFamilyOptions(), dbname_, &db_options_, env_options_,
+        table_cache_.get(), &write_buffer_manager_, &write_controller_,
+        /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
+        /*db_id*/ "", /*db_session_id*/ ""));
     ASSERT_OK(new_versions->Recover(column_families_, false));
     const auto& wals = new_versions->GetWalSet().GetWals();
     ASSERT_EQ(wals.size(), 1);
@@ -1921,11 +1922,11 @@ TEST_F(VersionSetTest, WalDeletion) {
 
   // Recover from the new MANIFEST, only the non-closed WAL should show up.
   {
-    std::unique_ptr<VersionSet> new_versions(
-        new VersionSet(dbname_, &db_options_, env_options_, table_cache_.get(),
-                       &write_buffer_manager_, &write_controller_,
-                       /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
-                       /*db_id*/ "", /*db_session_id*/ ""));
+    std::unique_ptr<VersionSet> new_versions(new VersionSet(
+        ColumnFamilyOptions(), dbname_, &db_options_, env_options_,
+        table_cache_.get(), &write_buffer_manager_, &write_controller_,
+        /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
+        /*db_id*/ "", /*db_session_id*/ ""));
     ASSERT_OK(new_versions->Recover(column_families_, false));
     const auto& wals = new_versions->GetWalSet().GetWals();
     ASSERT_EQ(wals.size(), 1);
@@ -2041,11 +2042,11 @@ TEST_F(VersionSetTest, DeleteWalsBeforeNonExistingWalNumber) {
 
   // Recover a new VersionSet, WAL0 is deleted, WAL1 is not.
   {
-    std::unique_ptr<VersionSet> new_versions(
-        new VersionSet(dbname_, &db_options_, env_options_, table_cache_.get(),
-                       &write_buffer_manager_, &write_controller_,
-                       /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
-                       /*db_id*/ "", /*db_session_id*/ ""));
+    std::unique_ptr<VersionSet> new_versions(new VersionSet(
+        ColumnFamilyOptions(), dbname_, &db_options_, env_options_,
+        table_cache_.get(), &write_buffer_manager_, &write_controller_,
+        /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
+        /*db_id*/ "", /*db_session_id*/ ""));
     ASSERT_OK(new_versions->Recover(column_families_, false));
     const auto& wals = new_versions->GetWalSet().GetWals();
     ASSERT_EQ(wals.size(), 1);
@@ -2077,11 +2078,11 @@ TEST_F(VersionSetTest, DeleteAllWals) {
 
   // Recover a new VersionSet, all WALs are deleted.
   {
-    std::unique_ptr<VersionSet> new_versions(
-        new VersionSet(dbname_, &db_options_, env_options_, table_cache_.get(),
-                       &write_buffer_manager_, &write_controller_,
-                       /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
-                       /*db_id*/ "", /*db_session_id*/ ""));
+    std::unique_ptr<VersionSet> new_versions(new VersionSet(
+        ColumnFamilyOptions(), dbname_, &db_options_, env_options_,
+        table_cache_.get(), &write_buffer_manager_, &write_controller_,
+        /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
+        /*db_id*/ "", /*db_session_id*/ ""));
     ASSERT_OK(new_versions->Recover(column_families_, false));
     const auto& wals = new_versions->GetWalSet().GetWals();
     ASSERT_EQ(wals.size(), 0);
@@ -2119,11 +2120,11 @@ TEST_F(VersionSetTest, AtomicGroupWithWalEdits) {
   // Recover a new VersionSet, the min log number and the last WAL should be
   // kept.
   {
-    std::unique_ptr<VersionSet> new_versions(
-        new VersionSet(dbname_, &db_options_, env_options_, table_cache_.get(),
-                       &write_buffer_manager_, &write_controller_,
-                       /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
-                       /*db_id*/ "", /*db_session_id*/ ""));
+    std::unique_ptr<VersionSet> new_versions(new VersionSet(
+        ColumnFamilyOptions(), dbname_, &db_options_, env_options_,
+        table_cache_.get(), &write_buffer_manager_, &write_controller_,
+        /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
+        /*db_id*/ "", /*db_session_id*/ ""));
     std::string db_id;
     ASSERT_OK(
         new_versions->Recover(column_families_, /*read_only=*/false, &db_id));
@@ -2184,11 +2185,11 @@ class VersionSetWithTimestampTest : public VersionSetTest {
   }
 
   void VerifyFullHistoryTsLow(uint64_t expected_ts_low) {
-    std::unique_ptr<VersionSet> vset(
-        new VersionSet(dbname_, &db_options_, env_options_, table_cache_.get(),
-                       &write_buffer_manager_, &write_controller_,
-                       /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
-                       /*db_id*/ "", /*db_session_id*/ ""));
+    std::unique_ptr<VersionSet> vset(new VersionSet(
+        ColumnFamilyOptions(), dbname_, &db_options_, env_options_,
+        table_cache_.get(), &write_buffer_manager_, &write_controller_,
+        /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
+        /*db_id*/ "", /*db_session_id*/ ""));
     ASSERT_OK(vset->Recover(column_families_, /*read_only=*/false,
                             /*db_id=*/nullptr));
     for (auto* cfd : *(vset->GetColumnFamilySet())) {
@@ -2820,7 +2821,8 @@ class VersionSetTestEmptyDb
     if (db_options_.write_dbid_to_manifest) {
       DBOptions tmp_db_options;
       tmp_db_options.env = env_;
-      std::unique_ptr<DBImpl> impl(new DBImpl(tmp_db_options, dbname_));
+      std::unique_ptr<DBImpl> impl(
+          new DBImpl(ColumnFamilyOptions(), tmp_db_options, dbname_));
       std::string db_id;
       impl->GetDbIdentityFromIdentityFile(&db_id);
       new_db.SetDBId(db_id);
@@ -3150,7 +3152,8 @@ class VersionSetTestMissingFiles : public VersionSetTestBase,
     if (db_options_.write_dbid_to_manifest) {
       DBOptions tmp_db_options;
       tmp_db_options.env = env_;
-      std::unique_ptr<DBImpl> impl(new DBImpl(tmp_db_options, dbname_));
+      std::unique_ptr<DBImpl> impl(
+          new DBImpl(ColumnFamilyOptions(), tmp_db_options, dbname_));
       std::string db_id;
       impl->GetDbIdentityFromIdentityFile(&db_id);
       new_db.SetDBId(db_id);

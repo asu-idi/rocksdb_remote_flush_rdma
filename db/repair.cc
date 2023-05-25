@@ -59,8 +59,6 @@
 //   Store per-table metadata (smallest, largest, largest-seq#, ...)
 //   in the table's meta section to speed up ScanTable.
 
-#include "db/version_builder.h"
-
 #include <cinttypes>
 
 #include "db/builder.h"
@@ -70,6 +68,7 @@
 #include "db/log_writer.h"
 #include "db/memtable.h"
 #include "db/table_cache.h"
+#include "db/version_builder.h"
 #include "db/version_edit.h"
 #include "db/write_batch_internal.h"
 #include "file/filename.h"
@@ -119,8 +118,8 @@ class Repairer {
                                     /*io_tracer=*/nullptr, db_session_id_)),
         wb_(db_options_.db_write_buffer_size),
         wc_(db_options_.delayed_write_rate),
-        vset_(dbname_, &immutable_db_options_, file_options_,
-              raw_table_cache_.get(), &wb_, &wc_,
+        vset_(ColumnFamilyOptions(), dbname_, &immutable_db_options_,
+              file_options_, raw_table_cache_.get(), &wb_, &wc_,
               /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
               /*db_id=*/"", db_session_id_),
         next_file_number_(1),
@@ -200,7 +199,7 @@ class Repairer {
         ArchiveFile(dbname_ + "/" + manifests_[i]);
       }
       // Just create a DBImpl temporarily so we can reuse NewDB()
-      db_impl = new DBImpl(db_options_, dbname_);
+      db_impl = new DBImpl(ColumnFamilyOptions(), db_options_, dbname_);
       status = db_impl->NewDB(/*new_filenames=*/nullptr);
     }
     delete db_impl;
@@ -809,4 +808,3 @@ Status RepairDB(const std::string& dbname, const Options& options) {
 }
 
 }  // namespace ROCKSDB_NAMESPACE
-

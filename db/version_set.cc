@@ -39,6 +39,7 @@
 #include "db/table_cache.h"
 #include "db/version_builder.h"
 #include "db/version_edit_handler.h"
+#include "rocksdb/options.h"
 #include "table/compaction_merging_iterator.h"
 
 #if USE_COROUTINES
@@ -4827,7 +4828,8 @@ void AtomicGroupReadBuffer::Clear() {
   replay_buffer_.clear();
 }
 
-VersionSet::VersionSet(const std::string& dbname,
+VersionSet::VersionSet(const ColumnFamilyOptions& dummy_cf_options,
+                       const std::string& dbname,
                        const ImmutableDBOptions* _db_options,
                        const FileOptions& storage_options, Cache* table_cache,
                        WriteBufferManager* write_buffer_manager,
@@ -4836,10 +4838,11 @@ VersionSet::VersionSet(const std::string& dbname,
                        const std::shared_ptr<IOTracer>& io_tracer,
                        const std::string& db_id,
                        const std::string& db_session_id)
-    : column_family_set_(new ColumnFamilySet(
+    : dummy_cf_options_(dummy_cf_options),
+      column_family_set_(new ColumnFamilySet(
           dbname, _db_options, storage_options, table_cache,
           write_buffer_manager, write_controller, block_cache_tracer, io_tracer,
-          db_id, db_session_id)),
+          db_id, db_session_id, dummy_cf_options_)),
       table_cache_(table_cache),
       env_(_db_options->env),
       fs_(_db_options->fs, io_tracer),
@@ -4893,9 +4896,10 @@ void VersionSet::Reset() {
     // https://github.com/facebook/rocksdb/blob/v7.3.1/db/db_impl/db_impl_open.cc#L527
     // Note: we may not be able to recover db_id from MANIFEST if
     // options.write_dbid_to_manifest is false (default).
-    column_family_set_.reset(new ColumnFamilySet(
-        dbname_, db_options_, file_options_, table_cache_, wbm, wc,
-        block_cache_tracer_, io_tracer_, db_id_, db_session_id_));
+    column_family_set_.reset(
+        new ColumnFamilySet(dbname_, db_options_, file_options_, table_cache_,
+                            wbm, wc, block_cache_tracer_, io_tracer_, db_id_,
+                            db_session_id_, dummy_cf_options_));
   }
   db_id_.clear();
   next_file_number_.store(2);
@@ -5967,8 +5971,10 @@ Status VersionSet::ReduceNumberOfLevels(const std::string& dbname,
                                         options->table_cache_numshardbits));
   WriteController wc(options->delayed_write_rate);
   WriteBufferManager wb(options->db_write_buffer_size);
-  VersionSet versions(dbname, &db_options, file_options, tc.get(), &wb, &wc,
-                      nullptr /*BlockCacheTracer*/, nullptr /*IOTracer*/,
+  // TODO: check if need to use non-default dummy_cf_options
+  VersionSet versions(ColumnFamilyOptions(), dbname, &db_options, file_options,
+                      tc.get(), &wb, &wc, nullptr /*BlockCacheTracer*/,
+                      nullptr /*IOTracer*/,
                       /*db_id*/ "",
                       /*db_session_id*/ "");
   Status status;
@@ -6971,8 +6977,9 @@ ReactiveVersionSet::ReactiveVersionSet(
     const FileOptions& _file_options, Cache* table_cache,
     WriteBufferManager* write_buffer_manager, WriteController* write_controller,
     const std::shared_ptr<IOTracer>& io_tracer)
-    : VersionSet(dbname, _db_options, _file_options, table_cache,
-                 write_buffer_manager, write_controller,
+    // TODO: currently use default dummy_cf_options
+    : VersionSet(ColumnFamilyOptions(), dbname, _db_options, _file_options,
+                 table_cache, write_buffer_manager, write_controller,
                  /*block_cache_tracer=*/nullptr, io_tracer, /*db_id*/ "",
                  /*db_session_id*/ "") {}
 

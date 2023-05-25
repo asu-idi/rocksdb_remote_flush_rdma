@@ -15,6 +15,7 @@
 #include "db/column_family.h"
 #include "db/log_writer.h"
 #include "db/version_set.h"
+#include "memory/shared_mem_basic.h"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -217,7 +218,11 @@ struct JobContext {
     }
     // free pending memtables
     for (auto m : memtables_to_free) {
-      delete m;
+      if (m->IsSharedMemtable()) {
+        shm_delete(reinterpret_cast<char*>(m));
+      } else {
+        delete m;
+      }
     }
     for (auto l : logs_to_free) {
       delete l;

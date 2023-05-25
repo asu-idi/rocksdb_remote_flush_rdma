@@ -12,13 +12,14 @@
 #include "db/merge_context.h"
 #include "logging/logging.h"
 #include "monitoring/perf_context_imp.h"
+#include "rocksdb/configurable.h"
 #include "util/cast_util.h"
 
 namespace ROCKSDB_NAMESPACE {
 
 DBImplReadOnly::DBImplReadOnly(const DBOptions& db_options,
                                const std::string& dbname)
-    : DBImpl(db_options, dbname, /*seq_per_batch*/ false,
+    : DBImpl(ColumnFamilyOptions(), db_options, dbname, /*seq_per_batch*/ false,
              /*batch_per_txn*/ true, /*read_only*/ true) {
   ROCKS_LOG_INFO(immutable_db_options_.info_log,
                  "Opening the db in read only mode");

@@ -3,7 +3,6 @@
 //  COPYING file in the root directory) and Apache 2.0 License
 //  (found in the LICENSE.Apache file in the root directory).
 
-
 #include "db/compaction/compaction_job.h"
 
 #include <algorithm>
@@ -212,8 +211,8 @@ class CompactionJobTestBase : public testing::Test {
         table_cache_(NewLRUCache(50000, 16)),
         write_buffer_manager_(db_options_.db_write_buffer_size),
         versions_(new VersionSet(
-            dbname_, &db_options_, env_options_, table_cache_.get(),
-            &write_buffer_manager_, &write_controller_,
+            cf_options_, dbname_, &db_options_, env_options_,
+            table_cache_.get(), &write_buffer_manager_, &write_controller_,
             /*block_cache_tracer=*/nullptr,
             /*io_tracer=*/nullptr, /*db_id*/ "", /*db_session_id*/ "")),
         shutting_down_(false),
@@ -538,11 +537,11 @@ class CompactionJobTestBase : public testing::Test {
     ASSERT_OK(s);
     db_options_.info_log = info_log;
 
-    versions_.reset(
-        new VersionSet(dbname_, &db_options_, env_options_, table_cache_.get(),
-                       &write_buffer_manager_, &write_controller_,
-                       /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
-                       /*db_id*/ "", /*db_session_id*/ ""));
+    versions_.reset(new VersionSet(
+        ColumnFamilyOptions(), dbname_, &db_options_, env_options_,
+        table_cache_.get(), &write_buffer_manager_, &write_controller_,
+        /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
+        /*db_id*/ "", /*db_session_id*/ ""));
     compaction_job_stats_.Reset();
     ASSERT_OK(SetIdentityFile(env_, dbname_));
 
@@ -2440,4 +2439,3 @@ int main(int argc, char** argv) {
   RegisterCustomObjects(argc, argv);
   return RUN_ALL_TESTS();
 }
-

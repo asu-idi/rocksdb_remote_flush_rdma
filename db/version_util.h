@@ -6,6 +6,7 @@
 #pragma once
 
 #include "db/version_set.h"
+#include "rocksdb/options.h"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -23,7 +24,8 @@ class OfflineManifestWriter {
         immutable_db_options_(WithDbPath(options, db_path)),
         tc_(NewLRUCache(1 << 20 /* capacity */,
                         options.table_cache_numshardbits)),
-        versions_(db_path, &immutable_db_options_, sopt_, tc_.get(), &wb_, &wc_,
+        versions_(ColumnFamilyOptions(), db_path, &immutable_db_options_, sopt_,
+                  tc_.get(), &wb_, &wc_,
                   /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
                   /*db_id*/ "", /*db_session_id*/ "") {}
 

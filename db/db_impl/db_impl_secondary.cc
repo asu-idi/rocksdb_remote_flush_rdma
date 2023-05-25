@@ -20,7 +20,7 @@ namespace ROCKSDB_NAMESPACE {
 DBImplSecondary::DBImplSecondary(const DBOptions& db_options,
                                  const std::string& dbname,
                                  std::string secondary_path)
-    : DBImpl(db_options, dbname, false, true, true),
+    : DBImpl(ColumnFamilyOptions(), db_options, dbname, false, true, true),
       secondary_path_(std::move(secondary_path)) {
   ROCKS_LOG_INFO(immutable_db_options_.info_log,
                  "Opening the db in secondary mode");

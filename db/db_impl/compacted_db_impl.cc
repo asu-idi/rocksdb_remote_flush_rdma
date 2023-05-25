@@ -8,6 +8,7 @@
 #include "db/db_impl/db_impl.h"
 #include "db/version_set.h"
 #include "logging/logging.h"
+#include "rocksdb/configurable.h"
 #include "table/get_context.h"
 #include "util/cast_util.h"
 
@@ -19,7 +20,8 @@ extern bool SaveValue(void* arg, const ParsedInternalKey& parsed_key,
 
 CompactedDBImpl::CompactedDBImpl(const DBOptions& options,
                                  const std::string& dbname)
-    : DBImpl(options, dbname, /*seq_per_batch*/ false, +/*batch_per_txn*/ true,
+    : DBImpl(ColumnFamilyOptions(), options, dbname, /*seq_per_batch*/ false,
+             +/*batch_per_txn*/ true,
              /*read_only*/ true),
       cfd_(nullptr),
       version_(nullptr),

@@ -37,6 +37,7 @@
 #include "monitoring/thread_status_util.h"
 #include "options/options_helper.h"
 #include "port/port.h"
+#include "rocksdb/configurable.h"
 #include "rocksdb/convenience.h"
 #include "rocksdb/table.h"
 #include "table/merging_iterator.h"
@@ -561,6 +562,10 @@ ColumnFamilyData::ColumnFamilyData(
       db_paths_registered_(false),
       mempurge_used_(false),
       next_epoch_number_(1) {
+  LOG("CHECK : dummy_cf_options",
+      cf_options.server_use_remote_flush == true ? "true" : "false", ' ',
+      "initial_cf_options_:",
+      initial_cf_options_.server_use_remote_flush == true ? "true" : "false");
   if (id_ != kDummyColumnFamilyDataId) {
     // TODO(cc): RegisterDbPaths can be expensive, considering moving it
     // outside of this constructor which might be called with db mutex held.
@@ -1559,21 +1564,19 @@ void ColumnFamilyData::RecoverEpochNumbers() {
   vstorage->RecoverEpochNumbers(this);
 }
 
-ColumnFamilySet::ColumnFamilySet(const std::string& dbname,
-                                 const ImmutableDBOptions* db_options,
-                                 const FileOptions& file_options,
-                                 Cache* table_cache,
-                                 WriteBufferManager* _write_buffer_manager,
-                                 WriteController* _write_controller,
-                                 BlockCacheTracer* const block_cache_tracer,
-                                 const std::shared_ptr<IOTracer>& io_tracer,
-                                 const std::string& db_id,
-                                 const std::string& db_session_id)
+ColumnFamilySet::ColumnFamilySet(
+    const std::string& dbname, const ImmutableDBOptions* db_options,
+    const FileOptions& file_options, Cache* table_cache,
+    WriteBufferManager* _write_buffer_manager,
+    WriteController* _write_controller,
+    BlockCacheTracer* const block_cache_tracer,
+    const std::shared_ptr<IOTracer>& io_tracer, const std::string& db_id,
+    const std::string& db_session_id, const ColumnFamilyOptions& cf_options)
     : max_column_family_(0),
       file_options_(file_options),
       dummy_cfd_(new ColumnFamilyData(
           ColumnFamilyData::kDummyColumnFamilyDataId, "", nullptr, nullptr,
-          nullptr, ColumnFamilyOptions(), *db_options, &file_options_, nullptr,
+          nullptr, cf_options, *db_options, &file_options_, nullptr,
           block_cache_tracer, io_tracer, db_id, db_session_id)),
       default_cfd_cache_(nullptr),
       db_name_(dbname),
