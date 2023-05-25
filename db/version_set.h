@@ -47,6 +47,7 @@
 #include "db/version_edit.h"
 #include "db/write_controller.h"
 #include "env/file_system_tracer.h"
+#include "rocksdb/options.h"
 #if USE_COROUTINES
 #include "folly/experimental/coro/BlockingWait.h"
 #include "folly/experimental/coro/Collect.h"
@@ -1116,7 +1117,8 @@ class AtomicGroupReadBuffer {
 // column families via ColumnFamilySet, i.e. set of the column families.
 class VersionSet {
  public:
-  VersionSet(const std::string& dbname, const ImmutableDBOptions* db_options,
+  VersionSet(const ColumnFamilyOptions& dummy_cf_options,
+             const std::string& dbname, const ImmutableDBOptions* db_options,
              const FileOptions& file_options, Cache* table_cache,
              WriteBufferManager* write_buffer_manager,
              WriteController* write_controller,
@@ -1542,7 +1544,7 @@ class VersionSet {
 
   // Protected by DB mutex.
   WalSet wals_;
-
+  const ColumnFamilyOptions dummy_cf_options_;
   std::unique_ptr<ColumnFamilySet> column_family_set_;
   Cache* table_cache_;
   Env* const env_;

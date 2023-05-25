@@ -9,6 +9,8 @@
 #include "db/db_impl/db_impl.h"
 
 #include <stdint.h>
+
+#include "rocksdb/configurable.h"
 #ifdef OS_SOLARIS
 #include <alloca.h>
 #endif
@@ -151,9 +153,10 @@ void DumpSupportInfo(Logger* logger) {
 }
 }  // namespace
 
-DBImpl::DBImpl(const DBOptions& options, const std::string& dbname,
-               const bool seq_per_batch, const bool batch_per_txn,
-               bool read_only)
+// TODO: cf_options from DB::Open use cfs.begin().options
+DBImpl::DBImpl(const ColumnFamilyOptions& cf_options, const DBOptions& options,
+               const std::string& dbname, const bool seq_per_batch,
+               const bool batch_per_txn, bool read_only)
     : dbname_(dbname),
       own_info_log_(options.info_log == nullptr),
       init_logger_creation_s_(),
@@ -272,10 +275,10 @@ DBImpl::DBImpl(const DBOptions& options, const std::string& dbname,
       PeriodicTaskType::kRecordSeqnoTime,
       [this]() { this->RecordSeqnoToTimeMapping(); });
 
-  versions_.reset(new VersionSet(dbname_, &immutable_db_options_, file_options_,
-                                 table_cache_.get(), write_buffer_manager_,
-                                 &write_controller_, &block_cache_tracer_,
-                                 io_tracer_, db_id_, db_session_id_));
+  versions_.reset(new VersionSet(
+      cf_options, dbname_, &immutable_db_options_, file_options_,
+      table_cache_.get(), write_buffer_manager_, &write_controller_,
+      &block_cache_tracer_, io_tracer_, db_id_, db_session_id_));
   LOG("Open ColumnFamilyMemTablesImpl");
   column_family_memtables_.reset(
       new ColumnFamilyMemTablesImpl(versions_->GetColumnFamilySet()));

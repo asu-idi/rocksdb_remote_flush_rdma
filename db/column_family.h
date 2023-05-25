@@ -685,7 +685,8 @@ class ColumnFamilySet {
                   WriteController* _write_controller,
                   BlockCacheTracer* const block_cache_tracer,
                   const std::shared_ptr<IOTracer>& io_tracer,
-                  const std::string& db_id, const std::string& db_session_id);
+                  const std::string& db_id, const std::string& db_session_id,
+                  const ColumnFamilyOptions& cf_options);
   ~ColumnFamilySet();
 
   ColumnFamilyData* GetDefault() const;

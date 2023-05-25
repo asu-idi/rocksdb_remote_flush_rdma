@@ -3,7 +3,6 @@
 //  COPYING file in the root directory) and Apache 2.0 License
 //  (found in the LICENSE.Apache file in the root directory).
 
-
 #include <algorithm>
 #include <atomic>
 #include <cinttypes>
@@ -1001,7 +1000,7 @@ size_t UniqueCnt(std::vector<SequenceNumber> vec) {
 TEST_P(WritePreparedTransactionTest, OldCommitMapGC) {
   const size_t snapshot_cache_bits = 0;
   const size_t commit_cache_bits = 0;
-  DBImpl* mock_db = new DBImpl(options, dbname);
+  DBImpl* mock_db = new DBImpl(ColumnFamilyOptions(), options, dbname);
   UpdateTransactionDBOptions(snapshot_cache_bits, commit_cache_bits);
   std::unique_ptr<WritePreparedTxnDBMock> wp_db(
       new WritePreparedTxnDBMock(mock_db, txn_db_options));
@@ -1087,7 +1086,7 @@ TEST_P(WritePreparedTransactionTest, CheckAgainstSnapshots) {
   // Safety check to express the intended size in the test. Can be adjusted if
   // the snapshots lists changed.
   ASSERT_EQ((1ul << snapshot_cache_bits) * 2 + 1, snapshots.size());
-  DBImpl* mock_db = new DBImpl(options, dbname);
+  DBImpl* mock_db = new DBImpl(ColumnFamilyOptions(), options, dbname);
   UpdateTransactionDBOptions(snapshot_cache_bits);
   std::unique_ptr<WritePreparedTxnDBMock> wp_db(
       new WritePreparedTxnDBMock(mock_db, txn_db_options));
@@ -1181,7 +1180,7 @@ TEST_P(SnapshotConcurrentAccessTest, SnapshotConcurrentAccess) {
   SequenceNumber version = 1000l;
   // Choose the cache size so that the new snapshot list could replace all the
   // existing items in the cache and also have some overflow.
-  DBImpl* mock_db = new DBImpl(options, dbname);
+  DBImpl* mock_db = new DBImpl(ColumnFamilyOptions(), options, dbname);
   UpdateTransactionDBOptions(snapshot_cache_bits);
   std::unique_ptr<WritePreparedTxnDBMock> wp_db(
       new WritePreparedTxnDBMock(mock_db, txn_db_options));
@@ -1249,7 +1248,7 @@ TEST_P(SnapshotConcurrentAccessTest, SnapshotConcurrentAccess) {
 
 // This test clarifies the contract of AdvanceMaxEvictedSeq method
 TEST_P(WritePreparedTransactionTest, AdvanceMaxEvictedSeqBasic) {
-  DBImpl* mock_db = new DBImpl(options, dbname);
+  DBImpl* mock_db = new DBImpl(ColumnFamilyOptions(), options, dbname);
   std::unique_ptr<WritePreparedTxnDBMock> wp_db(
       new WritePreparedTxnDBMock(mock_db, txn_db_options));
 
@@ -2105,7 +2104,7 @@ TEST_P(WritePreparedTransactionTest, IsInSnapshot) {
       std::set<uint64_t> committed_before;
       // The set of commit seq numbers to be excluded from IsInSnapshot queries
       std::set<uint64_t> commit_seqs;
-      DBImpl* mock_db = new DBImpl(options, dbname);
+      DBImpl* mock_db = new DBImpl(ColumnFamilyOptions(), options, dbname);
       UpdateTransactionDBOptions(snapshot_cache_bits, commit_cache_bits);
       std::unique_ptr<WritePreparedTxnDBMock> wp_db(
           new WritePreparedTxnDBMock(mock_db, txn_db_options));
@@ -4064,4 +4063,3 @@ int main(int argc, char** argv) {
   }
   return RUN_ALL_TESTS();
 }
-

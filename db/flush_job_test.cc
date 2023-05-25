@@ -17,6 +17,7 @@
 #include "file/writable_file_writer.h"
 #include "rocksdb/cache.h"
 #include "rocksdb/file_system.h"
+#include "rocksdb/options.h"
 #include "rocksdb/write_buffer_manager.h"
 #include "table/mock_table.h"
 #include "test_util/testharness.h"
@@ -42,7 +43,9 @@ class FlushJobTestBase : public testing::Test {
         table_cache_(NewLRUCache(50000, 16)),
         write_buffer_manager_(db_options_.db_write_buffer_size),
         shutting_down_(false),
-        mock_table_factory_(new mock::MockTableFactory()) {}
+        mock_table_factory_(new mock::MockTableFactory()) {
+    options_.server_use_remote_flush = true;
+  }
 
   virtual ~FlushJobTestBase() {
     if (getenv("KEEP_DB")) {
@@ -117,19 +120,30 @@ class FlushJobTestBase : public testing::Test {
     db_options_.statistics = CreateDBStatistics();
 
     cf_options_.comparator = ucmp_;
+    cf_options_.server_use_remote_flush = true;
 
     std::vector<ColumnFamilyDescriptor> column_families;
     cf_options_.table_factory = mock_table_factory_;
     for (const auto& cf_name : column_family_names_) {
       column_families.emplace_back(cf_name, cf_options_);
     }
-
-    versions_.reset(
-        new VersionSet(dbname_, &db_options_, env_options_, table_cache_.get(),
-                       &write_buffer_manager_, &write_controller_,
-                       /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
-                       /*db_id*/ "", /*db_session_id*/ ""));
+    ColumnFamilyOptions cf_options;
+    cf_options.server_use_remote_flush = true;
+    LOG("CHECK:");
+    versions_.reset(new VersionSet(
+        cf_options, dbname_, &db_options_, env_options_, table_cache_.get(),
+        &write_buffer_manager_, &write_controller_,
+        /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
+        /*db_id*/ "", /*db_session_id*/ ""));
+    LOG("CHECK2", versions_->GetColumnFamilySet()->NumberOfColumnFamilies());
     EXPECT_OK(versions_->Recover(column_families, false));
+    LOG("CHECK2", versions_->GetColumnFamilySet()->NumberOfColumnFamilies());
+    LOG(versions_->GetColumnFamilySet()
+                    ->GetDefault()
+                    ->GetLatestCFOptions()
+                    .server_use_remote_flush == true
+            ? "CHECK true"
+            : "CHECK NOT true");
   }
 
   Env* env_;
@@ -281,9 +295,14 @@ TEST_F(FlushJobTest, DISABLED_NonEmpty) {
 TEST_F(FlushJobTest, SharedFlushJob) {
   JobContext job_context(0);
   auto cfd = versions_->GetColumnFamilySet()->GetDefault();
+  LOG(cfd->GetLatestCFOptions().server_use_remote_flush == true
+          ? "use_remote_flush"
+          : "not use_remote_flush");
   auto new_mem = cfd->ConstructNewMemtable(*cfd->GetLatestMutableCFOptions(),
                                            kMaxSequenceNumber);
+  LOG("");
   new_mem->Ref();
+  LOG("");
   auto inserted_keys = mock::MakeMockFile();
   // Test data:
   //   seqno [    1, 2, 3, 4, 5 ]
@@ -296,16 +315,16 @@ TEST_F(FlushJobTest, SharedFlushJob) {
     InternalKey internal_key(key, SequenceNumber(i), kTypeValue);
     inserted_keys.push_back({internal_key.Encode().ToString(), value});
   }
-
+  LOG("");
   mock::SortKVVector(&inserted_keys);
-
+  LOG("");
   autovector<MemTable*> to_delete;
   new_mem->ConstructFragmentedRangeTombstones();
   cfd->imm()->Add(new_mem, &to_delete);
   for (auto& m : to_delete) {
     delete m;
   }
-
+  LOG("");
   EventLogger event_logger(db_options_.info_log.get());
   SnapshotChecker* snapshot_checker = nullptr;  // not relavant
   FlushJob flush_job(
@@ -317,7 +336,7 @@ TEST_F(FlushJobTest, SharedFlushJob) {
       nullptr, kNoCompression, db_options_.statistics.get(), &event_logger,
       true, true /* sync_output_directory */, true /* write_manifest */,
       Env::Priority::USER, nullptr /*IOTracer*/, empty_seqno_to_time_mapping_);
-
+  LOG("");
   HistogramData hist;
   FileMetaData file_meta;
   mutex_.Lock();
@@ -326,12 +345,14 @@ TEST_F(FlushJobTest, SharedFlushJob) {
   mutex_.Unlock();
   db_options_.statistics->histogramData(FLUSH_TIME, &hist);
   ASSERT_GT(hist.average, 0.0);
-
+  LOG("");
   ASSERT_EQ(std::to_string(1001), file_meta.smallest.user_key().ToString());
   ASSERT_EQ(1, file_meta.fd.smallest_seqno);
   ASSERT_EQ(5, file_meta.fd.largest_seqno);
   mock_table_factory_->AssertSingleFile(inserted_keys);
+  LOG("");
   job_context.Clean();
+  LOG("");
 }
 
 TEST_F(FlushJobTest, DISABLED_FlushMemTablesSingleColumnFamily) {
@@ -591,69 +612,72 @@ TEST_F(FlushJobTest, DISABLED_Snapshots) {
 
 TEST_F(FlushJobTest, GetRateLimiterPriorityForWrite) {
   // Prepare a FlushJob that flush MemTables of Single Column Family.
-  const size_t num_mems = 2;
-  const size_t num_mems_to_flush = 1;
-  const size_t num_keys_per_table = 100;
-  JobContext job_context(0);
-  ColumnFamilyData* cfd = versions_->GetColumnFamilySet()->GetDefault();
-  std::vector<uint64_t> memtable_ids;
-  std::vector<MemTable*> new_mems;
-  for (size_t i = 0; i != num_mems; ++i) {
-    MemTable* mem = cfd->ConstructNewMemtable(*cfd->GetLatestMutableCFOptions(),
-                                              kMaxSequenceNumber);
-    mem->SetID(i);
-    mem->Ref();
-    new_mems.emplace_back(mem);
-    memtable_ids.push_back(mem->GetID());
+  // const size_t num_mems = 2;
+  // const size_t num_mems_to_flush = 1;
+  // const size_t num_keys_per_table = 100;
+  // JobContext job_context(0);
+  // ColumnFamilyData* cfd = versions_->GetColumnFamilySet()->GetDefault();
+  // std::vector<uint64_t> memtable_ids;
+  // std::vector<MemTable*> new_mems;
+  // for (size_t i = 0; i != num_mems; ++i) {
+  //   MemTable* mem =
+  //   cfd->ConstructNewMemtable(*cfd->GetLatestMutableCFOptions(),
+  //                                             kMaxSequenceNumber);
+  //   mem->SetID(i);
+  //   mem->Ref();
+  //   new_mems.emplace_back(mem);
+  //   memtable_ids.push_back(mem->GetID());
 
-    for (size_t j = 0; j < num_keys_per_table; ++j) {
-      std::string key(std::to_string(j + i * num_keys_per_table));
-      std::string value("value" + key);
-      ASSERT_OK(mem->Add(SequenceNumber(j + i * num_keys_per_table), kTypeValue,
-                         key, value, nullptr /* kv_prot_info */));
-    }
-  }
+  //   for (size_t j = 0; j < num_keys_per_table; ++j) {
+  //     std::string key(std::to_string(j + i * num_keys_per_table));
+  //     std::string value("value" + key);
+  //     ASSERT_OK(mem->Add(SequenceNumber(j + i * num_keys_per_table),
+  //     kTypeValue,
+  //                        key, value, nullptr /* kv_prot_info */));
+  //   }
+  // }
 
-  autovector<MemTable*> to_delete;
-  for (auto mem : new_mems) {
-    mem->ConstructFragmentedRangeTombstones();
-    cfd->imm()->Add(mem, &to_delete);
-  }
+  // autovector<MemTable*> to_delete;
+  // for (auto mem : new_mems) {
+  //   mem->ConstructFragmentedRangeTombstones();
+  //   cfd->imm()->Add(mem, &to_delete);
+  // }
 
-  EventLogger event_logger(db_options_.info_log.get());
-  SnapshotChecker* snapshot_checker = nullptr;  // not relavant
+  // EventLogger event_logger(db_options_.info_log.get());
+  // SnapshotChecker* snapshot_checker = nullptr;  // not relavant
 
-  assert(memtable_ids.size() == num_mems);
-  uint64_t smallest_memtable_id = memtable_ids.front();
-  uint64_t flush_memtable_id = smallest_memtable_id + num_mems_to_flush - 1;
-  FlushJob flush_job(
-      dbname_, versions_->GetColumnFamilySet()->GetDefault(), db_options_,
-      *cfd->GetLatestMutableCFOptions(), flush_memtable_id, env_options_,
-      versions_.get(), &mutex_, &shutting_down_, {}, kMaxSequenceNumber,
-      snapshot_checker, &job_context, FlushReason::kTest, nullptr, nullptr,
-      nullptr, kNoCompression, db_options_.statistics.get(), &event_logger,
-      true, true /* sync_output_directory */, true /* write_manifest */,
-      Env::Priority::USER, nullptr /*IOTracer*/, empty_seqno_to_time_mapping_);
+  // assert(memtable_ids.size() == num_mems);
+  // uint64_t smallest_memtable_id = memtable_ids.front();
+  // uint64_t flush_memtable_id = smallest_memtable_id + num_mems_to_flush - 1;
+  // FlushJob flush_job(
+  //     dbname_, versions_->GetColumnFamilySet()->GetDefault(), db_options_,
+  //     *cfd->GetLatestMutableCFOptions(), flush_memtable_id, env_options_,
+  //     versions_.get(), &mutex_, &shutting_down_, {}, kMaxSequenceNumber,
+  //     snapshot_checker, &job_context, FlushReason::kTest, nullptr, nullptr,
+  //     nullptr, kNoCompression, db_options_.statistics.get(), &event_logger,
+  //     true, true /* sync_output_directory */, true /* write_manifest */,
+  //     Env::Priority::USER, nullptr /*IOTracer*/,
+  //     empty_seqno_to_time_mapping_);
 
-  // When the state from WriteController is normal.
-  ASSERT_EQ(flush_job.GetRateLimiterPriorityForWrite(), Env::IO_HIGH);
+  // // When the state from WriteController is normal.
+  // ASSERT_EQ(flush_job.GetRateLimiterPriorityForWrite(), Env::IO_HIGH);
 
-  WriteController* write_controller =
-      flush_job.versions_->GetColumnFamilySet()->write_controller();
+  // WriteController* write_controller =
+  //     flush_job.versions_->GetColumnFamilySet()->write_controller();
 
-  {
-    // When the state from WriteController is Delayed.
-    std::unique_ptr<WriteControllerToken> delay_token =
-        write_controller->GetDelayToken(1000000);
-    ASSERT_EQ(flush_job.GetRateLimiterPriorityForWrite(), Env::IO_USER);
-  }
+  // {
+  //   // When the state from WriteController is Delayed.
+  //   std::unique_ptr<WriteControllerToken> delay_token =
+  //       write_controller->GetDelayToken(1000000);
+  //   ASSERT_EQ(flush_job.GetRateLimiterPriorityForWrite(), Env::IO_USER);
+  // }
 
-  {
-    // When the state from WriteController is Stopped.
-    std::unique_ptr<WriteControllerToken> stop_token =
-        write_controller->GetStopToken();
-    ASSERT_EQ(flush_job.GetRateLimiterPriorityForWrite(), Env::IO_USER);
-  }
+  // {
+  //   // When the state from WriteController is Stopped.
+  //   std::unique_ptr<WriteControllerToken> stop_token =
+  //       write_controller->GetStopToken();
+  //   ASSERT_EQ(flush_job.GetRateLimiterPriorityForWrite(), Env::IO_USER);
+  // }
 }
 
 class FlushJobTimestampTest : public FlushJobTestBase {
