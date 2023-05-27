@@ -5,9 +5,11 @@
 //
 #pragma once
 
+#include <memory/shared_mem_basic.h>
+
 #include <deque>
 #include <limits>
-#include <list>
+#include <memory/shared_std.hpp>
 #include <set>
 #include <string>
 #include <vector>
@@ -47,7 +49,13 @@ class MemTableListVersion {
   explicit MemTableListVersion(size_t* parent_memtable_list_memory_usage,
                                int max_write_buffer_number_to_maintain,
                                int64_t max_write_buffer_size_to_maintain);
-
+  static auto CreateSharedMemtableListVersion(
+      size_t* parent_memtable_list_memory_usage,
+      int max_write_buffer_number_to_maintain,
+      int64_t max_write_buffer_size_to_maintain) -> MemTableListVersion*;
+  static auto CreateSharedMemtableListVersion(
+      size_t* parent_memtable_list_memory_usage, const MemTableListVersion& old)
+      -> MemTableListVersion*;
   void Ref();
   void Unref(autovector<MemTable*>* to_delete = nullptr);
 
@@ -160,7 +168,7 @@ class MemTableListVersion {
   // Return true if memtable is trimmed
   bool TrimHistory(autovector<MemTable*>* to_delete, size_t usage);
 
-  bool GetFromList(std::list<MemTable*>* list, const LookupKey& key,
+  bool GetFromList(shm_std::shared_list<MemTable*>* list, const LookupKey& key,
                    std::string* value, PinnableWideColumns* columns,
                    std::string* timestamp, Status* s,
                    MergeContext* merge_context,
@@ -186,11 +194,11 @@ class MemTableListVersion {
   bool MemtableLimitExceeded(size_t usage);
 
   // Immutable MemTables that have not yet been flushed.
-  std::list<MemTable*> memlist_;
+  shm_std::shared_list<MemTable*> memlist_;
 
   // MemTables that have already been flushed
   // (used during Transaction validation)
-  std::list<MemTable*> memlist_history_;
+  shm_std::shared_list<MemTable*> memlist_history_;
 
   // Maximum number of MemTables to keep in memory (including both flushed
   const int max_write_buffer_number_to_maintain_;

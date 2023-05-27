@@ -100,7 +100,7 @@ class ConSharedArena : public BasicArena {
   // Number of bytes allocated in one block
   const size_t kBlockSize;
   // Allocated memory blocks
-  std::shared_deque<std::unique_ptr<char, void (*)(char*)>> blocks_;
+  shm_std::shared_deque<std::unique_ptr<char, void (*)(char*)>> blocks_;
   // Huge page allocations
   // std::deque<MemMapping> huge_blocks_;
   size_t irregular_block_num = 0;

@@ -1421,6 +1421,7 @@ if(WITH_TESTS)
         logging/event_logger_test.cc
         memory/arena_test.cc
         memory/memory_allocator_test.cc
+        memory/shared_std_test.cc
         memtable/inlineskiplist_test.cc
         memtable/skiplist_test.cc
         memtable/write_buffer_manager_test.cc
