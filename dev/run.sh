@@ -7,7 +7,7 @@ cd $PROJECT_ROOT
 mkdir build
 cd $PROJECT_ROOT/build
 cmake ..
-make all -j $(nproc)
+make all -j 18
 cd $PROJECT_ROOT/dev
 
 cp ../build/trace_analyzer ./

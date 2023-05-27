@@ -17,6 +17,8 @@
 #include "db/version_set.h"
 #include "logging/log_buffer.h"
 #include "logging/logging.h"
+#include "memory/shared_mem_basic.h"
+#include "memory/shared_std.hpp"
 #include "monitoring/thread_status_util.h"
 #include "rocksdb/db.h"
 #include "rocksdb/env.h"
@@ -24,6 +26,7 @@
 #include "table/merging_iterator.h"
 #include "test_util/sync_point.h"
 #include "util/coding.h"
+#include "util/macro.hpp"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -43,6 +46,22 @@ void MemTableListVersion::UnrefMemTable(autovector<MemTable*>* to_delete,
     assert(*parent_memtable_list_memory_usage_ >= m->ApproximateMemoryUsage());
     *parent_memtable_list_memory_usage_ -= m->ApproximateMemoryUsage();
   }
+}
+
+MemTableListVersion* MemTableListVersion::CreateSharedMemtableListVersion(
+    size_t* parent_memtable_list_memory_usage,
+    int max_write_buffer_number_to_maintain,
+    int64_t max_write_buffer_size_to_maintain) {
+  void* mem = shm_alloc(sizeof(MemTableListVersion));
+  LOG("MemTableListVersion::CreateSharedMemtableListVersion");
+  return new (mem) MemTableListVersion(parent_memtable_list_memory_usage,
+                                       max_write_buffer_number_to_maintain,
+                                       max_write_buffer_size_to_maintain);
+}
+MemTableListVersion* MemTableListVersion::CreateSharedMemtableListVersion(
+    size_t* parent_memtable_list_memory_usage, const MemTableListVersion& old) {
+  void* mem = shm_alloc(sizeof(MemTableListVersion));
+  return new (mem) MemTableListVersion(parent_memtable_list_memory_usage, old);
 }
 
 MemTableListVersion::MemTableListVersion(
@@ -154,11 +173,11 @@ bool MemTableListVersion::GetFromHistory(
 }
 
 bool MemTableListVersion::GetFromList(
-    std::list<MemTable*>* list, const LookupKey& key, std::string* value,
-    PinnableWideColumns* columns, std::string* timestamp, Status* s,
-    MergeContext* merge_context, SequenceNumber* max_covering_tombstone_seq,
-    SequenceNumber* seq, const ReadOptions& read_opts, ReadCallback* callback,
-    bool* is_blob_index) {
+    shm_std::shared_list<MemTable*>* list, const LookupKey& key,
+    std::string* value, PinnableWideColumns* columns, std::string* timestamp,
+    Status* s, MergeContext* merge_context,
+    SequenceNumber* max_covering_tombstone_seq, SequenceNumber* seq,
+    const ReadOptions& read_opts, ReadCallback* callback, bool* is_blob_index) {
   *seq = kMaxSequenceNumber;
 
   for (auto& memtable : *list) {
@@ -676,6 +695,7 @@ void MemTableList::InstallNewVersion() {
   } else {
     // somebody else holds the current version, we need to create new one
     MemTableListVersion* version = current_;
+
     current_ = new MemTableListVersion(&current_memory_usage_, *version);
     current_->Ref();
     version->Unref();

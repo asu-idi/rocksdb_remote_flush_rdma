@@ -1,5 +1,6 @@
 #pragma once
 #include <deque>
+#include <list>
 #include <memory>
 #include <sstream>
 #include <vector>
@@ -16,21 +17,33 @@ class STDSharedMemoryAllocator {
   template <typename U>
   STDSharedMemoryAllocator(const STDSharedMemoryAllocator<U> &other) noexcept {}
 
-  T *allocate(std::size_t n) {
+  auto allocate(std::size_t n) -> T * {
     return static_cast<T *>(static_cast<void *>(shm_alloc(n * sizeof(T))));
   }
 
   void deallocate(T *p, std::size_t n) noexcept {
     return shm_delete(reinterpret_cast<char *>(p));
   }
+
+  template <class T1>
+  auto operator==(const STDSharedMemoryAllocator<T1> &) -> bool {
+    return true;
+  }
+  template <class T1>
+  auto operator!=(const STDSharedMemoryAllocator<T1> &) -> bool {
+    return false;
+  }
 };
-namespace std {
+namespace shm_std {
 template <typename T>
-using shared_vector = vector<T, STDSharedMemoryAllocator<T>>;
+using shared_vector = std::vector<T, STDSharedMemoryAllocator<T>>;
 template <typename T>
-using shared_deque = deque<T, STDSharedMemoryAllocator<T>>;
+using shared_deque = std::deque<T, STDSharedMemoryAllocator<T>>;
 template <typename T>
 using shared_string =
-    basic_string<T, char_traits<T>, STDSharedMemoryAllocator<T>>;
+    std::basic_string<T, std::char_traits<T>, STDSharedMemoryAllocator<T>>;
 
-}  // namespace std
+template <typename T>
+using shared_list = std::list<T, STDSharedMemoryAllocator<T>>;
+
+}  // namespace shm_std
