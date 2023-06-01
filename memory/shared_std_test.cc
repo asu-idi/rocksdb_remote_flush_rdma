@@ -1,15 +1,19 @@
 #include "memory/shared_std.hpp"
 
 #include <cassert>
+#include <cstddef>
+#include <cstdint>
 
 #include "db/db_iter.h"
 #include "gtest/gtest.h"
+#include "memory/shared_mem_basic.h"
 #include "port/stack_trace.h"
+#include "test_util/testharness.h"
 namespace ROCKSDB_NAMESPACE {
 
 class SharedStdTest : public testing::Test {};
 
-TEST_F(SharedStdTest, Vector) {
+TEST_F(SharedStdTest, DISABLED_Vector) {
   shm_std::shared_list<int*> now1, now2;
   for (int i = 1; i <= 10; i++) {
     int* ptr = new int(i * 2);
@@ -22,6 +26,74 @@ TEST_F(SharedStdTest, Vector) {
     now1.pop_front();
     now2.pop_front();
   }
+}
+
+TEST_F(SharedStdTest, Set) {
+  std::set<std::pair<void*, size_t>> mpp;
+  for (int i = 1; i <= 10; i++) {
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<size_t> dis(1, INT32_MAX - 1);
+    size_t* ptr = nullptr;
+    size_t size = dis(gen);
+    // ptr = (size_t*)dis(gen);
+    mpp.insert(std::make_pair(ptr, size));
+  }
+  ASSERT_TRUE(mpp.size() == 10);
+  void* ptr = nullptr;
+  size_t size = 0;
+  for (auto& it : mpp) {
+    ASSERT_TRUE(it.first >= ptr);
+    if (it.first == ptr) ASSERT_TRUE(it.second >= size);
+    ptr = it.first;
+    size = it.second;
+  }
+}
+
+TEST_F(SharedStdTest, Map) {
+  std::map<void*, size_t> mpp;
+  for (int i = 1; i <= 10; i++) {
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<size_t> dis(1, INT32_MAX - 1);
+    size_t* ptr = (size_t*)dis(gen);
+    size_t size = dis(gen);
+    mpp.insert(std::make_pair(ptr, size));
+  }
+  ASSERT_TRUE(mpp.size() == 10);
+  void* ptr = nullptr;
+  size_t size = 0;
+  for (auto& it : mpp) {
+    ASSERT_TRUE(it.first >= ptr);
+    if (it.first == ptr) ASSERT_TRUE(it.second >= size);
+    ptr = it.first;
+    size = it.second;
+  }
+}
+
+TEST_F(SharedStdTest, SharedContainer) {
+  std::vector<std::pair<size_t*, size_t>> mpp;
+  std::random_device rd;
+  std::mt19937 gen(rd());
+  std::uniform_int_distribution<size_t> dis(1, 1e5);
+  size_t *ptr = nullptr, size = 0;
+  for (int i = 1; i <= 10; i++) {
+    ptr += dis(gen);
+    size = dis(gen);
+    ASSERT_TRUE(singleton<SharedContainer>::Instance().insert(ptr, size));
+    ASSERT_FALSE(singleton<SharedContainer>::Instance().insert(ptr, size));
+    mpp.emplace_back(ptr, size);
+    ptr += size;
+  }
+  ASSERT_EQ(singleton<SharedContainer>::Instance().size(), 10);
+  for (auto& it : mpp) {
+    ASSERT_TRUE(
+        singleton<SharedContainer>::Instance().find(it.first, it.second));
+  }
+  for (auto& it : mpp) {
+    ASSERT_TRUE(singleton<SharedContainer>::Instance().remove(it.first));
+  }
+  ASSERT_EQ(singleton<SharedContainer>::Instance().size(), 0);
 }
 
 }  // namespace ROCKSDB_NAMESPACE

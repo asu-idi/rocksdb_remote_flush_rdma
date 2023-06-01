@@ -13,6 +13,7 @@ cd $PROJECT_ROOT/dev
 cp ../build/trace_analyzer ./
 cp ../build/trace_query_test ./
 cp ../build/flush_job_test ./
+cp ../build/shared_std_test ./
 # cp ../build/memtable_tracer_parser ./
 # cp ../build/trace_memtable_test ./
 cp ../build/trace_io_test ./

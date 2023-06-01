@@ -1,12 +1,15 @@
 #pragma once
 #include <deque>
 #include <list>
+#include <map>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <vector>
 
 #include "memory/shared_mem_basic.h"
 
+namespace shm_std {
 template <typename T>
 class STDSharedMemoryAllocator {
  public:
@@ -34,7 +37,6 @@ class STDSharedMemoryAllocator {
     return false;
   }
 };
-namespace shm_std {
 template <typename T>
 using shared_vector = std::vector<T, STDSharedMemoryAllocator<T>>;
 template <typename T>
