@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cinttypes>
+#include <cstddef>
 #include <limits>
 #include <queue>
 #include <string>
@@ -34,6 +35,20 @@ class InternalKeyComparator;
 class Mutex;
 class VersionSet;
 
+bool MemTableListVersion::CHECKShared() {
+  size_t size = sizeof(MemTableListVersion);
+  void *front = reinterpret_cast<void*>(this),
+       *ptr1 = reinterpret_cast<void*>(parent_memtable_list_memory_usage_);
+
+  LOG("MemTableListVersion::CHECKShared");
+  bool ret = singleton<SharedContainer>::Instance().find(front, size) &&
+             singleton<SharedContainer>::Instance().find(ptr1, sizeof(size_t));
+  for (auto& it : this->memlist_) {
+    ret = ret &&
+          singleton<SharedContainer>::Instance().find(it, sizeof(MemTable*));
+  }
+  return ret;
+}
 void MemTableListVersion::AddMemTable(MemTable* m) {
   memlist_.push_front(m);
   *parent_memtable_list_memory_usage_ += m->ApproximateMemoryUsage();
@@ -56,21 +71,26 @@ MemTableListVersion* MemTableListVersion::CreateSharedMemtableListVersion(
   LOG("MemTableListVersion::CreateSharedMemtableListVersion");
   return new (mem) MemTableListVersion(parent_memtable_list_memory_usage,
                                        max_write_buffer_number_to_maintain,
-                                       max_write_buffer_size_to_maintain);
+                                       max_write_buffer_size_to_maintain, true);
 }
 MemTableListVersion* MemTableListVersion::CreateSharedMemtableListVersion(
     size_t* parent_memtable_list_memory_usage, const MemTableListVersion& old) {
   void* mem = shm_alloc(sizeof(MemTableListVersion));
-  return new (mem) MemTableListVersion(parent_memtable_list_memory_usage, old);
+  return new (mem)
+      MemTableListVersion(parent_memtable_list_memory_usage, old, true);
 }
 
 MemTableListVersion::MemTableListVersion(
-    size_t* parent_memtable_list_memory_usage, const MemTableListVersion& old)
+    size_t* parent_memtable_list_memory_usage, const MemTableListVersion& old,
+    bool shared)
     : max_write_buffer_number_to_maintain_(
           old.max_write_buffer_number_to_maintain_),
       max_write_buffer_size_to_maintain_(
           old.max_write_buffer_size_to_maintain_),
-      parent_memtable_list_memory_usage_(parent_memtable_list_memory_usage) {
+      parent_memtable_list_memory_usage_(
+          shared ? new(shm_alloc(sizeof(size_t)))
+                       size_t(*parent_memtable_list_memory_usage)
+                 : parent_memtable_list_memory_usage) {
   memlist_ = old.memlist_;
   for (auto& m : memlist_) {
     m->Ref();
@@ -85,10 +105,13 @@ MemTableListVersion::MemTableListVersion(
 MemTableListVersion::MemTableListVersion(
     size_t* parent_memtable_list_memory_usage,
     int max_write_buffer_number_to_maintain,
-    int64_t max_write_buffer_size_to_maintain)
+    int64_t max_write_buffer_size_to_maintain, bool shared)
     : max_write_buffer_number_to_maintain_(max_write_buffer_number_to_maintain),
       max_write_buffer_size_to_maintain_(max_write_buffer_size_to_maintain),
-      parent_memtable_list_memory_usage_(parent_memtable_list_memory_usage) {}
+      parent_memtable_list_memory_usage_(
+          shared ? new(shm_alloc(sizeof(size_t)))
+                       size_t(*parent_memtable_list_memory_usage)
+                 : parent_memtable_list_memory_usage) {}
 
 void MemTableListVersion::Ref() { ++refs_; }
 
@@ -106,7 +129,11 @@ void MemTableListVersion::Unref(autovector<MemTable*>* to_delete) {
     for (const auto& m : memlist_history_) {
       UnrefMemTable(to_delete, m);
     }
-    delete this;
+    LOG("MemTableListVersion::Unref");
+    // delete this;
+    this->~MemTableListVersion();
+    shm_delete(reinterpret_cast<char*>(this));
+    LOG("MemTableListVersion::Unref delete");
   }
 }
 
@@ -696,7 +723,8 @@ void MemTableList::InstallNewVersion() {
     // somebody else holds the current version, we need to create new one
     MemTableListVersion* version = current_;
 
-    current_ = new MemTableListVersion(&current_memory_usage_, *version);
+    current_ = MemTableListVersion::CreateSharedMemtableListVersion(
+        &current_memory_usage_, *version);
     current_->Ref();
     version->Unref();
   }
