@@ -45,10 +45,12 @@ struct FlushJobInfo;
 class MemTableListVersion {
  public:
   explicit MemTableListVersion(size_t* parent_memtable_list_memory_usage,
-                               const MemTableListVersion& old);
+                               const MemTableListVersion& old,
+                               bool shared = false);
   explicit MemTableListVersion(size_t* parent_memtable_list_memory_usage,
                                int max_write_buffer_number_to_maintain,
-                               int64_t max_write_buffer_size_to_maintain);
+                               int64_t max_write_buffer_size_to_maintain,
+                               bool shared = false);
   static auto CreateSharedMemtableListVersion(
       size_t* parent_memtable_list_memory_usage,
       int max_write_buffer_number_to_maintain,
@@ -144,6 +146,7 @@ class MemTableListVersion {
   // smallest sequence number of all FirstSequenceNumber.
   // Return kMaxSequenceNumber if the list is empty.
   SequenceNumber GetFirstSequenceNumber() const;
+  bool CHECKShared();
 
  private:
   friend class MemTableList;
@@ -231,9 +234,9 @@ class MemTableList {
       : imm_flush_needed(false),
         imm_trim_needed(false),
         min_write_buffer_number_to_merge_(min_write_buffer_number_to_merge),
-        current_(new MemTableListVersion(&current_memory_usage_,
-                                         max_write_buffer_number_to_maintain,
-                                         max_write_buffer_size_to_maintain)),
+        current_(MemTableListVersion::CreateSharedMemtableListVersion(
+            &current_memory_usage_, max_write_buffer_number_to_maintain,
+            max_write_buffer_size_to_maintain)),
         num_flush_not_started_(0),
         commit_in_progress_(false),
         flush_requested_(false),

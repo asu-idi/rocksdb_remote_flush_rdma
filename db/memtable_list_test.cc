@@ -12,6 +12,7 @@
 #include "db/merge_context.h"
 #include "db/version_set.h"
 #include "db/write_controller.h"
+#include "memory/shared_mem_basic.h"
 #include "rocksdb/db.h"
 #include "rocksdb/status.h"
 #include "rocksdb/write_buffer_manager.h"
@@ -878,6 +879,35 @@ TEST_F(MemTableListTest, EmptyAtomicFlusTest) {
                                                     to_flush, &to_delete);
   ASSERT_OK(s);
   ASSERT_TRUE(to_delete.empty());
+}
+
+TEST_F(MemTableListTest, SharedMemListVersion) {
+  const int num_tables_per_cf = 2;
+  SequenceNumber seq = 1;
+
+  auto factory = std::make_shared<SkipListFactory>();
+  options.memtable_factory = factory;
+  ImmutableOptions ioptions(options);
+  InternalKeyComparator cmp(BytewiseComparator());
+  WriteBufferManager wb(options.db_write_buffer_size);
+
+  // Create MemTableLists
+  int min_write_buffer_number_to_merge = 3;
+  int max_write_buffer_number_to_maintain = 7;
+  int64_t max_write_buffer_size_to_maintain =
+      7 * static_cast<int64_t>(options.write_buffer_size);
+  autovector<MemTableList*> lists;
+  LOG("create MemTableList");
+  lists.emplace_back(new MemTableList(min_write_buffer_number_to_merge,
+                                      max_write_buffer_number_to_maintain,
+                                      max_write_buffer_size_to_maintain));
+  LOG("create MemTableList done");
+  ASSERT_TRUE(lists[0]->current()->CHECKShared());
+  for (auto list : lists) {
+    auto* ptr = list->current();
+    ASSERT_TRUE(singleton<SharedContainer>::Instance().find(
+        reinterpret_cast<void*>(ptr), sizeof(MemTableListVersion)));
+  }
 }
 
 TEST_F(MemTableListTest, AtomicFlusTest) {
