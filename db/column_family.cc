@@ -528,7 +528,7 @@ ColumnFamilyData::ColumnFamilyData(
     const FileOptions* file_options, ColumnFamilySet* column_family_set,
     BlockCacheTracer* const block_cache_tracer,
     const std::shared_ptr<IOTracer>& io_tracer, const std::string& db_id,
-    const std::string& db_session_id)
+    const std::string& db_session_id, bool is_shared)
     : id_(id),
       name_(name),
       dummy_versions_(_dummy_versions),
@@ -561,7 +561,8 @@ ColumnFamilyData::ColumnFamilyData(
       last_memtable_id_(0),
       db_paths_registered_(false),
       mempurge_used_(false),
-      next_epoch_number_(1) {
+      next_epoch_number_(1),
+      is_shared_(is_shared) {
   LOG("CHECK : dummy_cf_options",
       cf_options.server_use_remote_flush == true ? "true" : "false", ' ',
       "initial_cf_options_:",
@@ -657,6 +658,22 @@ ColumnFamilyData::ColumnFamilyData(
   }
 }
 
+ColumnFamilyData* ColumnFamilyData::CreateSharedColumnFamilyData(
+    uint32_t id, const std::string& name, Version* dummy_versions,
+    Cache* table_cache, WriteBufferManager* write_buffer_manager,
+    const ColumnFamilyOptions& options, const ImmutableDBOptions& db_options,
+    const FileOptions* file_options, ColumnFamilySet* column_family_set,
+    BlockCacheTracer* const block_cache_tracer,
+    const std::shared_ptr<IOTracer>& io_tracer, const std::string& db_id,
+    const std::string& db_session_id) {
+  void* mem = shm_alloc(sizeof(ColumnFamilyData));
+  auto* ret = new (mem) ColumnFamilyData(
+      id, name, dummy_versions, table_cache, write_buffer_manager, options,
+      db_options, file_options, column_family_set, block_cache_tracer,
+      io_tracer, db_id, db_session_id, true);
+  return ret;
+}
+
 // DB mutex held
 ColumnFamilyData::~ColumnFamilyData() {
   assert(refs_.load(std::memory_order_relaxed) == 0);
@@ -723,6 +740,13 @@ ColumnFamilyData::~ColumnFamilyData() {
           id_, name_.c_str());
     }
   }
+}
+
+bool ColumnFamilyData::CHECKShared() {
+  void* mem = reinterpret_cast<void*>(this);
+  bool ret = singleton<SharedContainer>::Instance().find(
+      mem, sizeof(ColumnFamilyData));
+  return ret;
 }
 
 bool ColumnFamilyData::UnrefAndTryDelete() {
@@ -1571,13 +1595,21 @@ ColumnFamilySet::ColumnFamilySet(
     WriteController* _write_controller,
     BlockCacheTracer* const block_cache_tracer,
     const std::shared_ptr<IOTracer>& io_tracer, const std::string& db_id,
-    const std::string& db_session_id, const ColumnFamilyOptions& cf_options)
+    const std::string& db_session_id, const ColumnFamilyOptions& cf_options,
+    bool is_shared)
     : max_column_family_(0),
       file_options_(file_options),
-      dummy_cfd_(new ColumnFamilyData(
-          ColumnFamilyData::kDummyColumnFamilyDataId, "", nullptr, nullptr,
-          nullptr, cf_options, *db_options, &file_options_, nullptr,
-          block_cache_tracer, io_tracer, db_id, db_session_id)),
+      dummy_cfd_(is_shared
+                     ? ColumnFamilyData::CreateSharedColumnFamilyData(
+                           ColumnFamilyData::kDummyColumnFamilyDataId, "",
+                           nullptr, nullptr, nullptr, cf_options, *db_options,
+                           &file_options_, nullptr, block_cache_tracer,
+                           io_tracer, db_id, db_session_id)
+                     : new ColumnFamilyData(
+                           ColumnFamilyData::kDummyColumnFamilyDataId, "",
+                           nullptr, nullptr, nullptr, cf_options, *db_options,
+                           &file_options_, nullptr, block_cache_tracer,
+                           io_tracer, db_id, db_session_id)),
       default_cfd_cache_(nullptr),
       db_name_(dbname),
       db_options_(db_options),
@@ -1653,10 +1685,19 @@ ColumnFamilyData* ColumnFamilySet::CreateColumnFamily(
   assert(column_families_.find(name) == column_families_.end());
   LOG("CreateColumnFamily: new cfd,check remote flush:",
       options.server_use_remote_flush ? "true" : "false");
-  auto* new_cfd = new ColumnFamilyData(
-      id, name, dummy_versions, table_cache_, write_buffer_manager_, options,
-      *db_options_, &file_options_, this, block_cache_tracer_, io_tracer_,
-      db_id_, db_session_id_);
+
+  ColumnFamilyData* new_cfd = nullptr;
+  if (options.server_use_remote_flush) {
+    new_cfd = ColumnFamilyData::CreateSharedColumnFamilyData(
+        id, name, dummy_versions, table_cache_, write_buffer_manager_, options,
+        *db_options_, &file_options_, this, block_cache_tracer_, io_tracer_,
+        db_id_, db_session_id_);
+  } else {
+    new_cfd = new ColumnFamilyData(id, name, dummy_versions, table_cache_,
+                                   write_buffer_manager_, options, *db_options_,
+                                   &file_options_, this, block_cache_tracer_,
+                                   io_tracer_, db_id_, db_session_id_);
+  }
   column_families_.insert({name, id});
   column_family_data_.insert({id, new_cfd});
   max_column_family_ = std::max(max_column_family_, id);

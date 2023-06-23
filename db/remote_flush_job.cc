@@ -109,6 +109,8 @@ RemoteFlushJob::RemoteFlushJob(
 
 RemoteFlushJob::~RemoteFlushJob() { ThreadStatusUtil::ResetThreadStatus(); }
 
+bool RemoteFlushJob::CHECKShared() { return true; }
+
 void RemoteFlushJob::ReportStartedFlush() {
   ThreadStatusUtil::SetColumnFamily(cfd_, cfd_->ioptions()->env,
                                     db_options_.enable_thread_tracking);

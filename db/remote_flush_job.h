@@ -96,6 +96,7 @@ class RemoteFlushJob {
   std::list<std::unique_ptr<FlushJobInfo>>* GetCommittedRemoteFlushJobsInfo() {
     return &committed_flush_jobs_info_;
   }
+  bool CHECKShared();
 
  private:
   friend class RemoteFlushJobTest_GetRateLimiterPriorityForWrite_Test;

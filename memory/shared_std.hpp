@@ -21,10 +21,12 @@ class STDSharedMemoryAllocator {
   STDSharedMemoryAllocator(const STDSharedMemoryAllocator<U> &other) noexcept {}
 
   auto allocate(std::size_t n) -> T * {
+    LOG("allocate", n);
     return static_cast<T *>(static_cast<void *>(shm_alloc(n * sizeof(T))));
   }
 
   void deallocate(T *p, std::size_t n) noexcept {
+    LOG("deallocate", n, ' ', std::hex, p);
     return shm_delete(reinterpret_cast<char *>(p));
   }
 
@@ -41,9 +43,11 @@ template <typename T>
 using shared_vector = std::vector<T, STDSharedMemoryAllocator<T>>;
 template <typename T>
 using shared_deque = std::deque<T, STDSharedMemoryAllocator<T>>;
-template <typename T>
-using shared_string =
-    std::basic_string<T, std::char_traits<T>, STDSharedMemoryAllocator<T>>;
+
+// note: this isn't gonna work, the allocator is ignored
+// using shared_string = std::basic_string<char, std::char_traits<char>,
+// STDSharedMemoryAllocator<char>>;
+using shared_char_vector = std::vector<char, STDSharedMemoryAllocator<char>>;
 
 template <typename T>
 using shared_list = std::list<T, STDSharedMemoryAllocator<T>>;
