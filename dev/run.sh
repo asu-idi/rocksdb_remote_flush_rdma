@@ -7,6 +7,9 @@ cd $PROJECT_ROOT
 mkdir build
 cd $PROJECT_ROOT/build
 cmake ..
+if [[ "$1" == "1" ]]; then
+    make clean
+fi
 make all -j 18
 cd $PROJECT_ROOT/dev
 

@@ -133,8 +133,14 @@ void MemTableListVersion::Unref(autovector<MemTable*>* to_delete) {
     }
     LOG("MemTableListVersion::Unref");
     // delete this;
-    this->~MemTableListVersion();
-    shm_delete(reinterpret_cast<char*>(this));
+    if (!is_shared_) {
+      LOG("MemTableListVersion::Unref delete");
+      delete this;
+    } else {
+      LOG("MemTableListVersion::Unref delete shared");
+      this->~MemTableListVersion();
+      shm_delete(reinterpret_cast<char*>(this));
+    }
     LOG("MemTableListVersion::Unref delete");
   }
 }
