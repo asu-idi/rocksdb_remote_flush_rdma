@@ -43,9 +43,9 @@ bool MemTableListVersion::CHECKShared() {
   LOG("MemTableListVersion::CHECKShared");
   bool ret = singleton<SharedContainer>::Instance().find(front, size) &&
              singleton<SharedContainer>::Instance().find(ptr1, sizeof(size_t));
-  for (auto& it : this->memlist_) {
+  for (auto& it : memlist_) {
     ret = ret &&
-          singleton<SharedContainer>::Instance().find(it, sizeof(MemTable*));
+          singleton<SharedContainer>::Instance().find(&it, sizeof(MemTable*));
   }
   return ret;
 }
@@ -90,7 +90,8 @@ MemTableListVersion::MemTableListVersion(
       parent_memtable_list_memory_usage_(
           shared ? new(shm_alloc(sizeof(size_t)))
                        size_t(*parent_memtable_list_memory_usage)
-                 : parent_memtable_list_memory_usage) {
+                 : parent_memtable_list_memory_usage),
+      is_shared_(shared) {
   memlist_ = old.memlist_;
   for (auto& m : memlist_) {
     m->Ref();
@@ -111,7 +112,8 @@ MemTableListVersion::MemTableListVersion(
       parent_memtable_list_memory_usage_(
           shared ? new(shm_alloc(sizeof(size_t)))
                        size_t(*parent_memtable_list_memory_usage)
-                 : parent_memtable_list_memory_usage) {}
+                 : parent_memtable_list_memory_usage),
+      is_shared_(shared) {}
 
 void MemTableListVersion::Ref() { ++refs_; }
 
@@ -135,6 +137,26 @@ void MemTableListVersion::Unref(autovector<MemTable*>* to_delete) {
     shm_delete(reinterpret_cast<char*>(this));
     LOG("MemTableListVersion::Unref delete");
   }
+}
+
+MemTableList* MemTableList::CreateSharedMemTableList(
+    int min_write_buffer_number_to_merge,
+    int max_write_buffer_number_to_maintain,
+    int64_t max_write_buffer_size_to_maintain) {
+  void* mem = shm_alloc(sizeof(MemTableList));
+  LOG("MemTableList::CreateSharedMemTableList");
+  return new (mem) MemTableList(min_write_buffer_number_to_merge,
+                                max_write_buffer_number_to_maintain,
+                                max_write_buffer_size_to_maintain, true);
+}
+
+bool MemTableList::CHECKShared() {
+  LOG("MemTableList::CHECKShared");
+  void* mem = reinterpret_cast<void*>(this);
+  bool ret =
+      singleton<SharedContainer>::Instance().find(mem, sizeof(MemTableList));
+  ret = ret && current_->CHECKShared();
+  return ret;
 }
 
 int MemTableList::NumNotFlushed() const {
@@ -220,9 +242,9 @@ bool MemTableListVersion::GetFromList(
       // Since we only care about the most recent change, we only need to
       // return the first operation found when searching memtables in
       // reverse-chronological order.
-      // current_seq would be equal to kMaxSequenceNumber if the value was to be
-      // skipped. This allows seq to be assigned again when the next value is
-      // read.
+      // current_seq would be equal to kMaxSequenceNumber if the value was to
+      // be skipped. This allows seq to be assigned again when the next value
+      // is read.
       *seq = current_seq;
     }
 
@@ -272,8 +294,8 @@ void MemTableListVersion::AddIterators(const ReadOptions& options,
     if (!add_range_tombstone_iter || options.ignore_range_deletions) {
       merge_iter_builder->AddIterator(mem_iter);
     } else {
-      // Except for snapshot read, using kMaxSequenceNumber is OK because these
-      // are immutable memtables.
+      // Except for snapshot read, using kMaxSequenceNumber is OK because
+      // these are immutable memtables.
       SequenceNumber read_seq = options.snapshot != nullptr
                                     ? options.snapshot->GetSequenceNumber()
                                     : kMaxSequenceNumber;
@@ -344,9 +366,12 @@ SequenceNumber MemTableListVersion::GetFirstSequenceNumber() const {
 // caller is responsible for referencing m
 void MemTableListVersion::Add(MemTable* m, autovector<MemTable*>* to_delete) {
   assert(refs_ == 1);  // only when refs_ == 1 is MemTableListVersion mutable
+  LOG("MemTable CHECKShared ", CHECKShared());
   AddMemTable(m);
+  LOG("MemTable CHECKShared ", CHECKShared());
   // m->MemoryAllocatedBytes() is added in MemoryAllocatedBytesExcludingLast
   TrimHistory(to_delete, 0);
+  LOG("MemTable CHECKShared ", CHECKShared());
 }
 
 // Removes m from list of memtables not flushed.  Caller should NOT Unref m.
@@ -367,7 +392,8 @@ void MemTableListVersion::Remove(MemTable* m,
   }
 }
 
-// return the total memory usage assuming the oldest flushed memtable is dropped
+// return the total memory usage assuming the oldest flushed memtable is
+// dropped
 size_t MemTableListVersion::MemoryAllocatedBytesExcludingLast() const {
   size_t total_memtable_size = 0;
   for (auto& memtable : memlist_) {
@@ -466,11 +492,12 @@ void MemTableList::PickMemtablesToFlush(uint64_t max_memtable_id,
       }
       ret->push_back(m);
     } else if (!ret->empty()) {
-      // This `break` is necessary to prevent picking non-consecutive memtables
-      // in case `memlist` has one or more entries with
+      // This `break` is necessary to prevent picking non-consecutive
+      // memtables in case `memlist` has one or more entries with
       // `flush_in_progress_ == true` sandwiched between entries with
-      // `flush_in_progress_ == false`. This could happen after parallel flushes
-      // are picked and the one flushing older memtables is rolled back.
+      // `flush_in_progress_ == false`. This could happen after parallel
+      // flushes are picked and the one flushing older memtables is rolled
+      // back.
       break;
     }
   }
@@ -539,10 +566,10 @@ Status MemTableList::TryInstallMemtableFlushResults(
   while (s.ok()) {
     auto& memlist = current_->memlist_;
     // The back is the oldest; if flush_completed_ is not set to it, it means
-    // that we were assigned a more recent memtable. The memtables' flushes must
-    // be recorded in manifest in order. A concurrent flush thread, who is
-    // assigned to flush the oldest memtable, will later wake up and does all
-    // the pending writes to manifest, in order.
+    // that we were assigned a more recent memtable. The memtables' flushes
+    // must be recorded in manifest in order. A concurrent flush thread, who
+    // is assigned to flush the oldest memtable, will later wake up and does
+    // all the pending writes to manifest, in order.
     if (memlist.empty() || !memlist.back()->flush_completed_) {
       break;
     }
@@ -553,7 +580,8 @@ Status MemTableList::TryInstallMemtableFlushResults(
     size_t batch_count = 0;
     autovector<VersionEdit*> edit_list;
     autovector<MemTable*> memtables_to_flush;
-    // enumerate from the last (earliest) element to see how many batch finished
+    // enumerate from the last (earliest) element to see how many batch
+    // finished
     for (auto it = memlist.rbegin(); it != memlist.rend(); ++it) {
       MemTable* m = *it;
       if (!m->flush_completed_) {
@@ -653,13 +681,16 @@ Status MemTableList::TryInstallMemtableFlushResults(
 // New memtables are inserted at the front of the list.
 void MemTableList::Add(MemTable* m, autovector<MemTable*>* to_delete) {
   assert(static_cast<int>(current_->memlist_.size()) >= num_flush_not_started_);
+  LOG(" CHECKShared", CHECKShared());
   InstallNewVersion();
   // this method is used to move mutable memtable into an immutable list.
   // since mutable memtable is already refcounted by the DBImpl,
   // and when moving to the immutable list we don't unref it,
   // we don't have to ref the memtable here. we just take over the
   // reference from the DBImpl.
+  LOG(" CHECKShared", CHECKShared());
   current_->Add(m, to_delete);
+  LOG(" CHECKShared", CHECKShared());
   m->MarkImmutable();
   num_flush_not_started_++;
   if (num_flush_not_started_ == 1) {
@@ -723,8 +754,12 @@ void MemTableList::InstallNewVersion() {
     // somebody else holds the current version, we need to create new one
     MemTableListVersion* version = current_;
 
-    current_ = MemTableListVersion::CreateSharedMemtableListVersion(
-        &current_memory_usage_, *version);
+    if (version->is_shared()) {
+      current_ = MemTableListVersion::CreateSharedMemtableListVersion(
+          &current_memory_usage_, *version);
+    } else {
+      current_ = new MemTableListVersion(&current_memory_usage_, *version);
+    }
     current_->Ref();
     version->Unref();
   }
