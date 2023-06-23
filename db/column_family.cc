@@ -712,27 +712,29 @@ ColumnFamilyData::~ColumnFamilyData() {
   }
   LOG("DEBUG");
   if (mem_ != nullptr) {
-    if (this->initial_cf_options().server_use_remote_flush == true) {
-      // TODO: check memtable free!
-      mem_->Unref();
-    } else {
-      delete mem_->Unref();
-    }
+    // if (this->initial_cf_options().server_use_remote_flush == true) {
+    //   // TODO: check memtable free!
+    //   mem_->Unref();
+    // } else {
+    //   delete mem_->Unref();
+    // }
     LOG("DEBUG");
   }
   autovector<MemTable*> to_delete;
   LOG("DEBUG");
-  imm_.current()->Unref(&to_delete);
-  for (MemTable* m : to_delete) {
-    LOG("DEBUG");
-    delete m;
-    LOG("DEBUG");
-  }
+  // imm_.current()->Unref(&to_delete);
+  // for (MemTable* m : to_delete) {
+  //   LOG("DEBUG");
+  //   delete m;
+  //   LOG("DEBUG");
+  // }
   LOG("DEBUG");
   if (db_paths_registered_) {
     // TODO(cc): considering using ioptions_.fs, currently some tests rely on
     // EnvWrapper, that's the main reason why we use env here.
+    LOG("DEBUG 1");
     Status s = ioptions_.env->UnregisterDbPaths(GetDbPaths());
+    LOG("DEBUG 2");
     if (!s.ok()) {
       ROCKS_LOG_ERROR(
           ioptions_.logger,
@@ -740,6 +742,7 @@ ColumnFamilyData::~ColumnFamilyData() {
           id_, name_.c_str());
     }
   }
+  LOG("DEBUG");
 }
 
 bool ColumnFamilyData::CHECKShared() {
@@ -757,7 +760,12 @@ bool ColumnFamilyData::UnrefAndTryDelete() {
     LOG("DEBUG");
     assert(super_version_ == nullptr);
     LOG("DEBUG");
-    delete this;
+    if (is_shared_) {
+      this->~ColumnFamilyData();
+      shm_delete(reinterpret_cast<char*>(this));
+    } else {
+      delete this;
+    }
     LOG("DEBUG");
     return true;
   }

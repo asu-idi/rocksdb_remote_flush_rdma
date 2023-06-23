@@ -109,7 +109,17 @@ class MemTable {
                     const ImmutableOptions& ioptions,
                     const MutableCFOptions& mutable_cf_options,
                     WriteBufferManager* write_buffer_manager,
-                    SequenceNumber earliest_seq, uint32_t column_family_id);
+                    SequenceNumber earliest_seq, uint32_t column_family_id,
+                    bool is_shared = false);
+
+  bool CHECKShared();
+  bool is_shared() const;
+  static MemTable* CreateSharedMemTable(
+      const InternalKeyComparator& comparator, const ImmutableOptions& ioptions,
+      const MutableCFOptions& mutable_cf_options,
+      WriteBufferManager* write_buffer_manager, SequenceNumber earliest_seq,
+      uint32_t column_family_id);
+
   // No copying allowed
   MemTable(const MemTable&) = delete;
   MemTable& operator=(const MemTable&) = delete;
@@ -624,6 +634,8 @@ class MemTable {
 
   // Flush job info of the current memtable.
   std::unique_ptr<FlushJobInfo> flush_job_info_;
+
+  bool is_shared_;
 
   // Updates flush_state_ using ShouldFlushNow()
   void UpdateFlushState();

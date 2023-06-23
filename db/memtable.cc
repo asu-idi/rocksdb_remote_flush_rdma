@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <limits>
 #include <memory>
 
@@ -28,6 +29,7 @@
 #include "memory/concurrent_arena.h"
 #include "memory/concurrent_shared_arena.h"
 #include "memory/memory_usage.h"
+#include "memory/shared_mem_basic.h"
 #include "monitoring/perf_context_imp.h"
 #include "monitoring/statistics.h"
 #include "port/lang.h"
@@ -85,7 +87,8 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
                    const ImmutableOptions& ioptions,
                    const MutableCFOptions& mutable_cf_options,
                    WriteBufferManager* write_buffer_manager,
-                   SequenceNumber latest_seq, uint32_t column_family_id)
+                   SequenceNumber latest_seq, uint32_t column_family_id,
+                   bool is_shared)
     : comparator_(cmp),
       moptions_(ioptions, mutable_cf_options),
       refs_(0),
@@ -148,7 +151,8 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
           ioptions.memtable_insert_with_hint_prefix_extractor.get()),
       oldest_key_time_(std::numeric_limits<uint64_t>::max()),
       atomic_flush_seqno_(kMaxSequenceNumber),
-      approximate_memory_usage_(0) {
+      approximate_memory_usage_(0),
+      is_shared_(is_shared) {
   LOG("");
   UpdateFlushState();
   // something went wrong if we need to flush before inserting anything
@@ -179,6 +183,27 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
         std::memory_order_relaxed);
   }
   LOG("");
+}
+
+MemTable* MemTable::CreateSharedMemTable(
+    const InternalKeyComparator& comparator, const ImmutableOptions& ioptions,
+    const MutableCFOptions& mutable_cf_options,
+    WriteBufferManager* write_buffer_manager, SequenceNumber earliest_seq,
+    uint32_t column_family_id) {
+  void* mem = shm_alloc(sizeof(MemTable));
+  LOG("CreateSharedMemTable ", mem);
+  auto* ret = new (mem)
+      MemTable(comparator, ioptions, mutable_cf_options, write_buffer_manager,
+               earliest_seq, column_family_id, true);
+  return ret;
+}
+
+bool MemTable::is_shared() const { return is_shared_; }
+
+bool MemTable::CHECKShared() {
+  bool ret = singleton<SharedContainer>::Instance().find(&comparator_,
+                                                         sizeof(comparator_));
+  return ret;
 }
 
 MemTable::~MemTable() {

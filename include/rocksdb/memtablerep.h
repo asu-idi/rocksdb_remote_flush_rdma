@@ -295,6 +295,8 @@ class MemTableRep {
   // Default: true
   virtual bool IsSnapshotSupported() const { return true; }
 
+  [[nodiscard]] virtual bool CHECKShared() const { return false; }
+
  protected:
   // When *key is an internal key concatenated with the value, returns the
   // user key.

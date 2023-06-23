@@ -12,6 +12,7 @@
 #include "cache/cache_reservation_manager.h"
 #include "db/forward_iterator.h"
 #include "env/mock_env.h"
+#include "memory/shared_mem_basic.h"
 #include "port/lang.h"
 #include "rocksdb/cache.h"
 #include "rocksdb/convenience.h"
@@ -19,6 +20,7 @@
 #include "rocksdb/unique_id.h"
 #include "rocksdb/utilities/object_registry.h"
 #include "table/format.h"
+#include "util/macro.hpp"
 #include "util/random.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -680,7 +682,14 @@ void DBTestBase::Close() {
   }
   handles_.clear();
   LOG("DEBUG", std::hex, (long long)db_, std::dec);
-  delete db_;
+  if (db_ && db_->GetOptions().server_use_remote_flush == true) {
+    LOG("DEBUG", "destroying db remote flush");
+    db_->~DB();
+    shm_delete(reinterpret_cast<char*>(db_));
+  } else {
+    LOG("DEBUG", "destroying db local flush or nullptr");
+    delete db_;
+  }
   LOG("DEBUG");
   db_ = nullptr;
 }
@@ -711,7 +720,9 @@ Status DBTestBase::ReadOnlyReopen(const Options& options) {
 }
 
 Status DBTestBase::TryReopen(const Options& options) {
+  LOG("reopen");
   Close();
+  LOG("reopen 1");
   last_options_.table_factory.reset();
   // Note: operator= is an unsafe approach here since it destructs
   // std::shared_ptr in the same order of their creation, in contrast to
@@ -720,8 +731,10 @@ Status DBTestBase::TryReopen(const Options& options) {
   // functions that use Option members such as statistics. To work around this
   // problem, we manually call destructor of table_factory which eventually
   // clears the block cache.
+  LOG("reopen 2");
   last_options_ = options;
   MaybeInstallTimeElapseOnlySleep(options);
+  LOG("reopen 3");
   return DB::Open(options, dbname_, &db_);
 }
 

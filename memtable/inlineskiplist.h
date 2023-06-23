@@ -53,6 +53,7 @@
 
 #include "memory/allocator.h"
 #include "memory/concurrent_shared_arena.h"
+#include "memory/shared_mem_basic.h"
 #include "memory/shared_memory_allocator.h"
 #include "port/likely.h"
 #include "port/port.h"
@@ -61,6 +62,7 @@
 #include "rocksdb/slice.h"
 #include "util/coding.h"
 #include "util/logger.hpp"
+#include "util/macro.hpp"
 #include "util/random.h"
 namespace ROCKSDB_NAMESPACE {
 
@@ -235,8 +237,8 @@ class InlineSkipList {
   // in the allocator must remain allocated for the lifetime of the
   // skiplist object.
   explicit InlineSkipList(Comparator cmp, Allocator* allocator,
-                          int32_t max_height = 12,
-                          int32_t branching_factor = 4);
+                          int32_t max_height = 12, int32_t branching_factor = 4,
+                          bool is_shared = false);
   // No copying allowed
   InlineSkipList(const InlineSkipList&) = delete;
   InlineSkipList& operator=(const InlineSkipList&) = delete;
@@ -244,6 +246,8 @@ class InlineSkipList {
   static InlineSkipList<Comparator>* CreateSharedInlineSkipList(
       Comparator cmp, Allocator* allocator, int32_t max_height = 12,
       int32_t branching_factor = 4);
+  bool is_shared() const { return is_shared_; }
+  bool CHECKShared() const;
 
   // Allocates a key and a skip-list node, returning a pointer to the key
   // portion of the node.  This method is thread-safe if the allocator
@@ -380,6 +384,8 @@ class InlineSkipList {
   // case.  It caches the prev and next found during the most recent
   // non-concurrent insertion.
   Splice* seq_splice_;
+
+  bool is_shared_;
 
   inline int GetMaxHeight() const {
     return max_height_.load(std::memory_order_relaxed);
@@ -537,8 +543,59 @@ InlineSkipList<Comparator>::CreateSharedInlineSkipList(
   assert(strcmp(allocator->name(), "ConcurrentSharedArena") == 0);
   LOG("allocate shared inlineSkiplist");
   void* mem = allocator->AllocateAligned(sizeof(InlineSkipList<Comparator>));
-  auto* ret = new (mem)
-      InlineSkipList<Comparator>(cmp, allocator, max_height, branching_factor);
+  auto* ret = new (mem) InlineSkipList<Comparator>(cmp, allocator, max_height,
+                                                   branching_factor, true);
+  return ret;
+}
+
+template <class Comparator>
+bool InlineSkipList<Comparator>::CHECKShared() const {
+  LOG("check shared inlineSkiplist");
+  bool ret = singleton<SharedContainer>::Instance().find(
+      reinterpret_cast<void*>(const_cast<uint16_t*>(&kMaxHeight_)),
+      sizeof(kMaxHeight_));
+  ret = ret & singleton<SharedContainer>::Instance().find(
+                  reinterpret_cast<void*>(const_cast<uint16_t*>(&kBranching_)),
+                  sizeof(kBranching_));
+  ret = ret & singleton<SharedContainer>::Instance().find(
+                  reinterpret_cast<void*>(
+                      const_cast<uint32_t*>(&kScaledInverseBranching_)),
+                  sizeof(kScaledInverseBranching_));
+  ret = ret & singleton<SharedContainer>::Instance().find(
+                  reinterpret_cast<void*>(allocator_), sizeof(allocator_));
+  // ret = ret & singleton<SharedContainer>::Instance().find(
+  //                 reinterpret_cast<void*>(const_cast<Comparator*>(&compare_)),
+  //                 sizeof(compare_));
+  ret = ret &
+        singleton<SharedContainer>::Instance().find(
+            reinterpret_cast<void*>(const_cast<Node*>(head_)), sizeof(head_));
+
+  Iterator iter(this);
+  iter.SeekToFirst();
+  while (iter.Valid()) {
+    // TODO: check Node next[-1]
+    const char* key_ptr = iter.key();
+    DecodedKey key_val =
+        *reinterpret_cast<DecodedKey*>(const_cast<char*>(key_ptr));
+    ret =
+        ret &&
+        singleton<SharedContainer>::Instance().find(
+            reinterpret_cast<void*>(const_cast<char*>(key_ptr)),
+            sizeof(
+                typename std::remove_reference<Comparator>::type::DecodedType));
+    LOG("check shared inlineSkiplist key: " /*, std::dec, key_val*/, ' ',
+        std::hex, reinterpret_cast<void*>(const_cast<char*>(key_ptr)));
+    iter.Next();
+  }
+
+  ret =
+      ret &&
+      singleton<SharedContainer>::Instance().find(
+          reinterpret_cast<void*>(const_cast<std::atomic<int>*>(&max_height_)),
+          sizeof(max_height_));
+  ret = ret &&
+        singleton<SharedContainer>::Instance().find(
+            seq_splice_, sizeof(Splice) + sizeof(Node*) * (kMaxHeight_ + 1));
   return ret;
 }
 
@@ -574,8 +631,8 @@ inline void InlineSkipList<Comparator>::Iterator::Next() {
 
 template <class Comparator>
 inline void InlineSkipList<Comparator>::Iterator::Prev() {
-  // Instead of using explicit "prev" links, we just search for the
-  // last node that falls before key.
+  // Instead of using explicit "prev" links, we just search for
+  // the last node that falls before key.
   assert(Valid());
   node_ = list_->FindLessThan(node_->Key());
   if (node_ == list_->head_) {
@@ -653,11 +710,12 @@ bool InlineSkipList<Comparator>::KeyIsAfterNode(const DecodedKey& key,
 template <class Comparator>
 typename InlineSkipList<Comparator>::Node*
 InlineSkipList<Comparator>::FindGreaterOrEqual(const char* key) const {
-  // Note: It looks like we could reduce duplication by implementing
-  // this function as FindLessThan(key)->Next(0), but we wouldn't be able
-  // to exit early on equality and the result wouldn't even be correct.
-  // A concurrent insert might occur after FindLessThan(key) but before
-  // we get a chance to call Next(0).
+  // Note: It looks like we could reduce duplication by
+  // implementing this function as FindLessThan(key)->Next(0),
+  // but we wouldn't be able to exit early on equality and the
+  // result wouldn't even be correct. A concurrent insert might
+  // occur after FindLessThan(key) but before we get a chance to
+  // call Next(0).
   Node* x = head_;
   int level = GetMaxHeight() - 1;
   Node* last_bigger = nullptr;
@@ -761,15 +819,15 @@ InlineSkipList<Comparator>::FindRandomEntry() const {
   // FOr each level, we look at all the nodes at the level, and
   // we randomly pick one of them. Then decrement the level
   // and reiterate the process.
-  // eg: assume GetMaxHeight()=5, and there are #100 elements (nodes).
-  // level 4 nodes: lvl_nodes={#1, #15, #67, #84}. Randomly pick #15.
-  // We will consider all the nodes between #15 (inclusive) and #67
-  // (exclusive). #67 is called 'limit_node' here.
-  // level 3 nodes: lvl_nodes={#15, #21, #45, #51}. Randomly choose
-  // #51. #67 remains 'limit_node'.
+  // eg: assume GetMaxHeight()=5, and there are #100 elements
+  // (nodes). level 4 nodes: lvl_nodes={#1, #15, #67, #84}.
+  // Randomly pick #15. We will consider all the nodes between
+  // #15 (inclusive) and #67 (exclusive). #67 is called
+  // 'limit_node' here. level 3 nodes: lvl_nodes={#15, #21, #45,
+  // #51}. Randomly choose #51. #67 remains 'limit_node'.
   // [...]
-  // level 0 nodes: lvl_nodes={#56,#57,#58,#59}. Randomly pick $57.
-  // Return Node #57.
+  // level 0 nodes: lvl_nodes={#56,#57,#58,#59}. Randomly pick
+  // $57. Return Node #57.
   std::vector<Node*> lvl_nodes;
   Random* rnd = Random::GetTLSInstance();
   int level = GetMaxHeight() - 1;
@@ -825,7 +883,8 @@ template <class Comparator>
 InlineSkipList<Comparator>::InlineSkipList(const Comparator cmp,
                                            Allocator* allocator,
                                            int32_t max_height,
-                                           int32_t branching_factor)
+                                           int32_t branching_factor,
+                                           bool is_shared)
     : kMaxHeight_(static_cast<uint16_t>(max_height)),
       kBranching_(static_cast<uint16_t>(branching_factor)),
       kScaledInverseBranching_((Random::kMaxNext + 1) / kBranching_),
@@ -833,7 +892,8 @@ InlineSkipList<Comparator>::InlineSkipList(const Comparator cmp,
       compare_(cmp),
       head_(AllocateNode(0, max_height)),
       max_height_(1),
-      seq_splice_(AllocateSplice()) {
+      seq_splice_(AllocateSplice()),
+      is_shared_(is_shared) {
   assert(max_height > 0 && kMaxHeight_ == static_cast<uint32_t>(max_height));
   assert(branching_factor > 1 &&
          kBranching_ == static_cast<uint32_t>(branching_factor));
@@ -854,20 +914,21 @@ typename InlineSkipList<Comparator>::Node*
 InlineSkipList<Comparator>::AllocateNode(size_t key_size, int height) {
   auto prefix = sizeof(std::atomic<Node*>) * (height - 1);
 
-  // prefix is space for the height - 1 pointers that we store before
-  // the Node instance (next_[-(height - 1) .. -1]).  Node starts at
-  // raw + prefix, and holds the bottom-mode (level 0) skip list pointer
-  // next_[0].  key_size is the bytes for the key, which comes just after
-  // the Node.
+  // prefix is space for the height - 1 pointers that we store
+  // before the Node instance (next_[-(height - 1) .. -1]). Node
+  // starts at raw + prefix, and holds the bottom-mode (level 0)
+  // skip list pointer next_[0].  key_size is the bytes for the
+  // key, which comes just after the Node.
   char* raw = allocator_->AllocateAligned(prefix + sizeof(Node) + key_size);
   Node* x = reinterpret_cast<Node*>(raw + prefix);
 
-  // Once we've linked the node into the skip list we don't actually need
-  // to know its height, because we can implicitly use the fact that we
-  // traversed into a node at level h to known that h is a valid level
-  // for that node.  We need to convey the height to the Insert step,
-  // however, so that it can perform the proper links.  Since we're not
-  // using the pointers at the moment, StashHeight temporarily borrow
+  // Once we've linked the node into the skip list we don't
+  // actually need to know its height, because we can implicitly
+  // use the fact that we traversed into a node at level h to
+  // known that h is a valid level for that node.  We need to
+  // convey the height to the Insert step, however, so that it
+  // can perform the proper links.  Since we're not using the
+  // pointers at the moment, StashHeight temporarily borrow
   // storage from next_[0] for that purpose.
   x->StashHeight(height);
   return x;
@@ -999,60 +1060,63 @@ bool InlineSkipList<Comparator>::Insert(const char* key, Splice* splice,
       max_height = height;
       break;
     }
-    // else retry, possibly exiting the loop because somebody else
-    // increased it
+    // else retry, possibly exiting the loop because somebody
+    // else increased it
   }
   assert(max_height <= kMaxPossibleHeight);
 
   int recompute_height = 0;
   if (splice->height_ < max_height) {
-    // Either splice has never been used or max_height has grown since
-    // last use.  We could potentially fix it in the latter case, but
-    // that is tricky.
+    // Either splice has never been used or max_height has grown
+    // since last use.  We could potentially fix it in the
+    // latter case, but that is tricky.
     splice->prev_[max_height] = head_;
     splice->next_[max_height] = nullptr;
     splice->height_ = max_height;
     recompute_height = max_height;
   } else {
     // Splice is a valid proper-height splice that brackets some
-    // key, but does it bracket this one?  We need to validate it and
-    // recompute a portion of the splice (levels 0..recompute_height-1)
-    // that is a superset of all levels that don't bracket the new key.
-    // Several choices are reasonable, because we have to balance the work
-    // saved against the extra comparisons required to validate the Splice.
+    // key, but does it bracket this one?  We need to validate
+    // it and recompute a portion of the splice (levels
+    // 0..recompute_height-1) that is a superset of all levels
+    // that don't bracket the new key. Several choices are
+    // reasonable, because we have to balance the work saved
+    // against the extra comparisons required to validate the
+    // Splice.
     //
-    // One strategy is just to recompute all of orig_splice_height if the
-    // bottom level isn't bracketing.  This pessimistically assumes that
-    // we will either get a perfect Splice hit (increasing sequential
-    // inserts) or have no locality.
+    // One strategy is just to recompute all of
+    // orig_splice_height if the bottom level isn't bracketing.
+    // This pessimistically assumes that we will either get a
+    // perfect Splice hit (increasing sequential inserts) or
+    // have no locality.
     //
-    // Another strategy is to walk up the Splice's levels until we find
-    // a level that brackets the key.  This strategy lets the Splice
-    // hint help for other cases: it turns insertion from O(log N) into
-    // O(log D), where D is the number of nodes in between the key that
-    // produced the Splice and the current insert (insertion is aided
-    // whether the new key is before or after the splice).  If you have
-    // a way of using a prefix of the key to map directly to the closest
-    // Splice out of O(sqrt(N)) Splices and we make it so that splices
-    // can also be used as hints during read, then we end up with Oshman's
-    // and Shavit's SkipTrie, which has O(log log N) lookup and insertion
-    // (compare to O(log N) for skip list).
+    // Another strategy is to walk up the Splice's levels until
+    // we find a level that brackets the key.  This strategy
+    // lets the Splice hint help for other cases: it turns
+    // insertion from O(log N) into O(log D), where D is the
+    // number of nodes in between the key that produced the
+    // Splice and the current insert (insertion is aided whether
+    // the new key is before or after the splice).  If you have
+    // a way of using a prefix of the key to map directly to the
+    // closest Splice out of O(sqrt(N)) Splices and we make it
+    // so that splices can also be used as hints during read,
+    // then we end up with Oshman's and Shavit's SkipTrie, which
+    // has O(log log N) lookup and insertion (compare to O(log
+    // N) for skip list).
     //
-    // We control the pessimistic strategy with allow_partial_splice_fix.
-    // A good strategy is probably to be pessimistic for seq_splice_,
-    // optimistic if the caller actually went to the work of providing
-    // a Splice.
+    // We control the pessimistic strategy with
+    // allow_partial_splice_fix. A good strategy is probably to
+    // be pessimistic for seq_splice_, optimistic if the caller
+    // actually went to the work of providing a Splice.
     while (recompute_height < max_height) {
       if (splice->prev_[recompute_height]->Next(recompute_height) !=
           splice->next_[recompute_height]) {
-        // splice isn't tight at this level, there must have been some inserts
-        // to this
-        // location that didn't update the splice.  We might only be a little
-        // stale, but if
-        // the splice is very stale it would be O(N) to fix it.  We haven't used
-        // up any of
-        // our budget of comparisons, so always move up even if we are
-        // pessimistic about
+        // splice isn't tight at this level, there must have
+        // been some inserts to this location that didn't update
+        // the splice.  We might only be a little stale, but if
+        // the splice is very stale it would be O(N) to fix it.
+        // We haven't used up any of our budget of comparisons,
+        // so always move up even if we are pessimistic about
         // our chances of success.
         ++recompute_height;
       } else if (splice->prev_[recompute_height] != head_ &&
@@ -1060,7 +1124,8 @@ bool InlineSkipList<Comparator>::Insert(const char* key, Splice* splice,
                                  splice->prev_[recompute_height])) {
         // key is from before splice
         if (allow_partial_splice_fix) {
-          // skip all levels with the same node without more comparisons
+          // skip all levels with the same node without more
+          // comparisons
           Node* bad = splice->prev_[recompute_height];
           while (splice->prev_[recompute_height] == bad) {
             ++recompute_height;
@@ -1094,7 +1159,8 @@ bool InlineSkipList<Comparator>::Insert(const char* key, Splice* splice,
   if (UseCAS) {
     for (int i = 0; i < height; ++i) {
       while (true) {
-        // Checking for duplicate keys on the level 0 is sufficient
+        // Checking for duplicate keys on the level 0 is
+        // sufficient
         if (UNLIKELY(i == 0 && splice->next_[i] != nullptr &&
                      compare_(x->Key(), splice->next_[i]->Key()) >= 0)) {
           // duplicate key
@@ -1114,17 +1180,20 @@ bool InlineSkipList<Comparator>::Insert(const char* key, Splice* splice,
           // success
           break;
         }
-        // CAS failed, we need to recompute prev and next. It is unlikely
-        // to be helpful to try to use a different level as we redo the
-        // search, because it should be unlikely that lots of nodes have
-        // been inserted between prev[i] and next[i]. No point in using
-        // next[i] as the after hint, because we know it is stale.
+        // CAS failed, we need to recompute prev and next. It is
+        // unlikely to be helpful to try to use a different
+        // level as we redo the search, because it should be
+        // unlikely that lots of nodes have been inserted
+        // between prev[i] and next[i]. No point in using
+        // next[i] as the after hint, because we know it is
+        // stale.
         FindSpliceForLevel<false>(key_decoded, splice->prev_[i], nullptr, i,
                                   &splice->prev_[i], &splice->next_[i]);
 
-        // Since we've narrowed the bracket for level i, we might have
-        // violated the Splice constraint between i and i-1.  Make sure
-        // we recompute the whole thing next time.
+        // Since we've narrowed the bracket for level i, we
+        // might have violated the Splice constraint between i
+        // and i-1.  Make sure we recompute the whole thing next
+        // time.
         if (i > 0) {
           splice_is_valid = false;
         }
@@ -1137,7 +1206,8 @@ bool InlineSkipList<Comparator>::Insert(const char* key, Splice* splice,
         FindSpliceForLevel<false>(key_decoded, splice->prev_[i], nullptr, i,
                                   &splice->prev_[i], &splice->next_[i]);
       }
-      // Checking for duplicate keys on the level 0 is sufficient
+      // Checking for duplicate keys on the level 0 is
+      // sufficient
       if (UNLIKELY(i == 0 && splice->next_[i] != nullptr &&
                    compare_(x->Key(), splice->next_[i]->Key()) >= 0)) {
         // duplicate key
@@ -1195,9 +1265,9 @@ bool InlineSkipList<Comparator>::Contains(const char* key) const {
 
 template <class Comparator>
 void InlineSkipList<Comparator>::TEST_Validate() const {
-  // Interate over all levels at the same time, and verify nodes appear in
-  // the right order, and nodes appear in upper level also appear in lower
-  // levels.
+  // Interate over all levels at the same time, and verify nodes
+  // appear in the right order, and nodes appear in upper level
+  // also appear in lower levels.
   Node* nodes[kMaxPossibleHeight];
   int max_height = GetMaxHeight();
   assert(max_height > 0);
@@ -1262,9 +1332,11 @@ ReadOnlyInlineSkipList<Comparator>::ReadOnlyInlineSkipList(
     nxt->SetPrev(new_node);
     insert = insert->next();
     // using Decodekey =
-    //     typename std::remove_reference<Comparator>::type::DecodedType;
-    // const Decodekey key_decoded = compare_.decode_key(key_ptr);
-    // LOG("insert key:", std::hex, (long long)key_ptr, std::dec, ' ',
+    //     typename
+    //     std::remove_reference<Comparator>::type::DecodedType;
+    // const Decodekey key_decoded =
+    // compare_.decode_key(key_ptr); LOG("insert key:",
+    // std::hex, (long long)key_ptr, std::dec, ' ',
     //     key_decoded.data(), ' ', (size_t)key_len);
     iter.Next();
   }

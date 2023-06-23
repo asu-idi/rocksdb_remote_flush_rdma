@@ -10,6 +10,7 @@
 #include "memory/allocator.h"
 #include "memory/arena.h"
 #include "memory/concurrent_shared_arena.h"
+#include "memory/shared_mem_basic.h"
 #include "memtable/inlineskiplist.h"
 #include "memtable/readonly_skiplisrep.h"
 #include "rocksdb/memtablerep.h"
@@ -43,6 +44,7 @@ class SkipListRep : public MemTableRep {
   static SkipListRep* CreateSharedSkipListRep(
       const MemTableRep::KeyComparator& compare, Allocator* allocator,
       const SliceTransform* transform, const size_t lookahead);
+  [[nodiscard]] bool CHECKShared() const override;
 
   KeyHandle Allocate(const size_t len, char** buf) override {
     *buf = skip_list_.AllocateKey(len);
@@ -368,6 +370,13 @@ SkipListRep* SkipListRep::CreateSharedSkipListRep(
   auto mem = allocator->AllocateAligned(sizeof(SkipListRep));
   auto* ptr = new (mem) SkipListRep(compare, allocator, transform, lookahead);
   return ptr;
+}
+
+bool SkipListRep::CHECKShared() const {
+  bool ret = skip_list_.CHECKShared();
+  LOG("make sure transform_ ==  nullptr");
+  ret = ret && (transform_ == nullptr);
+  return ret;
 }
 
 }  // namespace

@@ -653,7 +653,7 @@ class ColumnFamilyData {
   std::atomic<uint64_t> next_epoch_number_;
 
   bool is_shared_;
-  shm_std::shared_vector<shm_std::shared_char_vector> transportable_data_;
+  // shm_std::shared_vector<shm_std::shared_char_vector> transportable_data_;
 };
 
 // ColumnFamilySet has interesting thread-safety requirements

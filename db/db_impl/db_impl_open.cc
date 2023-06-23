@@ -1753,10 +1753,13 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
     // i can delete the handle since DBImpl is always holding a reference to
     // default column family
     if (db_options.persist_stats_to_disk && handles[1] != nullptr) {
+      LOG("FINISH DB OPEN 0");
       delete handles[1];
     }
+    LOG("FINISH DB OPEN 1");
     delete handles[0];
   }
+  LOG("FINISH DB OPEN 2");
   return s;
 }
 

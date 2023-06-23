@@ -9,6 +9,9 @@
 
 #include "memtable/inlineskiplist.h"
 
+#include <sys/types.h>
+
+#include <cstdint>
 #include <set>
 #include <unordered_set>
 
@@ -40,7 +43,7 @@ struct TestComparator {
   using DecodedType = Key;
 
   static DecodedType decode_key(const char* b) { return Decode(b); }
-  static size_t decode_len(const char* b) { return 8; }
+  static size_t decode_len(const char* b) { return sizeof(Key); }
 
   int operator()(const char* a, const char* b) const {
     if (Decode(a) < Decode(b)) {
@@ -270,6 +273,8 @@ TEST_F(InlineSkipTest, ConSharedSkiplist_Clone) {
   InlineSkipList<TestComparator>* list =
       InlineSkipList<TestComparator>::CreateSharedInlineSkipList(cmp, arena);
   // InlineSkipList<TestComparator> list(cmp, &arena);
+  ASSERT_TRUE(list->CHECKShared());
+
   for (int i = 0; i < N; i++) {
     Key key = rnd.Next() % R;
     if (keys.insert(key).second) {
@@ -280,6 +285,8 @@ TEST_F(InlineSkipTest, ConSharedSkiplist_Clone) {
       list->Insert(buf);
     }
   }
+  LOG("list->CHECKShared()")
+  ASSERT_TRUE(list->CHECKShared());
   list->CHECK_all_addr();
   ReadOnlyInlineSkipList<TestComparator>* readonly_list = list->Clone();
   readonly_list->CHECK_all_addr();
