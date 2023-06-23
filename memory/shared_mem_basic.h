@@ -62,7 +62,6 @@ class SharedContainer {
     return false;
   }
   auto find(void *ptr, size_t size) const -> bool {
-    if (mp_area_.find(ptr) == mp_area_.end()) return false;
     void *front = ptr, *back = reinterpret_cast<char *>(ptr) + size;
     for (auto &pr : mp_area_) {
       void *front2 = pr.first,
@@ -73,6 +72,14 @@ class SharedContainer {
     return false;
   }
   [[nodiscard]] auto size() const -> size_t { return mp_area_.size(); }
+
+  auto debug() {
+    for (auto &pr : mp_area_) {
+      LOG(std::hex, pr.first, " ",
+          reinterpret_cast<void *>(reinterpret_cast<char *>(pr.first) +
+                                   pr.second))
+    }
+  }
 
  private:
   bool legal(void *ptr, size_t size) {

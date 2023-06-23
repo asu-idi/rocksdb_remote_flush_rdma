@@ -147,6 +147,7 @@ class MemTableListVersion {
   // Return kMaxSequenceNumber if the list is empty.
   SequenceNumber GetFirstSequenceNumber() const;
   bool CHECKShared();
+  bool is_shared() const { return is_shared_; }
 
  private:
   friend class MemTableList;
@@ -212,6 +213,8 @@ class MemTableListVersion {
   int refs_ = 0;
 
   size_t* parent_memtable_list_memory_usage_;
+
+  bool is_shared_;
 };
 
 // This class stores references to all the immutable memtables.
@@ -230,13 +233,20 @@ class MemTableList {
   // A list of memtables.
   explicit MemTableList(int min_write_buffer_number_to_merge,
                         int max_write_buffer_number_to_maintain,
-                        int64_t max_write_buffer_size_to_maintain)
+                        int64_t max_write_buffer_size_to_maintain,
+                        bool is_shared = false)
       : imm_flush_needed(false),
         imm_trim_needed(false),
         min_write_buffer_number_to_merge_(min_write_buffer_number_to_merge),
-        current_(MemTableListVersion::CreateSharedMemtableListVersion(
-            &current_memory_usage_, max_write_buffer_number_to_maintain,
-            max_write_buffer_size_to_maintain)),
+        current_(
+            is_shared
+                ? MemTableListVersion::CreateSharedMemtableListVersion(
+                      &current_memory_usage_,
+                      max_write_buffer_number_to_maintain,
+                      max_write_buffer_size_to_maintain)
+                : new MemTableListVersion(&current_memory_usage_,
+                                          max_write_buffer_number_to_maintain,
+                                          max_write_buffer_size_to_maintain)),
         num_flush_not_started_(0),
         commit_in_progress_(false),
         flush_requested_(false),
@@ -245,6 +255,12 @@ class MemTableList {
         current_has_history_(false) {
     current_->Ref();
   }
+
+  static MemTableList* CreateSharedMemTableList(
+      int min_write_buffer_number_to_merge,
+      int max_write_buffer_number_to_maintain,
+      int64_t max_write_buffer_size_to_maintain);
+  bool CHECKShared();
 
   // Should not delete MemTableList without making sure MemTableList::current()
   // is Unref()'d.
