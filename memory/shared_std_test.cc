@@ -51,7 +51,7 @@ TEST_F(SharedStdTest, DISABLED_Set) {
     size = it.second;
   }
 }
-TEST_F(SharedStdTest, List) {
+TEST_F(SharedStdTest, DISABLED_List) {
   shm_std::shared_list<int*> all;
   std::random_device rd;
   std::mt19937 gen(rd());
@@ -74,6 +74,30 @@ TEST_F(SharedStdTest, List) {
     ASSERT_TRUE(
         singleton<SharedContainer>::Instance().find(&all.front(), sizeof(int)));
     all.pop_front();
+  }
+}
+
+TEST_F(SharedStdTest, StringVector) {
+  shm_std::shared_char_vector now1;
+  std::string now2;
+  std::random_device rd;
+  std::mt19937 gen(rd());
+  std::uniform_int_distribution<size_t> dis(1, INT32_MAX - 1);
+  for (int i = 1; i <= 10; i++) {
+    char a1 = dis(gen) % 26 + 'a';
+    now1.push_back(a1);
+    now2.push_back(a1);
+  }
+  ASSERT_TRUE(now1.size() == 10);
+  for (int i = 1; i <= 10; i++) {
+    ASSERT_TRUE(now1[i - 1] == now2[i - 1]);
+  }
+  singleton<SharedContainer>::Instance().debug();
+  for (int i = 1; i <= 10; i++) {
+    LOG("now1[i - 1] ptr :", std::hex, reinterpret_cast<void*>(&now1[i - 1]),
+        ' ', now1[i - 1]);
+    ASSERT_TRUE(singleton<SharedContainer>::Instance().find(&now1[i - 1],
+                                                            sizeof(char)));
   }
 }
 

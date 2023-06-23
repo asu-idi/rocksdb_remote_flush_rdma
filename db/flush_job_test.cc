@@ -330,6 +330,7 @@ TEST_F(FlushJobTest, SharedFlushJob) {
 
   EventLogger event_logger(db_options_.info_log.get());
   SnapshotChecker* snapshot_checker = nullptr;  // not relavant
+
   RemoteFlushJob remote_flush_job(
       dbname_,
       versions_->GetColumnFamilySet()
@@ -354,12 +355,16 @@ TEST_F(FlushJobTest, SharedFlushJob) {
   //     true, true /* sync_output_directory */, true /* write_manifest */,
   //     Env::Priority::USER, nullptr /*IOTracer*/,
   //     empty_seqno_to_time_mapping_);
+  ASSERT_TRUE(remote_flush_job.CHECKShared());
+
   HistogramData hist;
   FileMetaData file_meta;
   mutex_.Lock();
   remote_flush_job.PickMemTable();
   ASSERT_OK(remote_flush_job.Run(nullptr, &file_meta));
   mutex_.Unlock();
+  ASSERT_TRUE(remote_flush_job.CHECKShared());
+
   db_options_.statistics->histogramData(FLUSH_TIME, &hist);
   ASSERT_GT(hist.average, 0.0);
   ASSERT_EQ(std::to_string(1001), file_meta.smallest.user_key().ToString());
