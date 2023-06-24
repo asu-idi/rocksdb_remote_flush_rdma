@@ -203,6 +203,13 @@ bool MemTable::is_shared() const { return is_shared_; }
 bool MemTable::CHECKShared() {
   bool ret = singleton<SharedContainer>::Instance().find(&comparator_,
                                                          sizeof(comparator_));
+  //  TODO: arena_ maybe should not be shared, worker use local arena
+  // ret = ret &&
+  //       singleton<SharedContainer>::Instance().find(arena_,
+  //       sizeof(BasicArena));
+  ret = ret && table_.get()->CHECKShared() &&
+        range_del_table_.get()->CHECKShared();
+
   return ret;
 }
 
