@@ -38,6 +38,7 @@
 #include "rocksdb/env.h"
 #include "rocksdb/listener.h"
 #include "rocksdb/memtablerep.h"
+#include "rocksdb/status.h"
 #include "rocksdb/transaction_log.h"
 #include "table/scoped_arena_iterator.h"
 #include "util/autovector.h"
@@ -57,6 +58,27 @@ class Arena;
 
 class RemoteFlushJob {
  public:
+  static RemoteFlushJob* CreateRemoteFlushJob(
+      const std::string& dbname, ColumnFamilyData* cfd,
+      const ImmutableDBOptions& db_options,
+      const MutableCFOptions& mutable_cf_options, uint64_t max_memtable_id,
+      const FileOptions& file_options, VersionSet* versions,
+      InstrumentedMutex* db_mutex, std::atomic<bool>* shutting_down,
+      std::vector<SequenceNumber> existing_snapshots,
+      SequenceNumber earliest_write_conflict_snapshot,
+      SnapshotChecker* snapshot_checker, JobContext* job_context,
+      FlushReason flush_reason, LogBuffer* log_buffer,
+      FSDirectory* db_directory, FSDirectory* output_file_directory,
+      CompressionType output_compression, Statistics* stats,
+      EventLogger* event_logger, bool measure_io_stats,
+      const bool sync_output_directory, const bool write_manifest,
+      Env::Priority thread_pri, const std::shared_ptr<IOTracer>& io_tracer,
+      const SeqnoToTimeMapping& seq_time_mapping, const std::string& db_id = "",
+      const std::string& db_session_id = "",
+      std::string full_history_ts_low = "",
+      BlobFileCompletionCallback* blob_callback = nullptr);
+
+ private:
   // TODO(icanadi) make effort to reduce number of parameters here
   // IMPORTANT: mutable_cf_options needs to be alive while RemoteFlushJob is
   // alive
@@ -82,14 +104,18 @@ class RemoteFlushJob {
                  std::string full_history_ts_low = "",
                  BlobFileCompletionCallback* blob_callback = nullptr);
 
+ public:
   ~RemoteFlushJob();
 
   // Require db_mutex held.
   // Once PickMemTable() is called, either Run() or Cancel() has to be called.
   void PickMemTable();
-  Status Run(LogsWithPrepTracker* prep_tracker = nullptr,
-             FileMetaData* file_meta = nullptr,
-             bool* switched_to_mempurge = nullptr);
+  Status RunLocal(LogsWithPrepTracker* prep_tracker = nullptr,
+                  FileMetaData* file_meta = nullptr,
+                  bool* switched_to_mempurge = nullptr);
+  Status RunRemote(LogsWithPrepTracker* prep_tracker = nullptr,
+                   FileMetaData* file_meta = nullptr,
+                   bool* switched_to_mempurge = nullptr);
   void Cancel();
   const autovector<MemTable*>& GetMemTables() const { return mems_; }
 

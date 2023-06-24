@@ -360,8 +360,11 @@ TEST_F(FlushJobTest, SharedFlushJob) {
   HistogramData hist;
   FileMetaData file_meta;
   mutex_.Lock();
+  // CHECK shared
+  ASSERT_OK(remote_flush_job.RunRemote(nullptr, &file_meta));
+  // worker job
   remote_flush_job.PickMemTable();
-  ASSERT_OK(remote_flush_job.Run(nullptr, &file_meta));
+  ASSERT_OK(remote_flush_job.RunLocal(nullptr, &file_meta));
   mutex_.Unlock();
   ASSERT_TRUE(remote_flush_job.CHECKShared());
 

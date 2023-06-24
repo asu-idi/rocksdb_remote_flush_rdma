@@ -749,6 +749,8 @@ bool ColumnFamilyData::CHECKShared() {
   void* mem = reinterpret_cast<void*>(this);
   bool ret = singleton<SharedContainer>::Instance().find(
       mem, sizeof(ColumnFamilyData));
+  // TODO: add ColumnFamilyData member checker
+
   return ret;
 }
 

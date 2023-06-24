@@ -31,6 +31,7 @@
 #include "logging/event_logger.h"
 #include "logging/log_buffer.h"
 #include "logging/logging.h"
+#include "memory/shared_mem_basic.h"
 #include "monitoring/iostats_context_imp.h"
 #include "monitoring/perf_context_imp.h"
 #include "monitoring/thread_status_util.h"
@@ -107,9 +108,42 @@ RemoteFlushJob::RemoteFlushJob(
   TEST_SYNC_POINT("RemoteFlushJob::RemoteFlushJob()");
 }
 
+RemoteFlushJob* RemoteFlushJob::CreateRemoteFlushJob(
+    const std::string& dbname, ColumnFamilyData* cfd,
+    const ImmutableDBOptions& db_options,
+    const MutableCFOptions& mutable_cf_options, uint64_t max_memtable_id,
+    const FileOptions& file_options, VersionSet* versions,
+    InstrumentedMutex* db_mutex, std::atomic<bool>* shutting_down,
+    std::vector<SequenceNumber> existing_snapshots,
+    SequenceNumber earliest_write_conflict_snapshot,
+    SnapshotChecker* snapshot_checker, JobContext* job_context,
+    FlushReason flush_reason, LogBuffer* log_buffer, FSDirectory* db_directory,
+    FSDirectory* output_file_directory, CompressionType output_compression,
+    Statistics* stats, EventLogger* event_logger, bool measure_io_stats,
+    const bool sync_output_directory, const bool write_manifest,
+    Env::Priority thread_pri, const std::shared_ptr<IOTracer>& io_tracer,
+    const SeqnoToTimeMapping& seq_time_mapping, const std::string& db_id,
+    const std::string& db_session_id, std::string full_history_ts_low,
+    BlobFileCompletionCallback* blob_callback) {
+  void* mem = shm_alloc(sizeof(RemoteFlushJob));
+  return new (mem) RemoteFlushJob(
+      dbname, cfd, db_options, mutable_cf_options, max_memtable_id,
+      file_options, versions, db_mutex, shutting_down,
+      std::move(existing_snapshots), earliest_write_conflict_snapshot,
+      snapshot_checker, job_context, flush_reason, log_buffer, db_directory,
+      output_file_directory, output_compression, stats, event_logger,
+      measure_io_stats, sync_output_directory, write_manifest, thread_pri,
+      io_tracer, seq_time_mapping, "", "", "", nullptr);
+}
+
 RemoteFlushJob::~RemoteFlushJob() { ThreadStatusUtil::ResetThreadStatus(); }
 
-bool RemoteFlushJob::CHECKShared() { return true; }
+bool RemoteFlushJob::CHECKShared() {
+  bool ret = singleton<SharedContainer>::Instance().find(
+      reinterpret_cast<void*>(&measure_io_stats_), sizeof(bool));
+  ret = ret && cfd_->CHECKShared();
+  return true;
+}
 
 void RemoteFlushJob::ReportStartedFlush() {
   ThreadStatusUtil::SetColumnFamily(cfd_, cfd_->ioptions()->env,
@@ -135,6 +169,16 @@ void RemoteFlushJob::RecordFlushIOStats() {
       ThreadStatus::FLUSH_BYTES_WRITTEN, IOSTATS(bytes_written));
   IOSTATS_RESET(bytes_written);
 }
+
+Status RemoteFlushJob::RunRemote(LogsWithPrepTracker* prep_tracker,
+                                 FileMetaData* file_meta,
+                                 bool* switched_to_mempurge) {
+  // TEST_SYNC_POINT("RemoteFlushJob::Start");
+
+  return CHECKShared() ? Status::OK()
+                       : Status::Corruption("RemoteFlushJob::RunRemote");
+}
+
 void RemoteFlushJob::PickMemTable() {
   db_mutex_->AssertHeld();
   assert(!pick_memtable_called);
@@ -178,9 +222,9 @@ void RemoteFlushJob::PickMemTable() {
   base_->Ref();  // it is likely that we do not need this reference
 }
 
-Status RemoteFlushJob::Run(LogsWithPrepTracker* prep_tracker,
-                           FileMetaData* file_meta,
-                           bool* switched_to_mempurge) {
+Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
+                                FileMetaData* file_meta,
+                                bool* switched_to_mempurge) {
   TEST_SYNC_POINT("RemoteFlushJob::Start");
   db_mutex_->AssertHeld();
   assert(pick_memtable_called);
