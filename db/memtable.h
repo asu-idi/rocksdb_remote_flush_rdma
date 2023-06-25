@@ -111,9 +111,6 @@ class MemTable {
                     WriteBufferManager* write_buffer_manager,
                     SequenceNumber earliest_seq, uint32_t column_family_id,
                     bool is_shared = false);
-
-  bool CHECKShared();
-  bool is_shared() const;
   static MemTable* CreateSharedMemTable(
       const InternalKeyComparator& comparator, const ImmutableOptions& ioptions,
       const MutableCFOptions& mutable_cf_options,
@@ -549,6 +546,9 @@ class MemTable {
       return false;
     }
   }
+  bool CHECKShared();
+  bool is_shared() const { return is_shared_; }
+  void blockUnusedDataForTest();
 
  private:
   enum FlushStateEnum { FLUSH_NOT_REQUESTED, FLUSH_REQUESTED, FLUSH_SCHEDULED };
@@ -563,8 +563,8 @@ class MemTable {
   const size_t kArenaBlockSize;
   AllocTracker mem_tracker_;
   BasicArena* arena_;
-  std::unique_ptr<MemTableRep> table_;
-  std::unique_ptr<MemTableRep> range_del_table_;
+  MemTableRep* table_;
+  MemTableRep* range_del_table_;
   std::atomic_bool is_range_del_table_empty_;
 
   // Total data size of all data inserted
@@ -673,9 +673,6 @@ class MemTable {
   void UpdateEntryChecksum(const ProtectionInfoKVOS64* kv_prot_info,
                            const Slice& key, const Slice& value, ValueType type,
                            SequenceNumber s, char* checksum_ptr);
-
- public:
-  static Status CloneToRemote(const void* memtable_ptr);
 };
 
 extern const char* EncodeKey(std::string* scratch, const Slice& target);

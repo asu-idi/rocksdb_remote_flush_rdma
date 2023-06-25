@@ -1165,9 +1165,7 @@ MemTable* ColumnFamilyData::ConstructNewMemtable(
                      write_buffer_manager_, earliest_seq, id_);
   } else {
     LOG("alloc memtable in shared_mem");
-    // TODO: move allocator to shared mem
-    auto* allocator = ConSharedArena::CreateSharedConSharedArena();
-    void* mem = allocator->AllocateAligned(sizeof(MemTable));
+    void* mem = shm_alloc(sizeof(MemTable));
     memtable_ =
         new (mem) MemTable(internal_comparator_, ioptions_, mutable_cf_options,
                            write_buffer_manager_, earliest_seq, id_);

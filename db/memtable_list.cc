@@ -595,18 +595,6 @@ Status MemTableList::TryInstallMemtableFlushResults(
       }
       if (it == memlist.rbegin() || batch_file_number != m->file_number_) {
         batch_file_number = m->file_number_;
-        if (m->edit_.GetBlobFileAdditions().empty()) {
-          ROCKS_LOG_BUFFER(log_buffer,
-                           "[%s] Level-0 commit table #%" PRIu64 " started",
-                           cfd->GetName().c_str(), m->file_number_);
-        } else {
-          ROCKS_LOG_BUFFER(log_buffer,
-                           "[%s] Level-0 commit table #%" PRIu64
-                           " (+%zu blob files) started",
-                           cfd->GetName().c_str(), m->file_number_,
-                           m->edit_.GetBlobFileAdditions().size());
-        }
-
         edit_list.push_back(&m->edit_);
         memtables_to_flush.push_back(m);
         std::unique_ptr<FlushJobInfo> info = m->ReleaseFlushJobInfo();

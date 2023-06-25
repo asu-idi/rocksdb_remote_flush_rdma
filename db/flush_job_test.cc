@@ -417,6 +417,19 @@ TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
   for (auto& job : flush_jobs) {
     job->PickMemTable();
   }
+  LOG("Start block unused data");
+  // MemTables
+  for (auto& job : flush_jobs) {
+    for (auto memtable : job->GetMemTables()) {
+      memtable->blockUnusedDataForTest();
+    }
+  }
+  for (auto& job : flush_jobs) {
+    for (auto memtable : job->mems_) {
+      memtable->blockUnusedDataForTest();
+    }
+  }
+  LOG("Start Flush");
   for (auto& job : flush_jobs) {
     FileMetaData meta;
     // Run will release and re-acquire  mutex
@@ -449,7 +462,7 @@ TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
       committed_flush_jobs_info, &job_context.memtables_to_free,
       nullptr /* db_directory */, nullptr /* log_buffer */);
   ASSERT_OK(s);
-
+  LOG("finish remote flush");
   mutex_.Unlock();
   // db_options_.statistics->histogramData(FLUSH_TIME, &hist);
   // ASSERT_GT(hist.average, 0.0);
@@ -466,7 +479,7 @@ TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
     ASSERT_EQ(0, all_cfds[k]->imm()->GetLatestMemTableID());
     ++k;
   }
-
+  LOG(" check flush procedure finish");
   for (auto m : to_delete) {
     if (m->is_shared()) {
       m->~MemTable();

@@ -376,6 +376,10 @@ bool SkipListRep::CHECKShared() const {
   bool ret = skip_list_.CHECKShared();
   LOG("make sure transform_ ==  nullptr");
   ret = ret && (transform_ == nullptr);
+  ret = ret && singleton<SharedContainer>::Instance().find(
+                   reinterpret_cast<void*>(
+                       const_cast<MemTableRep::KeyComparator*>(&cmp_)),
+                   sizeof(MemTableRep::KeyComparator));
   return ret;
 }
 

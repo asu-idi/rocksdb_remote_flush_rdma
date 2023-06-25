@@ -115,7 +115,6 @@ class RemoteFlushJob {
   }
   bool CHECKShared();
 
- private:
   friend class RemoteFlushJobTest_GetRateLimiterPriorityForWrite_Test;
 
   void ReportStartedFlush();
@@ -166,6 +165,8 @@ class RemoteFlushJob {
 
   // no need to shared
   InstrumentedMutex* db_mutex_;
+
+ private:
 };
 
 }  // namespace ROCKSDB_NAMESPACE

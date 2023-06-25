@@ -12,8 +12,10 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstring>
 #include <limits>
 #include <memory>
+#include <unordered_map>
 
 #include "db/dbformat.h"
 #include "db/kv_checksum.h"
@@ -22,6 +24,7 @@
 #include "db/pinned_iterators_manager.h"
 #include "db/range_tombstone_fragmenter.h"
 #include "db/read_callback.h"
+#include "db/version_edit.h"
 #include "db/wide/wide_column_serialization.h"
 #include "logging/logging.h"
 #include "memory/allocator.h"
@@ -34,11 +37,15 @@
 #include "monitoring/statistics.h"
 #include "port/lang.h"
 #include "port/port.h"
+#include "port/port_posix.h"
 #include "rocksdb/comparator.h"
 #include "rocksdb/env.h"
 #include "rocksdb/iterator.h"
+#include "rocksdb/listener.h"
 #include "rocksdb/merge_operator.h"
+#include "rocksdb/slice.h"
 #include "rocksdb/slice_transform.h"
+#include "rocksdb/system_clock.h"
 #include "rocksdb/types.h"
 #include "rocksdb/write_buffer_manager.h"
 #include "table/internal_iterator.h"
@@ -47,6 +54,7 @@
 #include "util/autovector.h"
 #include "util/cast_util.h"
 #include "util/coding.h"
+#include "util/dynamic_bloom.h"
 #include "util/logger.hpp"
 #include "util/mutexlock.h"
 
@@ -75,13 +83,6 @@ ImmutableMemTableOptions::ImmutableMemTableOptions(
       protection_bytes_per_key(
           mutable_cf_options.memtable_protection_bytes_per_key),
       server_use_remtoe_flush(mutable_cf_options.server_use_remote_flush) {}
-
-Status MemTable::CloneToRemote(const void* memtable_ptr) {
-  auto* local_memtable =
-      reinterpret_cast<MemTable*>(const_cast<void*>(memtable_ptr));
-
-  return Status::OK();
-}
 
 MemTable::MemTable(const InternalKeyComparator& cmp,
                    const ImmutableOptions& ioptions,
@@ -198,23 +199,57 @@ MemTable* MemTable::CreateSharedMemTable(
   return ret;
 }
 
-bool MemTable::is_shared() const { return is_shared_; }
+// select data: flush_job_info_; edit_
+void MemTable::blockUnusedDataForTest() {
+  memset(reinterpret_cast<void*>(&this->mem_tracker_), 0, sizeof(AllocTracker));
+  if (reinterpret_cast<void*>(bloom_filter_.get()) ==
+      reinterpret_cast<void*>(0x1000)) {
+    LOG("memtable data already been blocked");
+    return;
+  } else {
+    bloom_filter_.reset(reinterpret_cast<DynamicBloom*>(0x1000));
+  }
+  insert_with_hint_prefix_extractor_ =
+      reinterpret_cast<SliceTransform*>(0x1000);
+  insert_hints_.clear();
+  memset(reinterpret_cast<void*>(&this->insert_hints_), 0,
+         sizeof(std::unordered_map<Slice, void*, SliceHasher>));
+  clock_ = reinterpret_cast<SystemClock*>(0x1000);
+  memset(
+      reinterpret_cast<void*>(const_cast<SliceTransform**>(&prefix_extractor_)),
+      0x0, sizeof(SliceTransform*));
+  memset(reinterpret_cast<void*>(&locks_), 0x0,
+         sizeof(std::vector<port::RWMutex>));
+  memset(reinterpret_cast<void*>(&comparator_), 0, sizeof(KeyComparator));
+  memset(reinterpret_cast<void*>(
+             const_cast<ImmutableMemTableOptions*>(&moptions_)),
+         0, sizeof(ImmutableMemTableOptions));
+  // memset(reinterpret_cast<void*>(&edit_), 0, sizeof(VersionEdit));
+  // if (reinterpret_cast<void*>(flush_job_info_.get()) ==
+  //     reinterpret_cast<void*>(0x1000)) {
+  //   return;
+  // } else {
+  //   flush_job_info_.reset(reinterpret_cast<FlushJobInfo*>(0x1000));
+  // }
+}
 
 bool MemTable::CHECKShared() {
   bool ret = singleton<SharedContainer>::Instance().find(&comparator_,
                                                          sizeof(comparator_));
-  //  TODO: arena_ maybe should not be shared, worker use local arena
-  // ret = ret &&
-  //       singleton<SharedContainer>::Instance().find(arena_,
-  //       sizeof(BasicArena));
-  ret = ret && table_.get()->CHECKShared() &&
-        range_del_table_.get()->CHECKShared();
+  ret = ret && singleton<SharedContainer>::Instance().find(
+                   arena_, sizeof(ConSharedArena));
+  ret = ret && table_->CHECKShared() && range_del_table_->CHECKShared();
+  // options
+  // version_edit
+  // memset(reinterpret_cast<void*>(&this->mem_tracker_), 0,
+  // sizeof(AllocTracker));
 
   return ret;
 }
 
 MemTable::~MemTable() {
-  LOG("Memtable ", this->GetID(), "destruct, ptr=", this->table_.get());
+  LOG("Memtable ", this->GetID(),
+      "destruct, ptr=", reinterpret_cast<void*>(this->table_));
   mem_tracker_.FreeMem();
   LOG("finish ");
   assert(refs_ == 0);
@@ -797,8 +832,7 @@ Status MemTable::Add(SequenceNumber s, ValueType type,
                                internal_key_size + VarintLength(val_size) +
                                val_size + moptions_.protection_bytes_per_key;
   char* buf = nullptr;
-  std::unique_ptr<MemTableRep>& table =
-      type == kTypeRangeDeletion ? range_del_table_ : table_;
+  MemTableRep* table = type == kTypeRangeDeletion ? range_del_table_ : table_;
   KeyHandle handle = table->Allocate(encoded_len, &buf);
 
   char* p = EncodeVarint32(buf, internal_key_size);
