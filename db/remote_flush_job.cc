@@ -282,7 +282,8 @@ Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
   }
 
   if (!s.ok()) {
-    // DEBUG: cfd_ : MemTableList::RollbackMemtableFlush set_remote
+    // DEBUG: cfd_ : mems_->(all memtable).edit_(VersionEdit).Clear(all member)
+    // TODO: delay it?
     cfd_->imm()->RollbackMemtableFlush(mems_, meta_.fd.GetNumber());
   } else if (write_manifest_) {
     TEST_SYNC_POINT("RemoteFlushJob::InstallResults");
@@ -398,9 +399,9 @@ Status RemoteFlushJob::MemPurge() {
       }
     }
     // DEBUG: cfd_ : write_buffer_manager_ set_remote : maybe assert nullptr
-    new_mem = new MemTable((cfd_->internal_comparator()), *(cfd_->ioptions()),
-                           mutable_cf_options_, cfd_->write_buffer_mgr(),
-                           earliest_seqno, cfd_->GetID());
+    new_mem = MemTable::CreateSharedMemTable(
+        cfd_->internal_comparator(), *(cfd_->ioptions()), mutable_cf_options_,
+        cfd_->write_buffer_mgr(), earliest_seqno, cfd_->GetID());
     assert(new_mem != nullptr);
 
     Env* env = db_options_.env;
