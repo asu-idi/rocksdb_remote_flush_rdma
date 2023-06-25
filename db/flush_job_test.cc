@@ -329,47 +329,34 @@ TEST_F(FlushJobTest, SharedFlushJob) {
   }
 
   EventLogger event_logger(db_options_.info_log.get());
-  SnapshotChecker* snapshot_checker = nullptr;  // not relavant
 
-  RemoteFlushJob remote_flush_job(
+  RemoteFlushJob* remote_flush_job = RemoteFlushJob::CreateRemoteFlushJob(
       dbname_,
       versions_->GetColumnFamilySet()
           ->GetDefault() /*!non-shared, dump instead*/,
       db_options_, *cfd->GetLatestMutableCFOptions(),
       std::numeric_limits<uint64_t>::max() /* memtable_id */, env_options_,
       versions_.get() /* !non-shared */, &mutex_ /* !non-shared*/,
-      &shutting_down_, {} /*!non-shared*/, kMaxSequenceNumber,
-      snapshot_checker /*non-shared*/, &job_context, FlushReason::kTest,
-      nullptr, nullptr, nullptr /*!non-shared*/, kNoCompression /*!non-shared*/,
-      db_options_.statistics.get() /*!non-shared, currently use nullptr*/,
-      &event_logger /*!non-shared*/, true, true /* sync_output_directory */,
-      true /* write_manifest */, Env::Priority::USER, nullptr /*IOTracer*/,
-      empty_seqno_to_time_mapping_);
-  // FlushJob flush_job(
-  //     dbname_, versions_->GetColumnFamilySet()->GetDefault(), db_options_,
-  //     *cfd->GetLatestMutableCFOptions(),
-  //     std::numeric_limits<uint64_t>::max() /* memtable_id */, env_options_,
-  //     versions_.get(), &mutex_, &shutting_down_, {}, kMaxSequenceNumber,
-  //     snapshot_checker, &job_context, FlushReason::kTest, nullptr, nullptr,
-  //     nullptr, kNoCompression, db_options_.statistics.get(), &event_logger,
-  //     true, true /* sync_output_directory */, true /* write_manifest */,
-  //     Env::Priority::USER, nullptr /*IOTracer*/,
-  //     empty_seqno_to_time_mapping_);
-  ASSERT_TRUE(remote_flush_job.CHECKShared());
+      &shutting_down_, {} /*!non-shared*/, kMaxSequenceNumber, &job_context,
+      FlushReason::kTest, nullptr, nullptr, kNoCompression /*!non-shared*/,
+      true, true /* sync_output_directory */, true /* write_manifest */,
+      Env::Priority::USER, empty_seqno_to_time_mapping_);
+  ASSERT_TRUE(remote_flush_job->CHECKShared());
 
   HistogramData hist;
   FileMetaData file_meta;
   mutex_.Lock();
+  remote_flush_job->PickMemTable();
   // CHECK shared
-  ASSERT_OK(remote_flush_job.RunRemote(nullptr, &file_meta));
+  ASSERT_OK(remote_flush_job->RunRemote(nullptr, &file_meta));
   // worker job
-  remote_flush_job.PickMemTable();
-  ASSERT_OK(remote_flush_job.RunLocal(nullptr, &file_meta));
+  ASSERT_OK(remote_flush_job->RunLocal(nullptr, &file_meta));
   mutex_.Unlock();
-  ASSERT_TRUE(remote_flush_job.CHECKShared());
 
-  db_options_.statistics->histogramData(FLUSH_TIME, &hist);
-  ASSERT_GT(hist.average, 0.0);
+  ASSERT_TRUE(remote_flush_job->CHECKShared());
+
+  // db_options_.statistics->histogramData(FLUSH_TIME, &hist);
+  // ASSERT_GT(hist.average, 0.0);
   ASSERT_EQ(std::to_string(1001), file_meta.smallest.user_key().ToString());
   ASSERT_EQ(1, file_meta.fd.smallest_seqno);
   ASSERT_EQ(5, file_meta.fd.largest_seqno);
