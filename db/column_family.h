@@ -592,7 +592,7 @@ class ColumnFamilyData {
   WriteBufferManager* write_buffer_manager_;
 
   MemTable* mem_;
-  MemTableList imm_;
+  MemTableList imm_;  // shared
   SuperVersion* super_version_;
 
   // An ordinal representing the current SuperVersion. Updated by
