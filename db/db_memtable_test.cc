@@ -358,6 +358,11 @@ TEST_F(DBMemTableTest, ShmInsertAndFlush) {
   ASSERT_EQ("vvv", Get("NotInPrefixDomain"));
   LOG("check memtable insert finish");
   Flush();
+  ASSERT_EQ("vvv", Get("NotInPrefixDomain"));
+  ASSERT_EQ("foo_v1", Get("foo_k1"));
+  ASSERT_EQ("foo_v2", Get("foo_k2"));
+  ASSERT_EQ("foo_v3", Get("foo_k3"));
+  ASSERT_EQ("bar_v1", Get("bar_k1"));
   ASSERT_EQ("bar_v2", Get("bar_k2"));
 }
 
