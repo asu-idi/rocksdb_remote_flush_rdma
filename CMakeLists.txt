@@ -788,6 +788,7 @@ set(SOURCES
         memory/memkind_kmem_allocator.cc
         memory/shared_memory_allocator.cc
         memory/memory_allocator.cc
+        memory/shared_package.cc
         memtable/alloc_tracker.cc
         memtable/hash_linklist_rep.cc
         memtable/hash_skiplist_rep.cc

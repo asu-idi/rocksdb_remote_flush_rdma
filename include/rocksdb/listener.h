@@ -15,7 +15,8 @@
 #include <utility>
 #include <vector>
 
-#include "memory/shared_package.hpp"
+#include "memory/shared_mem_basic.h"
+#include "memory/shared_package.h"
 #include "memory/shared_std.hpp"
 #include "rocksdb/advanced_options.h"
 #include "rocksdb/compaction_job_stats.h"
@@ -366,27 +367,35 @@ struct FlushJobInfo {
 
   //
   shm_std::shared_vector<std::pair<void*, size_t>> string_package_;
-  bool is_shared_ = false;
+  bool is_packaged_ = false;
+
   bool CHECKShared() {
-    bool ret = is_shared_;
+    bool ret = singleton<SharedContainer>::Instance().find(
+                   reinterpret_cast<void*>(this), sizeof(FlushJobInfo)) &&
+               is_packaged_;
     ret = ret & table_properties.CHECKShared();
     return ret;
   }
+
   void Pack() {
+    if (is_packaged_) return;
+
     table_properties.Pack();
+    string_package_.push_back(std::make_pair(
+        reinterpret_cast<void*>(shm_package::Pack(cf_name)), cf_name.length()));
     string_package_.push_back(
-        std::make_pair(shm_package::Pack(cf_name), cf_name.length()));
-    string_package_.push_back(
-        std::make_pair(shm_package::Pack(file_path), file_path.length()));
-    is_shared_ = true;
+        std::make_pair(reinterpret_cast<void*>(shm_package::Pack(file_path)),
+                       file_path.length()));
+    is_packaged_ = true;
   }
   void UnPack() {
+    if (!is_packaged_) return;
     table_properties.UnPack();
     shm_package::Unpack(string_package_[0].first, cf_name,
                         string_package_[0].second);
     shm_package::Unpack(string_package_[1].first, file_path,
                         string_package_[1].second);
-    is_shared_ = false;
+    is_packaged_ = false;
   }
   void BlockUnusedDataForTest() {
     memset(reinterpret_cast<void*>(&blob_file_addition_infos), 0,
