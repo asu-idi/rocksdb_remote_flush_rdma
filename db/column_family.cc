@@ -687,15 +687,11 @@ ColumnFamilyData::~ColumnFamilyData() {
     // If it's dropped, it's already removed from column family set
     // If column_family_set_ == nullptr, this is dummy CFD and not in
     // ColumnFamilySet
-    LOG("DEBUG");
     column_family_set_->RemoveColumnFamily(this);
-    LOG("DEBUG");
   }
-  LOG("DEBUG");
   if (current_ != nullptr) {
     current_->Unref();
   }
-  LOG("DEBUG");
   // It would be wrong if this ColumnFamilyData is in flush_queue_ or
   // compaction_queue_ and we destroyed it
   assert(!queued_for_flush_);
@@ -704,7 +700,6 @@ ColumnFamilyData::~ColumnFamilyData() {
 
   if (dummy_versions_ != nullptr) {
     // List must be empty
-    LOG("DEBUG");
     assert(dummy_versions_->Next() == dummy_versions_);
     bool deleted __attribute__((__unused__));
     deleted = dummy_versions_->Unref();
@@ -712,29 +707,27 @@ ColumnFamilyData::~ColumnFamilyData() {
   }
   LOG("DEBUG");
   if (mem_ != nullptr) {
-    // if (this->initial_cf_options().server_use_remote_flush == true) {
-    //   // TODO: check memtable free!
-    //   mem_->Unref();
-    // } else {
-    //   delete mem_->Unref();
-    // }
+    if (this->initial_cf_options().server_use_remote_flush == true) {
+      // TODO: check memtable free!
+      mem_->Unref();
+    } else {
+      delete mem_->Unref();
+    }
     LOG("DEBUG");
   }
   autovector<MemTable*> to_delete;
   LOG("DEBUG");
-  // imm_.current()->Unref(&to_delete);
-  // for (MemTable* m : to_delete) {
-  //   LOG("DEBUG");
-  //   delete m;
-  //   LOG("DEBUG");
-  // }
+  imm_.current()->Unref(&to_delete);
+  for (MemTable* m : to_delete) {
+    LOG("DEBUG");
+    delete m;
+    LOG("DEBUG");
+  }
   LOG("DEBUG");
   if (db_paths_registered_) {
     // TODO(cc): considering using ioptions_.fs, currently some tests rely on
     // EnvWrapper, that's the main reason why we use env here.
-    LOG("DEBUG 1");
     Status s = ioptions_.env->UnregisterDbPaths(GetDbPaths());
-    LOG("DEBUG 2");
     if (!s.ok()) {
       ROCKS_LOG_ERROR(
           ioptions_.logger,
@@ -742,7 +735,6 @@ ColumnFamilyData::~ColumnFamilyData() {
           id_, name_.c_str());
     }
   }
-  LOG("DEBUG");
 }
 
 bool ColumnFamilyData::CHECKShared() {

@@ -171,19 +171,24 @@ void VersionEdit::Pack() {
   assert(is_shared());
   if (is_packaged_) return;
   // std::string
+  LOG("VersionEdit::Pack()");
   string_package_.push_back(
       std::make_pair(shm_package::Pack(db_id_), db_id_.length()));
+  LOG("VersionEdit::Pack()");
   string_package_.push_back(
       std::make_pair(shm_package::Pack(comparator_), comparator_.length()));
+  LOG("VersionEdit::Pack()");
   string_package_.push_back(std::make_pair(
       shm_package::Pack(column_family_name_), column_family_name_.length()));
+  LOG("VersionEdit::Pack()");
   string_package_.push_back(std::make_pair(
       shm_package::Pack(full_history_ts_low_), full_history_ts_low_.length()));
+  LOG("VersionEdit::Pack()");
   db_id_.clear();
   comparator_.clear();
   column_family_name_.clear();
   full_history_ts_low_.clear();
-
+  LOG("VersionEdit::Pack()");
   // CompactCursors std::vector
   for (auto& iter : compact_cursors_) {
     std::string first = std::to_string(iter.first), second = *iter.second.rep();
@@ -193,7 +198,7 @@ void VersionEdit::Pack() {
         std::make_pair(shm_package::Pack(second), second.length()));
   }
   compact_cursors_.clear();
-
+  LOG("VersionEdit::Pack()");
   for (auto& iter : deleted_files_) {
     std::string first = std::to_string(iter.first),
                 second = std::to_string(iter.second);
@@ -203,18 +208,22 @@ void VersionEdit::Pack() {
         std::make_pair(shm_package::Pack(second), second.length()));
   }
   deleted_files_.clear();
-
+  LOG("VersionEdit::Pack()");
   for (auto& iter : new_files_) {
     std::string first = std::to_string(iter.first);
     // FileDescriptor* second = iter.second;
+    LOG("VersionEdit::Pack()");
     new_files_package_.push_back(
         std::make_pair(shm_package::Pack(first), first.length()));
     FileMetaData* second = FileMetaData::CreateSharedMetaData();
     // TODO(copy): copy from/to shm and pack, change this when use rdma
     *second = iter.second;
+    LOG("VersionEdit::Pack()");
     second->Pack();
+    LOG("VersionEdit::Pack()");
     new_files_package_.push_back(
         std::make_pair(reinterpret_cast<void*>(second), sizeof(FileMetaData)));
+    LOG("VersionEdit::Pack()");
   }
   // TODO(block): try to block blob_file_additions_ && blob_file_garbages_
 

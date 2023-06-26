@@ -16,6 +16,7 @@
 #include "db/remote_flush_job.h"
 #include "db/version_set.h"
 #include "file/writable_file_writer.h"
+#include "gtest/gtest.h"
 #include "memory/shared_mem_basic.h"
 #include "rocksdb/cache.h"
 #include "rocksdb/file_system.h"
@@ -392,7 +393,7 @@ TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
       }
       mem->ConstructFragmentedRangeTombstones();
       cfd->imm()->Add(mem, &to_delete);
-      ASSERT_TRUE(mem->CHECKShared());
+      ASSERT_FALSE(mem->CHECKShared());
     }
     ASSERT_TRUE(cfd->CHECKShared());
     largest_seqs.push_back(curr_seqno - 1);
@@ -424,18 +425,47 @@ TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
   for (auto& job : flush_jobs) {
     for (auto memtable : job->GetMemTables()) {
       memtable->blockUnusedDataForTest();
+      memtable->Pack();
     }
   }
   for (auto& job : flush_jobs) {
     for (auto memtable : job->mems_) {
       memtable->blockUnusedDataForTest();
+      memtable->Pack();
     }
   }
+
+  for (auto& job : flush_jobs) {
+    for (auto memtable : job->GetMemTables()) {
+      ASSERT_TRUE(memtable->CHECKShared());
+    }
+  }
+  for (auto& job : flush_jobs) {
+    for (auto memtable : job->mems_) {
+      ASSERT_TRUE(memtable->CHECKShared());
+    }
+  }
+
   LOG("Start Flush");
   for (auto& job : flush_jobs) {
     FileMetaData meta;
     // Run will release and re-acquire  mutex
     ASSERT_OK(job->RunRemote(nullptr /**/, &meta));
+  }
+
+  for (auto& job : flush_jobs) {
+    for (auto memtable : job->GetMemTables()) {
+      memtable->UnPack();
+    }
+  }
+  for (auto& job : flush_jobs) {
+    for (auto memtable : job->mems_) {
+      memtable->UnPack();
+    }
+  }
+  for (auto& job : flush_jobs) {
+    FileMetaData meta;
+
     ASSERT_OK(job->RunLocal(nullptr /**/, &meta));
     file_metas.emplace_back(meta);
   }
