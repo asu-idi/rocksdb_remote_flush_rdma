@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "logging/event_logger.h"
+#include "memory/shared_std.hpp"
 #include "port/port.h"
 #include "rocksdb/rocksdb_namespace.h"
 
@@ -98,7 +99,7 @@ class WalAddition {
 std::ostream& operator<<(std::ostream& os, const WalAddition& wal);
 JSONWriter& operator<<(JSONWriter& jw, const WalAddition& wal);
 
-using WalAdditions = std::vector<WalAddition>;
+using WalAdditions = shm_std::shared_vector<WalAddition>;
 
 // Records the event of deleting WALs before the specified log number.
 class WalDeletion {

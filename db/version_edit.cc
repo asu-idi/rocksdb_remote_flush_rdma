@@ -9,9 +9,18 @@
 
 #include "db/version_edit.h"
 
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <string>
+#include <utility>
+
 #include "db/blob/blob_index.h"
+#include "db/dbformat.h"
 #include "db/version_set.h"
 #include "logging/event_logger.h"
+#include "memory/shared_mem_basic.h"
+#include "memory/shared_package.h"
 #include "rocksdb/slice.h"
 #include "table/unique_id_impl.h"
 #include "test_util/sync_point.h"
@@ -25,6 +34,95 @@ namespace {}  // anonymous namespace
 uint64_t PackFileNumberAndPathId(uint64_t number, uint64_t path_id) {
   assert(number <= kFileNumberMask);
   return number | (path_id * (kFileNumberMask + 1));
+}
+
+bool FileMetaData::CHECKShared() {
+  bool ret = singleton<SharedContainer>::Instance().find(
+                 reinterpret_cast<void*>(this), sizeof(FileMetaData)) &&
+             is_packaged_;
+  return ret;
+}
+void FileMetaData::Pack() {
+  if (is_packaged_) return;
+  // InternalKey && std::string && unique_id && FileDescriptor
+  string_package_.push_back(std::make_pair(shm_package::Pack(*smallest.rep()),
+                                           smallest.rep()->length()));
+  string_package_.push_back(std::make_pair(shm_package::Pack(*largest.rep()),
+                                           largest.rep()->length()));
+  string_package_.push_back(
+      std::make_pair(shm_package::Pack(file_checksum), file_checksum.length()));
+  string_package_.push_back(
+      std::make_pair(shm_package::Pack(file_checksum_func_name),
+                     file_checksum_func_name.length()));
+  std::pair<std::string, std::string> unique_id_pair = std::make_pair(
+      std::to_string(unique_id[0]), std::to_string(unique_id[1]));
+  string_package_.push_back(std::make_pair(
+      shm_package::Pack(unique_id_pair.first), unique_id_pair.first.length()));
+  string_package_.push_back(
+      std::make_pair(shm_package::Pack(unique_id_pair.second),
+                     unique_id_pair.second.length()));
+  smallest.Clear();
+  largest.Clear();
+  file_checksum.clear();
+  file_checksum_func_name.clear();
+  // TODO: block fd.table_reader
+
+  is_packaged_ = true;
+}
+void FileMetaData::UnPack() {
+  if (!is_packaged_) return;
+  assert(string_package_.size() == 6);
+  // InternalKey && std::string && unique_id && FileDescriptor
+  std::string now;
+  shm_package::Unpack(string_package_[0].first, now, string_package_[0].second);
+  smallest.SharedSet(now);
+  now.clear();
+  shm_package::Unpack(string_package_[1].first, now, string_package_[1].second);
+  largest.SharedSet(now);
+  now.clear();
+  shm_package::Unpack(string_package_[2].first, file_checksum,
+                      string_package_[2].second);
+  shm_package::Unpack(string_package_[3].first, file_checksum_func_name,
+                      string_package_[3].second);
+  shm_package::Unpack(string_package_[4].first, now, string_package_[4].second);
+  uint64_t first = std::stoull(now);
+  unique_id[0] = first;
+  now.clear();
+  shm_package::Unpack(string_package_[5].first, now, string_package_[5].second);
+  uint64_t second = std::stoull(now);
+  unique_id[1] = second;
+  now.clear();
+
+  string_package_.clear();
+  is_packaged_ = false;
+}
+
+void FileMetaData::BlockUnusedDataForTest() {
+  // TODO: block Cache::Handle* table_reader_handle
+}
+
+FileMetaData* FileMetaData::CreateSharedMetaData() {
+  void* mem = shm_alloc(sizeof(FileMetaData));
+  auto* ret = new (mem) FileMetaData();
+  return ret;
+}
+
+FileMetaData* FileMetaData::CreateSharedMetaData(
+    uint64_t file, uint32_t file_path_id, uint64_t file_size,
+    const InternalKey& smallest_key, const InternalKey& largest_key,
+    const SequenceNumber& smallest_seq, const SequenceNumber& largest_seq,
+    bool marked_for_compact, Temperature _temperature,
+    uint64_t oldest_blob_file, uint64_t _oldest_ancester_time,
+    uint64_t _file_creation_time, uint64_t _epoch_number,
+    const std::string& _file_checksum,
+    const std::string& _file_checksum_func_name, UniqueId64x2 _unique_id,
+    const uint64_t _compensated_range_deletion_size) {
+  void* mem = shm_alloc(sizeof(FileMetaData));
+  return new (mem) FileMetaData(
+      file, file_path_id, file_size, smallest_key, largest_key, smallest_seq,
+      largest_seq, marked_for_compact, _temperature, oldest_blob_file,
+      _oldest_ancester_time, _file_creation_time, _epoch_number, _file_checksum,
+      _file_checksum_func_name, _unique_id, _compensated_range_deletion_size);
 }
 
 Status FileMetaData::UpdateBoundaries(const Slice& key, const Slice& value,
@@ -57,6 +155,123 @@ Status FileMetaData::UpdateBoundaries(const Slice& key, const Slice& value,
   fd.largest_seqno = std::max(fd.largest_seqno, seqno);
 
   return Status::OK();
+}
+
+VersionEdit* VersionEdit::CreateSharedVersionEdit() {
+  void* mem = shm_alloc(sizeof(VersionEdit));
+  auto* ret = new (mem) VersionEdit();
+  return ret;
+}
+bool VersionEdit::CHECKShared() {
+  bool ret = is_shared() && is_packaged_;
+  // TODO:
+  return ret;
+}
+void VersionEdit::Pack() {
+  assert(is_shared());
+  if (is_packaged_) return;
+  // std::string
+  string_package_.push_back(
+      std::make_pair(shm_package::Pack(db_id_), db_id_.length()));
+  string_package_.push_back(
+      std::make_pair(shm_package::Pack(comparator_), comparator_.length()));
+  string_package_.push_back(std::make_pair(
+      shm_package::Pack(column_family_name_), column_family_name_.length()));
+  string_package_.push_back(std::make_pair(
+      shm_package::Pack(full_history_ts_low_), full_history_ts_low_.length()));
+  db_id_.clear();
+  comparator_.clear();
+  column_family_name_.clear();
+  full_history_ts_low_.clear();
+
+  // CompactCursors std::vector
+  for (auto& iter : compact_cursors_) {
+    std::string first = std::to_string(iter.first), second = *iter.second.rep();
+    compact_cursors_package_.push_back(
+        std::make_pair(shm_package::Pack(first), first.length()));
+    compact_cursors_package_.push_back(
+        std::make_pair(shm_package::Pack(second), second.length()));
+  }
+  compact_cursors_.clear();
+
+  for (auto& iter : deleted_files_) {
+    std::string first = std::to_string(iter.first),
+                second = std::to_string(iter.second);
+    deleted_files_package_.push_back(
+        std::make_pair(shm_package::Pack(first), first.length()));
+    deleted_files_package_.push_back(
+        std::make_pair(shm_package::Pack(second), second.length()));
+  }
+  deleted_files_.clear();
+
+  for (auto& iter : new_files_) {
+    std::string first = std::to_string(iter.first);
+    // FileDescriptor* second = iter.second;
+    new_files_package_.push_back(
+        std::make_pair(shm_package::Pack(first), first.length()));
+    FileMetaData* second = FileMetaData::CreateSharedMetaData();
+    // TODO(copy): copy from/to shm and pack, change this when use rdma
+    *second = iter.second;
+    second->Pack();
+    new_files_package_.push_back(
+        std::make_pair(reinterpret_cast<void*>(second), sizeof(FileMetaData)));
+  }
+  // TODO(block): try to block blob_file_additions_ && blob_file_garbages_
+
+  is_packaged_ = true;
+}
+void VersionEdit::UnPack() {
+  assert(is_shared());
+  if (!is_packaged_) return;
+  // TODO:
+  shm_package::Unpack(string_package_[0].first, db_id_,
+                      string_package_[0].second);
+  shm_package::Unpack(string_package_[1].first, comparator_,
+                      string_package_[1].second);
+  shm_package::Unpack(string_package_[2].first, column_family_name_,
+                      string_package_[2].second);
+  shm_package::Unpack(string_package_[3].first, full_history_ts_low_,
+                      string_package_[3].second);
+  string_package_.clear();
+  for (size_t i = 0; i < compact_cursors_package_.size(); i += 2) {
+    // uint64_t first;
+    std::string first;
+    shm_package::Unpack(compact_cursors_package_[i].first, first,
+                        compact_cursors_package_[i].second);
+    std::string second;
+    shm_package::Unpack(compact_cursors_package_[i + 1].first, second,
+                        compact_cursors_package_[i + 1].second);
+    compact_cursors_.push_back(std::make_pair(std::stoi(first), InternalKey()));
+    compact_cursors_.back().second.SharedSet(second);
+  }
+  compact_cursors_package_.clear();
+
+  for (size_t i = 0; i < deleted_files_package_.size(); i += 2) {
+    std::string first, second;
+    shm_package::Unpack(deleted_files_package_[i].first, first,
+                        deleted_files_package_[i].second);
+    shm_package::Unpack(deleted_files_package_[i + 1].first, second,
+                        deleted_files_package_[i + 1].second);
+    deleted_files_.insert(std::make_pair(std::stoi(first), std::stoi(second)));
+  }
+  deleted_files_package_.clear();
+
+  for (size_t i = 0; i < new_files_package_.size(); i += 2) {
+    std::string first;
+    shm_package::Unpack(new_files_package_[i].first, first,
+                        new_files_package_[i].second);
+    int fir = std::stoi(first);
+    auto* second =
+        reinterpret_cast<FileMetaData*>(new_files_package_[i + 1].first);
+    second->UnPack();
+    // TODO(copy): copy from/to shm and pack, change this when use rdma
+    new_files_.push_back(std::make_pair(fir, *second));
+    second->~FileMetaData();
+    shm_delete(reinterpret_cast<char*>(second));
+  }
+  new_files_package_.clear();
+
+  is_packaged_ = false;
 }
 
 void VersionEdit::Clear() {

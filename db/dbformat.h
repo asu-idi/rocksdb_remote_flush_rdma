@@ -362,6 +362,8 @@ class InternalKey {
   }
 
   void Clear() { rep_.clear(); }
+  // Intended only for use by Pack() & UnPack() methods
+  void SharedSet(const std::string& now) { rep_ = now; }
 
   // The underlying representation.
   // Intended only to be used together with ConvertFromUserKey().

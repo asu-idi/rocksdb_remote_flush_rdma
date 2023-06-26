@@ -9,6 +9,7 @@
 
 #pragma once
 #include <algorithm>
+#include <cstddef>
 #include <set>
 #include <string>
 #include <utility>
@@ -19,6 +20,8 @@
 #include "db/dbformat.h"
 #include "db/wal_edit.h"
 #include "memory/arena.h"
+#include "memory/shared_mem_basic.h"
+#include "memory/shared_std.hpp"
 #include "port/malloc.h"
 #include "rocksdb/advanced_cache.h"
 #include "rocksdb/advanced_options.h"
@@ -123,6 +126,24 @@ struct FileDescriptor {
   uint64_t file_size;             // File size in bytes
   SequenceNumber smallest_seqno;  // The smallest seqno in this file
   SequenceNumber largest_seqno;   // The largest seqno in this file
+
+  static FileDescriptor* CreateSharedFileDescriptor(const FileDescriptor& fd) {
+    void* mem = shm_alloc(sizeof(FileDescriptor));
+    return new (mem) FileDescriptor(fd);
+  }
+  static FileDescriptor* CreateSharedFileDescriptor(
+      uint64_t number, uint32_t path_id, uint64_t _file_size,
+      SequenceNumber _smallest_seqno, SequenceNumber _largest_seqno) {
+    void* mem = shm_alloc(sizeof(FileDescriptor));
+    return new (mem) FileDescriptor(number, path_id, _file_size,
+                                    _smallest_seqno, _largest_seqno);
+  }
+  static FileDescriptor* CreateSharedFileDescriptor(uint64_t number,
+                                                    uint32_t path_id,
+                                                    uint64_t _file_size) {
+    void* mem = shm_alloc(sizeof(FileDescriptor));
+    return new (mem) FileDescriptor(number, path_id, _file_size);
+  }
 
   FileDescriptor() : FileDescriptor(0, 0, 0) {}
 
@@ -238,6 +259,24 @@ struct FileMetaData {
   // SST unique id
   UniqueId64x2 unique_id{};
 
+  bool is_packaged_ = false;
+  shm_std::shared_vector<std::pair<void*, size_t>> string_package_;
+
+  bool CHECKShared();
+  void Pack();
+  void UnPack();
+  void BlockUnusedDataForTest();
+  static FileMetaData* CreateSharedMetaData();
+  static FileMetaData* CreateSharedMetaData(
+      uint64_t file, uint32_t file_path_id, uint64_t file_size,
+      const InternalKey& smallest_key, const InternalKey& largest_key,
+      const SequenceNumber& smallest_seq, const SequenceNumber& largest_seq,
+      bool marked_for_compact, Temperature _temperature,
+      uint64_t oldest_blob_file, uint64_t _oldest_ancester_time,
+      uint64_t _file_creation_time, uint64_t _epoch_number,
+      const std::string& _file_checksum,
+      const std::string& _file_checksum_func_name, UniqueId64x2 _unique_id,
+      const uint64_t _compensated_range_deletion_size);
   FileMetaData() = default;
 
   FileMetaData(uint64_t file, uint32_t file_path_id, uint64_t file_size,
@@ -689,6 +728,24 @@ class VersionEdit {
   uint32_t remaining_entries_ = 0;
 
   std::string full_history_ts_low_;
+
+  // shared
+  bool is_packaged_ = false;
+  shm_std::shared_vector<std::pair<void*, size_t>> string_package_;
+  shm_std::shared_vector<std::pair<void*, size_t>> compact_cursors_package_;
+  shm_std::shared_vector<std::pair<void*, size_t>> deleted_files_package_;
+  shm_std::shared_vector<std::pair<void*, size_t>> new_files_package_;
+
+ public:
+  static VersionEdit* CreateSharedVersionEdit();
+  bool CHECKShared();
+  [[nodiscard]] bool is_shared() const {
+    return singleton<SharedContainer>::Instance().find(
+        reinterpret_cast<void*>(const_cast<VersionEdit*>(this)),
+        sizeof(VersionEdit));
+  }
+  void Pack();
+  void UnPack();
 };
 
 }  // namespace ROCKSDB_NAMESPACE
