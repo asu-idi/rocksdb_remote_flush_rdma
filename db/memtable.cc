@@ -238,7 +238,7 @@ bool MemTable::CHECKShared() {
   return ret;
 }
 void MemTable::Pack() {
-  // edit_.Pack();
+  edit_.Pack();
   // table_.Pack();
   // range_del_table_.Pack();
   if (flush_job_info_ != nullptr) flush_job_info_->Pack();
