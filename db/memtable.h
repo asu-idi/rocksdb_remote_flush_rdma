@@ -23,6 +23,7 @@
 #include "db/version_edit.h"
 #include "memory/allocator.h"
 #include "memory/concurrent_arena.h"
+#include "memory/shared_std.hpp"
 #include "monitoring/instrumented_mutex.h"
 #include "options/cf_options.h"
 #include "rocksdb/db.h"
@@ -547,6 +548,8 @@ class MemTable {
     }
   }
   bool CHECKShared();
+  void Pack();
+  void Unpack();
   bool is_shared() const { return is_shared_; }
   void blockUnusedDataForTest();
 
@@ -636,6 +639,7 @@ class MemTable {
   std::unique_ptr<FlushJobInfo> flush_job_info_;
 
   bool is_shared_;
+  shm_std::shared_vector<void*> package_;
 
   // Updates flush_state_ using ShouldFlushNow()
   void UpdateFlushState();

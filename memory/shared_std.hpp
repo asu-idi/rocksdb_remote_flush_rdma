@@ -1,10 +1,14 @@
 #pragma once
+#include <cassert>
+#include <cstring>
 #include <deque>
+#include <functional>
 #include <list>
 #include <map>
 #include <memory>
 #include <set>
 #include <sstream>
+#include <type_traits>
 #include <vector>
 
 #include "memory/shared_mem_basic.h"
@@ -48,6 +52,10 @@ using shared_deque = std::deque<T, STDSharedMemoryAllocator<T>>;
 // using shared_string = std::basic_string<char, std::char_traits<char>,
 // STDSharedMemoryAllocator<char>>;
 using shared_char_vector = std::vector<char, STDSharedMemoryAllocator<char>>;
+
+template <typename T, typename U>
+using shared_map = std::map<T, U, std::less<T>,
+                            STDSharedMemoryAllocator<std::pair<const T, U>>>;
 
 template <typename T>
 using shared_list = std::list<T, STDSharedMemoryAllocator<T>>;

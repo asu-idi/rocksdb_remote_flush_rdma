@@ -224,27 +224,29 @@ void MemTable::blockUnusedDataForTest() {
   memset(reinterpret_cast<void*>(
              const_cast<ImmutableMemTableOptions*>(&moptions_)),
          0, sizeof(ImmutableMemTableOptions));
-  // memset(reinterpret_cast<void*>(&edit_), 0, sizeof(VersionEdit));
-  // if (reinterpret_cast<void*>(flush_job_info_.get()) ==
-  //     reinterpret_cast<void*>(0x1000)) {
-  //   return;
-  // } else {
-  //   flush_job_info_.reset(reinterpret_cast<FlushJobInfo*>(0x1000));
-  // }
 }
 
 bool MemTable::CHECKShared() {
-  bool ret = singleton<SharedContainer>::Instance().find(&comparator_,
-                                                         sizeof(comparator_));
+  bool ret = singleton<SharedContainer>::Instance().find(
+      reinterpret_cast<void*>(this), sizeof(MemTable));
   ret = ret && singleton<SharedContainer>::Instance().find(
                    arena_, sizeof(ConSharedArena));
   ret = ret && table_->CHECKShared() && range_del_table_->CHECKShared();
-  // options
-  // version_edit
-  // memset(reinterpret_cast<void*>(&this->mem_tracker_), 0,
-  // sizeof(AllocTracker));
-
+  // ret = ret && edit_.CHECKShared();
+  // ret = ret && flush_job_info_.CEHCKShared();
   return ret;
+}
+void MemTable::Pack() {
+  // edit_.Pack();
+  // table_.Pack();
+  // range_del_table_.Pack();
+  // flush_job_info_.Pack();
+}
+void MemTable::Unpack() {
+  // edit_.Unpack();
+  // table_.Unpack();
+  // range_del_table_.Unpack();
+  // flush_job_info_.Unpack();
 }
 
 MemTable::~MemTable() {

@@ -5,7 +5,10 @@
 
 #include "rocksdb/table_properties.h"
 
+#include <utility>
+
 #include "db/seqno_to_time_mapping.h"
+#include "memory/shared_package.hpp"
 #include "port/malloc.h"
 #include "port/port.h"
 #include "rocksdb/env.h"
@@ -345,5 +348,105 @@ void TEST_SetRandomTableProperties(TableProperties* props) {
   }
 }
 #endif
+
+bool TableProperties::CHECKShared() { return is_shared_; }
+void TableProperties::Pack() {
+  string_package_.push_back(
+      std::make_pair(shm_package::Pack(db_id), db_id.length()));
+  string_package_.push_back(
+      std::make_pair(shm_package::Pack(db_session_id), db_session_id.length()));
+  string_package_.push_back(
+      std::make_pair(shm_package::Pack(db_host_id), db_host_id.length()));
+  string_package_.push_back(std::make_pair(
+      shm_package::Pack(column_family_name), column_family_name.length()));
+  string_package_.push_back(std::make_pair(
+      shm_package::Pack(filter_policy_name), filter_policy_name.length()));
+  string_package_.push_back(std::make_pair(shm_package::Pack(comparator_name),
+                                           comparator_name.length()));
+  string_package_.push_back(std::make_pair(
+      shm_package::Pack(merge_operator_name), merge_operator_name.length()));
+  string_package_.push_back(
+      std::make_pair(shm_package::Pack(prefix_extractor_name),
+                     prefix_extractor_name.length()));
+  string_package_.push_back(
+      std::make_pair(shm_package::Pack(property_collectors_names),
+                     property_collectors_names.length()));
+  string_package_.push_back(std::make_pair(shm_package::Pack(compression_name),
+                                           compression_name.length()));
+  string_package_.push_back(std::make_pair(
+      shm_package::Pack(compression_options), compression_options.length()));
+  string_package_.push_back(
+      std::make_pair(shm_package::Pack(seqno_to_time_mapping),
+                     seqno_to_time_mapping.length()));
+
+  //    user_collected_properties_package_
+  for (auto& iter : user_collected_properties) {
+    user_collected_properties_package_.push_back(
+        std::make_pair(shm_package::Pack(iter.first), iter.first.length()));
+    user_collected_properties_package_.push_back(
+        std::make_pair(shm_package::Pack(iter.second), iter.second.length()));
+  }
+  //   readable_properties_package_
+  for (auto& iter : readable_properties) {
+    readable_properties_package_.push_back(
+        std::make_pair(shm_package::Pack(iter.first), iter.first.length()));
+    readable_properties_package_.push_back(
+        std::make_pair(shm_package::Pack(iter.second), iter.second.length()));
+  }
+  is_shared_ = true;
+}
+void TableProperties::UnPack() {
+  shm_package::Unpack(reinterpret_cast<char*>(string_package_[0].first), db_id,
+                      string_package_[0].second);
+  shm_package::Unpack(reinterpret_cast<char*>(string_package_[1].first),
+                      db_session_id, string_package_[1].second);
+  shm_package::Unpack(reinterpret_cast<char*>(string_package_[2].first),
+                      db_host_id, string_package_[2].second);
+  shm_package::Unpack(reinterpret_cast<char*>(string_package_[3].first),
+                      column_family_name, string_package_[3].second);
+  shm_package::Unpack(reinterpret_cast<char*>(string_package_[4].first),
+                      filter_policy_name, string_package_[4].second);
+  shm_package::Unpack(reinterpret_cast<char*>(string_package_[5].first),
+                      comparator_name, string_package_[5].second);
+  shm_package::Unpack(reinterpret_cast<char*>(string_package_[6].first),
+                      merge_operator_name, string_package_[6].second);
+  shm_package::Unpack(reinterpret_cast<char*>(string_package_[7].first),
+                      prefix_extractor_name, string_package_[7].second);
+  shm_package::Unpack(reinterpret_cast<char*>(string_package_[8].first),
+                      property_collectors_names, string_package_[8].second);
+  shm_package::Unpack(reinterpret_cast<char*>(string_package_[9].first),
+                      compression_name, string_package_[9].second);
+  shm_package::Unpack(reinterpret_cast<char*>(string_package_[10].first),
+                      compression_options, string_package_[10].second);
+  shm_package::Unpack(reinterpret_cast<char*>(string_package_[11].first),
+                      seqno_to_time_mapping, string_package_[11].second);
+  user_collected_properties.clear();  // assert
+  readable_properties.clear();        // assert
+  for (size_t i = 0; i < user_collected_properties_package_.size(); i += 2) {
+    std::string first, second;
+    shm_package::Unpack(
+        reinterpret_cast<char*>(user_collected_properties_package_[i].first),
+        first, user_collected_properties_package_[i].second);
+    shm_package::Unpack(reinterpret_cast<char*>(
+                            user_collected_properties_package_[i + 1].first),
+                        second,
+                        user_collected_properties_package_[i + 1].second);
+    user_collected_properties.insert(first, second);
+  }
+  for (size_t i = 0; i < readable_properties_package_.size(); i += 2) {
+    std::string first, second;
+    shm_package::Unpack(
+        reinterpret_cast<char*>(readable_properties_package_[i].first), first,
+        readable_properties_package_[i].second);
+    shm_package::Unpack(
+        reinterpret_cast<char*>(readable_properties_package_[i + 1].first),
+        second, readable_properties_package_[i + 1].second);
+    readable_properties.insert(first, second);
+  }
+  string_package_.clear();
+  user_collected_properties_package_.clear();
+  readable_properties_package_.clear();
+  is_shared_ = false;
+}
 
 }  // namespace ROCKSDB_NAMESPACE
