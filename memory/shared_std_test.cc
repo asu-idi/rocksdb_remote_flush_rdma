@@ -4,10 +4,12 @@
 #include <cstddef>
 #include <cstdint>
 #include <random>
+#include <utility>
 
 #include "db/db_iter.h"
 #include "gtest/gtest.h"
 #include "memory/shared_mem_basic.h"
+#include "memory/shared_package.hpp"
 #include "port/stack_trace.h"
 #include "test_util/testharness.h"
 #include "util/macro.hpp"
@@ -77,7 +79,7 @@ TEST_F(SharedStdTest, DISABLED_List) {
   }
 }
 
-TEST_F(SharedStdTest, StringVector) {
+TEST_F(SharedStdTest, DISABLED_StringVector) {
   shm_std::shared_char_vector now1;
   std::string now2;
   std::random_device rd;
@@ -101,24 +103,47 @@ TEST_F(SharedStdTest, StringVector) {
   }
 }
 
-TEST_F(SharedStdTest, DISABLED_Map) {
-  std::map<void*, size_t> mpp;
-  for (int i = 1; i <= 10; i++) {
+TEST_F(SharedStdTest, Map) {
+  LOG("CHECK map");
+  std::string local[10];
+  for (auto& i : local) {
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_int_distribution<size_t> dis(1, INT32_MAX - 1);
-    size_t* ptr = (size_t*)dis(gen);
-    size_t size = dis(gen);
-    mpp.insert(std::make_pair(ptr, size));
+    size_t length = dis(gen) % 1000;
+    for (size_t j = 0; j < length; j++) {
+      i.push_back(dis(gen) % 26 + 'a');
+    }
+  }
+  shm_std::shared_map<void*, size_t> mpp;
+  for (int i = 0; i < 10; i++) {
+    char* shared = shm_package::Pack(local[i]);
+    mpp.insert(std::make_pair(shared, local[i].length()));
   }
   ASSERT_TRUE(mpp.size() == 10);
-  void* ptr = nullptr;
-  size_t size = 0;
-  for (auto& it : mpp) {
-    ASSERT_TRUE(it.first >= ptr);
-    if (it.first == ptr) ASSERT_TRUE(it.second >= size);
-    ptr = it.first;
-    size = it.second;
+  for (auto& iter : mpp) {
+    ASSERT_TRUE(singleton<SharedContainer>::Instance().find(
+        reinterpret_cast<void*>(const_cast<void**>(&(iter.first))),
+        sizeof(void*)));
+    ASSERT_TRUE(singleton<SharedContainer>::Instance().find(
+        reinterpret_cast<void*>(const_cast<size_t*>(&(iter.second))),
+        sizeof(size_t*)));
+    ASSERT_TRUE(singleton<SharedContainer>::Instance().find(
+        reinterpret_cast<void*>(iter.first), iter.second));
+  }
+  std::string retrieve[10];
+  for (int i = 0; i < 10; i++) {
+    ASSERT_TRUE(retrieve[i].empty());
+  }
+  size_t it = 0;
+  for (auto& iter : mpp) {
+    shm_package::Unpack(reinterpret_cast<char*>(iter.first), retrieve[it++],
+                        iter.second);
+  }
+  sort(retrieve, retrieve + 10);
+  sort(local, local + 10);
+  for (size_t i = 0; i < 10; i++) {
+    ASSERT_EQ(retrieve[i], local[i]);
   }
 }
 

@@ -7,11 +7,16 @@
 #pragma once
 
 #include <chrono>
+#include <cstddef>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
+#include "memory/shared_package.hpp"
+#include "memory/shared_std.hpp"
 #include "rocksdb/advanced_options.h"
 #include "rocksdb/compaction_job_stats.h"
 #include "rocksdb/compression_type.h"
@@ -204,7 +209,6 @@ struct WriteStallInfo {
   } condition;
 };
 
-
 struct FileDeletionInfo {
   FileDeletionInfo() = default;
 
@@ -359,6 +363,35 @@ struct FlushJobInfo {
 
   // Information about blob files created during flush in Integrated BlobDB.
   std::vector<BlobFileAdditionInfo> blob_file_addition_infos;
+
+  //
+  shm_std::shared_vector<std::pair<void*, size_t>> string_package_;
+  bool is_shared_ = false;
+  bool CHECKShared() {
+    bool ret = is_shared_;
+    ret = ret & table_properties.CHECKShared();
+    return ret;
+  }
+  void Pack() {
+    table_properties.Pack();
+    string_package_.push_back(
+        std::make_pair(shm_package::Pack(cf_name), cf_name.length()));
+    string_package_.push_back(
+        std::make_pair(shm_package::Pack(file_path), file_path.length()));
+    is_shared_ = true;
+  }
+  void UnPack() {
+    table_properties.UnPack();
+    shm_package::Unpack(string_package_[0].first, cf_name,
+                        string_package_[0].second);
+    shm_package::Unpack(string_package_[1].first, file_path,
+                        string_package_[1].second);
+    is_shared_ = false;
+  }
+  void BlockUnusedDataForTest() {
+    memset(reinterpret_cast<void*>(&blob_file_addition_infos), 0,
+           sizeof(std::vector<BlobFileAdditionInfo>));
+  }
 };
 
 struct CompactionFileInfo {
@@ -835,6 +868,5 @@ class EventListener : public Customizable {
 
   ~EventListener() override {}
 };
-
 
 }  // namespace ROCKSDB_NAMESPACE
