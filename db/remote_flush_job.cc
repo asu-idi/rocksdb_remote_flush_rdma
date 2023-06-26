@@ -161,10 +161,13 @@ Status RemoteFlushJob::RunRemote(LogsWithPrepTracker* prep_tracker,
                                  FileMetaData* file_meta,
                                  bool* switched_to_mempurge) {
   // TEST_SYNC_POINT("RemoteFlushJob::Start");
-
+  RemoteFlushJob::Pack();
   return CHECKShared() ? Status::OK()
                        : Status::Corruption("RemoteFlushJob::RunRemote");
 }
+
+void RemoteFlushJob::Pack() {}
+void RemoteFlushJob::UnPack() {}
 
 void RemoteFlushJob::PickMemTable() {
   db_mutex_->AssertHeld();
@@ -215,6 +218,7 @@ void RemoteFlushJob::PickMemTable() {
 Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
                                 FileMetaData* file_meta,
                                 bool* switched_to_mempurge) {
+  RemoteFlushJob::UnPack();
   TEST_SYNC_POINT("RemoteFlushJob::Start");
   db_mutex_->AssertHeld();
   assert(pick_memtable_called);

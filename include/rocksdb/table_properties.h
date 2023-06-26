@@ -321,7 +321,8 @@ struct TableProperties {
   shm_std::shared_vector<std::pair<void*, size_t>>
       user_collected_properties_package_;
   shm_std::shared_vector<std::pair<void*, size_t>> readable_properties_package_;
-  bool is_shared_ = false;
+  bool is_shared_ = true;
+  bool is_packaged_ = false;
 };
 
 // Extra properties

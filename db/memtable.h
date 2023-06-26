@@ -549,7 +549,7 @@ class MemTable {
   }
   bool CHECKShared();
   void Pack();
-  void Unpack();
+  void UnPack();
   bool is_shared() const { return is_shared_; }
   void blockUnusedDataForTest();
 

@@ -380,6 +380,7 @@ bool SkipListRep::CHECKShared() const {
                    reinterpret_cast<void*>(
                        const_cast<MemTableRep::KeyComparator*>(&cmp_)),
                    sizeof(MemTableRep::KeyComparator));
+  LOG("make sure transform_ ==  nullptr finish");
   return ret;
 }
 

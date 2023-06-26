@@ -9,7 +9,7 @@
 #include "db/db_iter.h"
 #include "gtest/gtest.h"
 #include "memory/shared_mem_basic.h"
-#include "memory/shared_package.hpp"
+#include "memory/shared_package.h"
 #include "port/stack_trace.h"
 #include "test_util/testharness.h"
 #include "util/macro.hpp"
@@ -137,8 +137,7 @@ TEST_F(SharedStdTest, Map) {
   }
   size_t it = 0;
   for (auto& iter : mpp) {
-    shm_package::Unpack(reinterpret_cast<char*>(iter.first), retrieve[it++],
-                        iter.second);
+    shm_package::Unpack(iter.first, retrieve[it++], iter.second);
   }
   sort(retrieve, retrieve + 10);
   sort(local, local + 10);

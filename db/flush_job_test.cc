@@ -359,11 +359,13 @@ TEST_F(FlushJobTest, DISABLED_SharedFlushJob) {
 }
 
 TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
+  LOG("");
   autovector<ColumnFamilyData*> all_cfds;
   for (auto cfd : *versions_->GetColumnFamilySet()) {
     all_cfds.push_back(cfd);
     ASSERT_TRUE(cfd->GetLatestCFOptions().server_use_remote_flush == true);
   }
+  LOG("");
   const std::vector<size_t> num_memtables = {2, 1, 3};
   assert(num_memtables.size() == column_family_names_.size());
   const size_t num_keys_per_memtable = 1000;
