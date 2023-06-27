@@ -10,6 +10,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -20,6 +21,7 @@
 #include "db/table_properties_collector.h"
 #include "db/write_batch_internal.h"
 #include "db/write_controller.h"
+#include "memory/shared_mem_basic.h"
 #include "memory/shared_std.hpp"
 #include "options/cf_options.h"
 #include "rocksdb/compaction_job_stats.h"
@@ -563,7 +565,8 @@ class ColumnFamilyData {
   std::atomic<bool> initialized_;
   std::atomic<bool> dropped_;  // true if client dropped it
 
-  const InternalKeyComparator internal_comparator_;
+  // TODO: const
+  InternalKeyComparator internal_comparator_;
   IntTblPropCollectorFactories int_tbl_prop_collector_factories_;
 
   const ColumnFamilyOptions initial_cf_options_;
@@ -641,13 +644,18 @@ class ColumnFamilyData {
 
   std::atomic<uint64_t> next_epoch_number_;
 
-  bool is_shared_;
-  // shm_std::shared_vector<shm_std::shared_char_vector> transportable_data_;
+  // shared
+  bool is_packaged_ = false;
+  shm_std::shared_vector<std::pair<void*, size_t>> string_package_;
+  shm_std::shared_vector<std::pair<void*, size_t>> ds_package_;
 
  public:
   std::vector<std::pair<void*, size_t>> temp_blocked_data_;
   bool CHECKShared();
-  [[nodiscard]] bool is_shared() const { return is_shared_; }
+  [[nodiscard]] bool is_shared() {
+    return singleton<SharedContainer>::Instance().find(
+        reinterpret_cast<void*>(this), sizeof(ColumnFamilyData));
+  }
   static ColumnFamilyData* CreateSharedColumnFamilyData(
       uint32_t id, const std::string& name, Version* dummy_versions,
       Cache* table_cache, WriteBufferManager* write_buffer_manager,

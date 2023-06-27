@@ -132,6 +132,10 @@ RemoteFlushJob::~RemoteFlushJob() { ThreadStatusUtil::ResetThreadStatus(); }
 
 void RemoteFlushJob::blockUnusedDataForTest() {
   LOG("RemoteFlushJob::blockUnusedDataForTest()");
+  cfd_->blockUnusedDataForTest();
+  for (auto memtable : mems_) {
+    memtable->blockUnusedDataForTest();
+  }
   // assert(edit_ == nullptr);
   // versions_ = reinterpret_cast<VersionSet*>(0x1000);
   assert(existing_snapshots_.size() == 0);  // TODO: maybe need to support != 0
@@ -194,8 +198,18 @@ Status RemoteFlushJob::RunRemote(LogsWithPrepTracker* prep_tracker,
                        : Status::Corruption("RemoteFlushJob::RunRemote");
 }
 
-void RemoteFlushJob::Pack() {}
-void RemoteFlushJob::UnPack() {}
+void RemoteFlushJob::Pack() {
+  for (auto memtable : mems_) {
+    memtable->Pack();
+  }
+  cfd_->Pack();
+}
+void RemoteFlushJob::UnPack() {
+  for (auto memtable : mems_) {
+    memtable->UnPack();
+  }
+  cfd_->UnPack();
+}
 
 void RemoteFlushJob::PickMemTable() {
   db_mutex_->AssertHeld();

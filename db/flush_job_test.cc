@@ -26,6 +26,8 @@
 #include "table/mock_table.h"
 #include "test_util/testharness.h"
 #include "test_util/testutil.h"
+#include "util/logger.hpp"
+#include "util/macro.hpp"
 #include "util/random.h"
 #include "util/string_util.h"
 
@@ -427,37 +429,31 @@ TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
   std::chrono::time_point<std::chrono::steady_clock> pick_time =
       std::chrono::steady_clock::now();
   Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output(
-      __FILE__, __LINE__, "[TIME]pick time: %ld",
+      __FILE__, __LINE__, "[TIME]pick time: ",
       std::chrono::duration_cast<std::chrono::microseconds>(pick_time -
                                                             start_time)
           .count());
-
   LOG("Start block unused data");
-  // MemTables
-  for (auto& job : flush_jobs) {
-    for (auto memtable : job->GetMemTables()) {
-      memtable->blockUnusedDataForTest();
-      memtable->Pack();
-    }
-  }
-  for (auto& job : flush_jobs) {
-    for (auto memtable : job->mems_) {
-      memtable->blockUnusedDataForTest();
-      memtable->Pack();
-    }
-  }
-  for (auto& cfd : all_cfds) {
-    cfd->blockUnusedDataForTest();
-  }
   for (auto& job : flush_jobs) {
     job->blockUnusedDataForTest();
   }
   std::chrono::time_point<std::chrono::steady_clock> block_time =
       std::chrono::steady_clock::now();
   Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output(
-      __FILE__, __LINE__, "[TIME]block time: %ld",
+      __FILE__, __LINE__, "[TIME]block time:",
       std::chrono::duration_cast<std::chrono::microseconds>(block_time -
                                                             pick_time)
+          .count());
+  LOG("Start pack");
+  for (auto& job : flush_jobs) {
+    job->Pack();
+  }
+  std::chrono::time_point<std::chrono::steady_clock> pack_time =
+      std::chrono::steady_clock::now();
+  Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output(
+      __FILE__, __LINE__, "[TIME]pack time: %ld",
+      std::chrono::duration_cast<std::chrono::microseconds>(pack_time -
+                                                            block_time)
           .count());
   LOG("finish block unused data, Start check shared");
   for (auto& job : flush_jobs) {
@@ -475,7 +471,7 @@ TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
   Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output(
       __FILE__, __LINE__, "[TIME]check time: %ld",
       std::chrono::duration_cast<std::chrono::microseconds>(check_time -
-                                                            block_time)
+                                                            pack_time)
           .count());
 
   LOG("finish check shared, Start Flush");
@@ -491,16 +487,9 @@ TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
       std::chrono::duration_cast<std::chrono::microseconds>(transfer_time -
                                                             check_time)
           .count());
-
+  LOG("finish flush, Start Unpack");
   for (auto& job : flush_jobs) {
-    for (auto memtable : job->GetMemTables()) {
-      memtable->UnPack();
-    }
-  }
-  for (auto& job : flush_jobs) {
-    for (auto memtable : job->mems_) {
-      memtable->UnPack();
-    }
+    job->UnPack();
   }
   std::chrono::time_point<std::chrono::steady_clock> unpack_time =
       std::chrono::steady_clock::now();
@@ -803,8 +792,9 @@ TEST_F(FlushJobTest, DISABLED_FlushMemtablesMultipleColumnFamilies) {
   k = 0;
   for (const auto& file_meta : file_metas) {
     ASSERT_EQ(std::to_string(0), file_meta.smallest.user_key().ToString());
-    ASSERT_EQ("99999", file_meta.largest.user_key()
-                           .ToString());  // max key by bytewise comparator
+    ASSERT_EQ("99999",
+              file_meta.largest.user_key()
+                  .ToString());  // max key by bytewise comparator
     ASSERT_EQ(smallest_seqs[k], file_meta.fd.smallest_seqno);
     ASSERT_EQ(largest_seqs[k], file_meta.fd.largest_seqno);
     // Verify that imm is empty
@@ -898,7 +888,8 @@ TEST_F(FlushJobTest, GetRateLimiterPriorityForWrite) {
   // const size_t num_mems_to_flush = 1;
   // const size_t num_keys_per_table = 100;
   // JobContext job_context(0);
-  // ColumnFamilyData* cfd = versions_->GetColumnFamilySet()->GetDefault();
+  // ColumnFamilyData* cfd =
+  // versions_->GetColumnFamilySet()->GetDefault();
   // std::vector<uint64_t> memtable_ids;
   // std::vector<MemTable*> new_mems;
   // for (size_t i = 0; i != num_mems; ++i) {
@@ -930,19 +921,21 @@ TEST_F(FlushJobTest, GetRateLimiterPriorityForWrite) {
 
   // assert(memtable_ids.size() == num_mems);
   // uint64_t smallest_memtable_id = memtable_ids.front();
-  // uint64_t flush_memtable_id = smallest_memtable_id + num_mems_to_flush - 1;
-  // FlushJob flush_job(
-  //     dbname_, versions_->GetColumnFamilySet()->GetDefault(), db_options_,
-  //     *cfd->GetLatestMutableCFOptions(), flush_memtable_id, env_options_,
-  //     versions_.get(), &mutex_, &shutting_down_, {}, kMaxSequenceNumber,
-  //     snapshot_checker, &job_context, FlushReason::kTest, nullptr, nullptr,
-  //     nullptr, kNoCompression, db_options_.statistics.get(), &event_logger,
-  //     true, true /* sync_output_directory */, true /* write_manifest */,
-  //     Env::Priority::USER, nullptr /*IOTracer*/,
+  // uint64_t flush_memtable_id = smallest_memtable_id +
+  // num_mems_to_flush - 1; FlushJob flush_job(
+  //     dbname_, versions_->GetColumnFamilySet()->GetDefault(),
+  //     db_options_, *cfd->GetLatestMutableCFOptions(),
+  //     flush_memtable_id, env_options_, versions_.get(), &mutex_,
+  //     &shutting_down_, {}, kMaxSequenceNumber, snapshot_checker,
+  //     &job_context, FlushReason::kTest, nullptr, nullptr, nullptr,
+  //     kNoCompression, db_options_.statistics.get(), &event_logger,
+  //     true, true /* sync_output_directory */, true /* write_manifest
+  //     */, Env::Priority::USER, nullptr /*IOTracer*/,
   //     empty_seqno_to_time_mapping_);
 
   // // When the state from WriteController is normal.
-  // ASSERT_EQ(flush_job.GetRateLimiterPriorityForWrite(), Env::IO_HIGH);
+  // ASSERT_EQ(flush_job.GetRateLimiterPriorityForWrite(),
+  // Env::IO_HIGH);
 
   // WriteController* write_controller =
   //     flush_job.versions_->GetColumnFamilySet()->write_controller();
@@ -951,14 +944,16 @@ TEST_F(FlushJobTest, GetRateLimiterPriorityForWrite) {
   //   // When the state from WriteController is Delayed.
   //   std::unique_ptr<WriteControllerToken> delay_token =
   //       write_controller->GetDelayToken(1000000);
-  //   ASSERT_EQ(flush_job.GetRateLimiterPriorityForWrite(), Env::IO_USER);
+  //   ASSERT_EQ(flush_job.GetRateLimiterPriorityForWrite(),
+  //   Env::IO_USER);
   // }
 
   // {
   //   // When the state from WriteController is Stopped.
   //   std::unique_ptr<WriteControllerToken> stop_token =
   //       write_controller->GetStopToken();
-  //   ASSERT_EQ(flush_job.GetRateLimiterPriorityForWrite(), Env::IO_USER);
+  //   ASSERT_EQ(flush_job.GetRateLimiterPriorityForWrite(),
+  //   Env::IO_USER);
   // }
 }
 

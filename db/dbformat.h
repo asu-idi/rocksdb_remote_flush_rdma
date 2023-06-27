@@ -254,6 +254,7 @@ class InternalKeyComparator
     : public CompareInterface {
  private:
   UserComparatorWrapper user_comparator_;
+  bool is_packaged_ = false;
 
  public:
   // `InternalKeyComparator`s constructed with the default constructor are not
@@ -266,6 +267,11 @@ class InternalKeyComparator
   //    overhead, set `named` to false. In that case, `Name()` will return a
   //    generic name that is non-specific to the underlying comparator.
   explicit InternalKeyComparator(const Comparator* c) : user_comparator_(c) {}
+
+  void Pack();
+  void UnPack();
+  bool is_shared();
+
   virtual ~InternalKeyComparator() {}
 
   int Compare(const Slice& a, const Slice& b) const override;
