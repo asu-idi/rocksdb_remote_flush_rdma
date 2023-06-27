@@ -124,7 +124,7 @@ class FlushJobTestBase : public testing::Test {
     db_options_.statistics = CreateDBStatistics();
 
     cf_options_.comparator = ucmp_;
-    // cf_options_.server_use_remote_flush = true;
+    cf_options_.server_use_remote_flush = true;
 
     std::vector<ColumnFamilyDescriptor> column_families;
     cf_options_.table_factory = mock_table_factory_;
@@ -362,7 +362,7 @@ TEST_F(FlushJobTest, DISABLED_SharedFlushJob) {
   job_context.Clean();
 }
 
-TEST_F(FlushJobTest, DISABLED_SharedFlushWithMultipleColumnFamilies) {
+TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
   autovector<ColumnFamilyData*> all_cfds;
   for (auto cfd : *versions_->GetColumnFamilySet()) {
     all_cfds.push_back(cfd);
@@ -541,6 +541,18 @@ TEST_F(FlushJobTest, DISABLED_SharedFlushWithMultipleColumnFamilies) {
   for (auto& job : flush_jobs) {
     committed_flush_jobs_info.push_back(job->GetCommittedRemoteFlushJobsInfo());
   }
+  LOG("Start unblock unused data");
+  for (auto& cfd : all_cfds) {
+    cfd->unblockUnusedDataForTest();
+  }
+  std::chrono::time_point<std::chrono::steady_clock> unblock_time =
+      std::chrono::steady_clock::now();
+  Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output(
+      __FILE__, __LINE__, "[TIME]unblock time: %ld",
+      std::chrono::duration_cast<std::chrono::microseconds>(unblock_time -
+                                                            flush_time)
+          .count());
+  LOG("finish unblock unused data, Start install");
   Status s = InstallMemtableAtomicFlushResults(
       nullptr /* imm_lists */, all_cfds, mutable_cf_options_list, mems_list,
       versions_.get(), nullptr /* prep_tracker */, &mutex_, file_meta_ptrs,
@@ -554,11 +566,6 @@ TEST_F(FlushJobTest, DISABLED_SharedFlushWithMultipleColumnFamilies) {
                                                             flush_time)
           .count());
   ASSERT_OK(s);
-  LOG("finish remote flush,Start unblock unused data");
-  for (auto& cfd : all_cfds) {
-    cfd->unblockUnusedDataForTest();
-  }
-
   mutex_.Unlock();
   // db_options_.statistics->histogramData(FLUSH_TIME, &hist);
   // ASSERT_GT(hist.average, 0.0);
@@ -666,7 +673,7 @@ TEST_F(FlushJobTest, DISABLED_FlushMemTablesSingleColumnFamily) {
   job_context.Clean();
 }
 
-TEST_F(FlushJobTest, FlushMemtablesMultipleColumnFamilies) {
+TEST_F(FlushJobTest, DISABLED_FlushMemtablesMultipleColumnFamilies) {
   autovector<ColumnFamilyData*> all_cfds;
   for (auto cfd : *versions_->GetColumnFamilySet()) {
     all_cfds.push_back(cfd);
@@ -776,6 +783,7 @@ TEST_F(FlushJobTest, FlushMemtablesMultipleColumnFamilies) {
       std::chrono::duration_cast<std::chrono::microseconds>(misc_time -
                                                             run_time)
           .count());
+
   Status s = InstallMemtableAtomicFlushResults(
       nullptr /* imm_lists */, all_cfds, mutable_cf_options_list, mems_list,
       versions_.get(), nullptr /* prep_tracker */, &mutex_, file_meta_ptrs,
