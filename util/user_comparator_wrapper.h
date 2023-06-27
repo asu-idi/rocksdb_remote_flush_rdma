@@ -8,8 +8,11 @@
 
 #pragma once
 
+#include "memory/shared_mem_basic.h"
+#include "memory/shared_std.hpp"
 #include "monitoring/perf_context_imp.h"
 #include "rocksdb/comparator.h"
+#include "util/logger.hpp"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -22,7 +25,7 @@ class UserComparatorWrapper {
   UserComparatorWrapper() : user_comparator_(nullptr) {}
 
   explicit UserComparatorWrapper(const Comparator* const user_cmp)
-      : user_comparator_(user_cmp) {}
+      : user_comparator_(const_cast<Comparator*>(user_cmp)) {}
 
   ~UserComparatorWrapper() = default;
 
@@ -57,8 +60,55 @@ class UserComparatorWrapper {
     return user_comparator_->EqualWithoutTimestamp(a, b);
   }
 
+  // shared
+  bool is_packaged_ = false;
+  void Pack();
+  void UnPack();
+  bool is_shared();
+  const char* shm_name_ = nullptr;
+
  private:
-  const Comparator* user_comparator_;
+  // const
+  Comparator* user_comparator_;
 };
+
+inline bool UserComparatorWrapper::is_shared() {
+  return singleton<SharedContainer>::Instance().find(
+      reinterpret_cast<void*>(this), sizeof(UserComparatorWrapper));
+}
+inline void UserComparatorWrapper::Pack() {
+  assert(is_shared());
+  if (is_packaged_) {
+    LOG("UserComparatorWrapper is already packaged");
+    return;
+  }
+  // TODO(copy): construct a new comparator
+
+  LOG("UserComparatorWrapper::Pack() data: ", user_comparator_->Name());
+  shm_name_ = user_comparator_->Pack();
+
+  is_packaged_ = true;
+}
+
+inline void UserComparatorWrapper::UnPack() {
+  assert(is_shared());
+  if (!is_packaged_) {
+    LOG("UserComparatorWrapper is already unpackaged");
+    return;
+  }
+  // TODO(copy): construct a new comparator
+  if (strcmp(shm_name_, "leveldb.BytewiseComparator") == 0) {
+    auto* cmp = BytewiseComparator();
+    user_comparator_ = static_cast<Comparator*>(const_cast<Comparator*>(cmp));
+  } else if (strcmp(shm_name_, "rocksdb.ReverseBytewiseComparator") == 0) {
+    auto* cmp = ReverseBytewiseComparator();
+    user_comparator_ = static_cast<Comparator*>(const_cast<Comparator*>(cmp));
+  } else {
+    LOG("UserComparatorWrapper::UnPack() is unimplemented: ", shm_name_);
+    assert(false);
+  }
+  user_comparator_->UnPack(shm_name_);
+  is_packaged_ = false;
+}
 
 }  // namespace ROCKSDB_NAMESPACE

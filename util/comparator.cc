@@ -27,6 +27,7 @@
 namespace ROCKSDB_NAMESPACE {
 
 namespace {
+
 class BytewiseComparatorImpl : public Comparator {
  public:
   BytewiseComparatorImpl() {}
@@ -316,6 +317,7 @@ const Comparator* BytewiseComparatorWithU64Ts() {
   return &comp_with_u64_ts;
 }
 
+// TODO(interface): remote flush comparator need to be registered
 static int RegisterBuiltinComparators(ObjectLibrary& library,
                                       const std::string& /*arg*/) {
   library.AddFactory<const Comparator>(

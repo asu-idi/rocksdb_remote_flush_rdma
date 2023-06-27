@@ -10,9 +10,11 @@
 
 #include <stdio.h>
 
+#include <cassert>
 #include <cinttypes>
 
 #include "db/lookup_key.h"
+#include "memory/shared_mem_basic.h"
 #include "monitoring/perf_context_imp.h"
 #include "port/port.h"
 #include "util/coding.h"
@@ -209,5 +211,28 @@ void IterKey::EnlargeBuffer(size_t key_size) {
   ResetBuffer();
   buf_ = new char[key_size];
   buf_size_ = key_size;
+}
+bool InternalKeyComparator::is_shared() {
+  return singleton<SharedContainer>::Instance().find(
+      reinterpret_cast<void*>(this), sizeof(InternalKeyComparator));
+}
+
+void InternalKeyComparator::Pack() {
+  assert(is_shared());
+  if (is_packaged_) {
+    LOG("InternalKeyComparator is already packaged");
+    return;
+  }
+  user_comparator_.Pack();
+  is_packaged_ = true;
+}
+void InternalKeyComparator::UnPack() {
+  assert(is_shared());
+  if (!is_packaged_) {
+    LOG("InternalKeyComparator is already unpackaged");
+    return;
+  }
+  user_comparator_.UnPack();
+  is_packaged_ = false;
 }
 }  // namespace ROCKSDB_NAMESPACE

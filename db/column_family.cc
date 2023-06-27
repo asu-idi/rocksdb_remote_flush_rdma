@@ -576,8 +576,7 @@ ColumnFamilyData::ColumnFamilyData(
       last_memtable_id_(0),
       db_paths_registered_(false),
       mempurge_used_(false),
-      next_epoch_number_(1),
-      is_shared_(is_shared) {
+      next_epoch_number_(1) {
   LOG("CHECK : dummy_cf_options",
       cf_options.server_use_remote_flush == true ? "true" : "false", ' ',
       "initial_cf_options_:",
@@ -868,8 +867,28 @@ bool ColumnFamilyData::blockUnusedDataForTest() {
   return true;
 }
 
-void ColumnFamilyData::Pack() {}
-void ColumnFamilyData::UnPack() {}
+// internal_comparator_ ; ioptions_ ; table_cache_ ; internal_stats_ ; imm_ ;
+// local_sv_ ; compaction_picker_ ;
+void ColumnFamilyData::Pack() {
+  assert(is_shared());
+  if (is_packaged_) {
+    LOG("ColumnFamilyData is already packaged");
+    return;
+  }
+  // TODO:[MAIN]
+  internal_comparator_.Pack();
+
+  is_packaged_ = true;
+}
+void ColumnFamilyData::UnPack() {
+  assert(is_shared());
+  if (!is_packaged_) {
+    LOG("ColumnFamilyData is already unpackaged");
+    return;
+  }
+  internal_comparator_.UnPack();
+  is_packaged_ = false;
+}
 
 bool ColumnFamilyData::UnrefAndTryDelete() {
   int old_refs = refs_.fetch_sub(1);
@@ -877,7 +896,7 @@ bool ColumnFamilyData::UnrefAndTryDelete() {
   if (old_refs == 1) {
     assert(super_version_ == nullptr);
     LOG("DEBUG");
-    if (is_shared_) {
+    if (is_shared()) {
       this->~ColumnFamilyData();
       shm_delete(reinterpret_cast<char*>(this));
     } else {
