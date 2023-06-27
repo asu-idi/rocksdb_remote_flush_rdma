@@ -12,6 +12,8 @@
 #include <algorithm>
 #include <cassert>
 #include <cinttypes>
+#include <cstddef>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -759,47 +761,111 @@ bool ColumnFamilyData::CHECKShared() {
   return ret;
 }
 
-void ColumnFamilyData::unblockUnusedDataForTest() {
-  // dummy_versions_ = reinterpret_cast<Version*>(temp_blocked_data_[0].first);
-  temp_blocked_data_.clear();
-}
-// TODO:[MAIN] further check all members' usage by check function called.
-void ColumnFamilyData::blockUnusedDataForTest() {
-  // temp_blocked_data_.push_back(std::make_pair(
-  //     reinterpret_cast<void*>(dummy_versions_), sizeof(Version)));
-  // dummy_versions_ = reinterpret_cast<Version*>(0x1000);
+bool ColumnFamilyData::unblockUnusedDataForTest() {
+  if (temp_blocked_data_.size() != 8) {
+    return false;
+  }
+  dummy_versions_ = reinterpret_cast<Version*>(temp_blocked_data_[0].first);
+  current_ = reinterpret_cast<Version*>(temp_blocked_data_[1].first);
+  memcpy(reinterpret_cast<void*>(
+             const_cast<ColumnFamilyOptions*>(&initial_cf_options_)),
+         temp_blocked_data_[2].first, sizeof(ColumnFamilyOptions));
+  free(temp_blocked_data_[2].first);
+  memcpy(reinterpret_cast<void*>(&blob_file_cache_),
+         temp_blocked_data_[3].first, sizeof(std::unique_ptr<BlobFileCache>));
+  free(temp_blocked_data_[3].first);
 
-  // current_ = reinterpret_cast<Version*>(0x1000);
-  // memset(reinterpret_cast<void*>(
-  //            const_cast<InternalKeyComparator*>(&internal_comparator_)),
-  //        0x0, sizeof(InternalKeyComparator));
-  memset(reinterpret_cast<void*>(&int_tbl_prop_collector_factories_), 0x0,
-         sizeof(std::vector<std::unique_ptr<IntTblPropCollectorFactory>>));
-  // memset(reinterpret_cast<void*>(
-  //            const_cast<ColumnFamilyOptions*>(&initial_cf_options_)),
-  //        0x0, sizeof(ColumnFamilyOptions));
-  // memset(reinterpret_cast<void*>(const_cast<ImmutableOptions*>(&ioptions_)),
-  //        0x0, sizeof(ImmutableOptions));
-  memset(reinterpret_cast<void*>(
-             const_cast<MutableCFOptions*>(&mutable_cf_options_)),
-         0x0, sizeof(MutableCFOptions));
-  // table_cache_.reset(reinterpret_cast<TableCache*>(0x1000));
-  // blob_file_cache_.reset(reinterpret_cast<BlobFileCache*>(0x1000));
-  // blob_source_.reset(reinterpret_cast<BlobSource*>(0x1000));
-  // internal_stats_.reset(reinterpret_cast<InternalStats*>(0x1000));
-  write_buffer_manager_ = reinterpret_cast<WriteBufferManager*>(0x1000);
-  // memset(reinterpret_cast<void*>(&imm_), 0x0, sizeof(MemTableList));
+  memcpy(reinterpret_cast<void*>(&blob_source_), temp_blocked_data_[4].first,
+         sizeof(std::unique_ptr<BlobSource>));
+  free(temp_blocked_data_[4].first);
+  memcpy(reinterpret_cast<void*>(&prev_), temp_blocked_data_[5].first,
+         sizeof(ColumnFamilyData*));
+  free(temp_blocked_data_[5].first);
+  memcpy(reinterpret_cast<void*>(&next_), temp_blocked_data_[6].first,
+         sizeof(ColumnFamilyData*));
+  free(temp_blocked_data_[6].first);
+  memcpy(reinterpret_cast<void*>(&column_family_set_),
+         temp_blocked_data_[7].first, sizeof(ColumnFamilySet*));
+  free(temp_blocked_data_[7].first);
+
   assert(super_version_ == nullptr);
-  // local_sv_.reset(reinterpret_cast<ThreadLocalPtr*>(0x1000));
-  // next_ = reinterpret_cast<ColumnFamilyData*>(0x1000);
-  // prev_ = reinterpret_cast<ColumnFamilyData*>(0x1000);
-  // compaction_picker_.reset(reinterpret_cast<CompactionPicker*>(0x1000));
-  // column_family_set_ = reinterpret_cast<ColumnFamilySet*>(0x1000);
-  assert(write_controller_token_ == nullptr);
-  // TODO: modified at remote side, need to fix mem free
   assert(write_controller_token_ == nullptr);
   assert(data_dirs_.size() == 0);
   assert(file_metadata_cache_res_mgr_ == nullptr);
+
+  temp_blocked_data_.clear();
+  return true;
+}
+
+// internal_comparator_ ; ioptions_ ; table_cache_ ; internal_stats_ ; imm_ ;
+// local_sv_ ; compaction_picker_ ;
+bool ColumnFamilyData::blockUnusedDataForTest() {
+  if (temp_blocked_data_.size() != 0) {
+    return false;
+  }
+  temp_blocked_data_.emplace_back(reinterpret_cast<void*>(dummy_versions_),
+                                  sizeof(Version));
+  dummy_versions_ = reinterpret_cast<Version*>(0x1000);
+  temp_blocked_data_.emplace_back(reinterpret_cast<void*>(current_),
+                                  sizeof(Version));
+  current_ = reinterpret_cast<Version*>(0x1000);
+  memset(reinterpret_cast<void*>(&int_tbl_prop_collector_factories_), 0x0,
+         sizeof(std::vector<std::unique_ptr<IntTblPropCollectorFactory>>));
+  //*******************************
+  void* initial_cf_options_cp_ = malloc(sizeof(ColumnFamilyOptions));
+  memcpy(initial_cf_options_cp_,
+         reinterpret_cast<void*>(
+             const_cast<ColumnFamilyOptions*>(&initial_cf_options_)),
+         sizeof(ColumnFamilyOptions));
+  memset(reinterpret_cast<void*>(
+             const_cast<ColumnFamilyOptions*>(&initial_cf_options_)),
+         0x0, sizeof(ColumnFamilyOptions));
+  temp_blocked_data_.emplace_back(initial_cf_options_cp_,
+                                  sizeof(ColumnFamilyOptions));
+  //*******************************
+  memset(reinterpret_cast<void*>(
+             const_cast<MutableCFOptions*>(&mutable_cf_options_)),
+         0x0, sizeof(MutableCFOptions));
+
+  void* blob_file_cache_cp_ = malloc(sizeof(std::unique_ptr<BlobFileCache>));
+  memcpy(blob_file_cache_cp_, reinterpret_cast<void*>(&blob_file_cache_),
+         sizeof(std::unique_ptr<BlobFileCache>));
+  memset(reinterpret_cast<void*>(&blob_file_cache_), 0x0,
+         sizeof(std::unique_ptr<BlobFileCache>));
+  temp_blocked_data_.emplace_back(blob_file_cache_cp_,
+                                  sizeof(std::unique_ptr<BlobFileCache>));
+
+  void* blob_source_cp_ = malloc(sizeof(std::unique_ptr<BlobSource>));
+  memcpy(blob_source_cp_, reinterpret_cast<void*>(&blob_source_),
+         sizeof(std::unique_ptr<BlobSource>));
+  memset(reinterpret_cast<void*>(&blob_source_), 0x0,
+         sizeof(std::unique_ptr<BlobSource>));
+  temp_blocked_data_.emplace_back(blob_source_cp_,
+                                  sizeof(std::unique_ptr<BlobSource>));
+
+  write_buffer_manager_ = reinterpret_cast<WriteBufferManager*>(0x1000);
+  mem_->blockUnusedDataForTest();
+  assert(super_version_ == nullptr);
+  assert(data_dirs_.size() == 0);  // TODO: maybe needed
+  assert(file_metadata_cache_res_mgr_ == nullptr);
+
+  void* prev_cp_ = malloc(sizeof(ColumnFamilyData*));
+  memcpy(prev_cp_, reinterpret_cast<void*>(&prev_), sizeof(ColumnFamilyData*));
+  memset(reinterpret_cast<void*>(&prev_), 0x1, sizeof(ColumnFamilyData*));
+  temp_blocked_data_.emplace_back(prev_cp_, sizeof(ColumnFamilyData*));
+  void* next_cp_ = malloc(sizeof(ColumnFamilyData*));
+  memcpy(next_cp_, reinterpret_cast<void*>(&next_), sizeof(ColumnFamilyData*));
+  memset(reinterpret_cast<void*>(&next_), 0x1, sizeof(ColumnFamilyData*));
+  temp_blocked_data_.emplace_back(next_cp_, sizeof(ColumnFamilyData*));
+
+  void* column_family_set_cp_ = malloc(sizeof(ColumnFamilySet*));
+  memcpy(column_family_set_cp_, reinterpret_cast<void*>(&column_family_set_),
+         sizeof(ColumnFamilySet*));
+  memset(reinterpret_cast<void*>(&column_family_set_), 0x1,
+         sizeof(ColumnFamilySet*));
+  temp_blocked_data_.emplace_back(column_family_set_cp_,
+                                  sizeof(ColumnFamilySet*));
+  return true;
 }
 
 void ColumnFamilyData::Pack() {}
@@ -895,28 +961,29 @@ std::unique_ptr<WriteControllerToken> SetupDelay(
   } else if (write_controller->NeedsDelay() && max_write_rate > kMinWriteRate) {
     // If user gives rate less than kMinWriteRate, don't adjust it.
     //
-    // If already delayed, need to adjust based on previous compaction debt.
-    // When there are two or more column families require delay, we always
-    // increase or reduce write rate based on information for one single
-    // column family. It is likely to be OK but we can improve if there is a
-    // problem.
-    // Ignore compaction_needed_bytes = 0 case because compaction_needed_bytes
-    // is only available in level-based compaction
+    // If already delayed, need to adjust based on previous compaction
+    // debt. When there are two or more column families require delay, we
+    // always increase or reduce write rate based on information for one
+    // single column family. It is likely to be OK but we can improve if
+    // there is a problem. Ignore compaction_needed_bytes = 0 case
+    // because compaction_needed_bytes is only available in level-based
+    // compaction
     //
-    // If the compaction debt stays the same as previously, we also further slow
-    // down. It usually means a mem table is full. It's mainly for the case
-    // where both of flush and compaction are much slower than the speed we
-    // insert to mem tables, so we need to actively slow down before we get
-    // feedback signal from compaction and flushes to avoid the full stop
-    // because of hitting the max write buffer number.
+    // If the compaction debt stays the same as previously, we also
+    // further slow down. It usually means a mem table is full. It's
+    // mainly for the case where both of flush and compaction are much
+    // slower than the speed we insert to mem tables, so we need to
+    // actively slow down before we get feedback signal from compaction
+    // and flushes to avoid the full stop because of hitting the max
+    // write buffer number.
     //
-    // If DB just falled into the stop condition, we need to further reduce
-    // the write rate to avoid the stop condition.
+    // If DB just falled into the stop condition, we need to further
+    // reduce the write rate to avoid the stop condition.
     if (penalize_stop) {
-      // Penalize the near stop or stop condition by more aggressive slowdown.
-      // This is to provide the long term slowdown increase signal.
-      // The penalty is more than the reward of recovering to the normal
-      // condition.
+      // Penalize the near stop or stop condition by more aggressive
+      // slowdown. This is to provide the long term slowdown increase
+      // signal. The penalty is more than the reward of recovering to the
+      // normal condition.
       write_rate = static_cast<uint64_t>(static_cast<double>(write_rate) *
                                          kNearStopSlowdownRatio);
       if (write_rate < kMinWriteRate) {
@@ -931,8 +998,8 @@ std::unique_ptr<WriteControllerToken> SetupDelay(
       }
     } else if (prev_compaction_need_bytes > compaction_needed_bytes) {
       // We are speeding up by ratio of kSlowdownRatio when we have paid
-      // compaction debt. But we'll never speed up to faster than the write rate
-      // given by users.
+      // compaction debt. But we'll never speed up to faster than the
+      // write rate given by users.
       write_rate = static_cast<uint64_t>(static_cast<double>(write_rate) *
                                          kDecSlowdownRatio);
       if (write_rate > max_write_rate) {
@@ -1102,9 +1169,9 @@ WriteStallCondition ColumnFamilyData::RecalculateWriteStallConditions(
                      write_controller->delayed_write_rate());
     } else if (write_stall_condition == WriteStallCondition::kDelayed &&
                write_stall_cause == WriteStallCause::kPendingCompactionBytes) {
-      // If the distance to hard limit is less than 1/4 of the gap between soft
-      // and
-      // hard bytes limit, we think it is near stop and speed up the slowdown.
+      // If the distance to hard limit is less than 1/4 of the gap
+      // between soft and hard bytes limit, we think it is near stop and
+      // speed up the slowdown.
       bool near_stop =
           mutable_cf_options.hard_pending_compaction_bytes_limit > 0 &&
           (compaction_needed_bytes -
@@ -1134,41 +1201,41 @@ WriteStallCondition ColumnFamilyData::RecalculateWriteStallConditions(
               mutable_cf_options.level0_slowdown_writes_trigger)) {
         write_controller_token_ =
             write_controller->GetCompactionPressureToken();
-        ROCKS_LOG_INFO(
-            ioptions_.logger,
-            "[%s] Increasing compaction threads because we have %d level-0 "
-            "files ",
-            name_.c_str(), vstorage->l0_delay_trigger_count());
+        ROCKS_LOG_INFO(ioptions_.logger,
+                       "[%s] Increasing compaction threads because we "
+                       "have %d level-0 "
+                       "files ",
+                       name_.c_str(), vstorage->l0_delay_trigger_count());
       } else if (vstorage->estimated_compaction_needed_bytes() >=
                  mutable_cf_options.soft_pending_compaction_bytes_limit / 4) {
-        // Increase compaction threads if bytes needed for compaction exceeds
-        // 1/4 of threshold for slowing down.
-        // If soft pending compaction byte limit is not set, always speed up
-        // compaction.
+        // Increase compaction threads if bytes needed for compaction
+        // exceeds 1/4 of threshold for slowing down. If soft pending
+        // compaction byte limit is not set, always speed up compaction.
         write_controller_token_ =
             write_controller->GetCompactionPressureToken();
         if (mutable_cf_options.soft_pending_compaction_bytes_limit > 0) {
-          ROCKS_LOG_INFO(
-              ioptions_.logger,
-              "[%s] Increasing compaction threads because of estimated pending "
-              "compaction "
-              "bytes %" PRIu64,
-              name_.c_str(), vstorage->estimated_compaction_needed_bytes());
+          ROCKS_LOG_INFO(ioptions_.logger,
+                         "[%s] Increasing compaction threads because of "
+                         "estimated pending "
+                         "compaction "
+                         "bytes %" PRIu64,
+                         name_.c_str(),
+                         vstorage->estimated_compaction_needed_bytes());
         }
       } else {
         write_controller_token_.reset();
       }
-      // If the DB recovers from delay conditions, we reward with reducing
-      // double the slowdown ratio. This is to balance the long term slowdown
-      // increase signal.
+      // If the DB recovers from delay conditions, we reward with
+      // reducing double the slowdown ratio. This is to balance the long
+      // term slowdown increase signal.
       if (needed_delay) {
         uint64_t write_rate = write_controller->delayed_write_rate();
         write_controller->set_delayed_write_rate(static_cast<uint64_t>(
             static_cast<double>(write_rate) * kDelayRecoverSlowdownRatio));
         // Set the low pri limit to be 1/4 the delayed write rate.
-        // Note we don't reset this value even after delay condition is relased.
-        // Low-pri rate will continue to apply if there is a compaction
-        // pressure.
+        // Note we don't reset this value even after delay condition is
+        // relased. Low-pri rate will continue to apply if there is a
+        // compaction pressure.
         write_controller->low_pri_rate_limiter()->SetBytesPerSecond(write_rate /
                                                                     4);
       }
@@ -1216,7 +1283,8 @@ MemTable* ColumnFamilyData::ConstructNewMemtable(
         new (mem) MemTable(internal_comparator_, ioptions_, mutable_cf_options,
                            write_buffer_manager_, earliest_seq, id_);
   }
-  LOG("ColumnFamilyData::ConstructNewMemtable Alloc memtable finish: ptr =",
+  LOG("ColumnFamilyData::ConstructNewMemtable Alloc memtable finish: "
+      "ptr =",
       static_cast<void*>(memtable_), ' ', memtable_->GetID());
   return memtable_;
 }
@@ -1344,27 +1412,29 @@ SuperVersion* ColumnFamilyData::GetReferencedSuperVersion(DBImpl* db) {
   SuperVersion* sv = GetThreadLocalSuperVersion(db);
   sv->Ref();
   if (!ReturnThreadLocalSuperVersion(sv)) {
-    // This Unref() corresponds to the Ref() in GetThreadLocalSuperVersion()
-    // when the thread-local pointer was populated. So, the Ref() earlier in
-    // this function still prevents the returned SuperVersion* from being
-    // deleted out from under the caller.
+    // This Unref() corresponds to the Ref() in
+    // GetThreadLocalSuperVersion() when the thread-local pointer was
+    // populated. So, the Ref() earlier in this function still prevents
+    // the returned SuperVersion* from being deleted out from under the
+    // caller.
     sv->Unref();
   }
   return sv;
 }
 
 SuperVersion* ColumnFamilyData::GetThreadLocalSuperVersion(DBImpl* db) {
-  // The SuperVersion is cached in thread local storage to avoid acquiring
-  // mutex when SuperVersion does not change since the last use. When a new
-  // SuperVersion is installed, the compaction or flush thread cleans up
-  // cached SuperVersion in all existing thread local storage. To avoid
-  // acquiring mutex for this operation, we use atomic Swap() on the thread
-  // local pointer to guarantee exclusive access. If the thread local pointer
-  // is being used while a new SuperVersion is installed, the cached
-  // SuperVersion can become stale. In that case, the background thread would
-  // have swapped in kSVObsolete. We re-check the value at when returning
-  // SuperVersion back to thread local, with an atomic compare and swap.
-  // The superversion will need to be released if detected to be stale.
+  // The SuperVersion is cached in thread local storage to avoid
+  // acquiring mutex when SuperVersion does not change since the last
+  // use. When a new SuperVersion is installed, the compaction or flush
+  // thread cleans up cached SuperVersion in all existing thread local
+  // storage. To avoid acquiring mutex for this operation, we use atomic
+  // Swap() on the thread local pointer to guarantee exclusive access. If
+  // the thread local pointer is being used while a new SuperVersion is
+  // installed, the cached SuperVersion can become stale. In that case,
+  // the background thread would have swapped in kSVObsolete. We re-check
+  // the value at when returning SuperVersion back to thread local, with
+  // an atomic compare and swap. The superversion will need to be
+  // released if detected to be stale.
   void* ptr = local_sv_->Swap(SuperVersion::kSVInUse);
   // Invariant:
   // (1) Scrape (always) installs kSVObsolete in ThreadLocal storage
@@ -1381,8 +1451,8 @@ SuperVersion* ColumnFamilyData::GetThreadLocalSuperVersion(DBImpl* db) {
     if (sv && sv->Unref()) {
       RecordTick(ioptions_.stats, NUMBER_SUPERVERSION_CLEANUPS);
       db->mutex()->Lock();
-      // NOTE: underlying resources held by superversion (sst files) might
-      // not be released until the next background job.
+      // NOTE: underlying resources held by superversion (sst files)
+      // might not be released until the next background job.
       sv->Cleanup();
       if (db->immutable_db_options().avoid_unnecessary_blocking_io) {
         db->AddSuperVersionsToFreeQueue(sv);
@@ -1412,9 +1482,10 @@ bool ColumnFamilyData::ReturnThreadLocalSuperVersion(SuperVersion* sv) {
     // SuperVersion is still current.
     return true;
   } else {
-    // ThreadLocal scrape happened in the process of this GetImpl call (after
-    // thread local Swap() at the beginning and before CompareAndSwap()).
-    // This means the SuperVersion it holds is obsolete.
+    // ThreadLocal scrape happened in the process of this GetImpl call
+    // (after thread local Swap() at the beginning and before
+    // CompareAndSwap()). This means the SuperVersion it holds is
+    // obsolete.
     assert(expected == SuperVersion::kSVObsolete);
   }
   return false;
@@ -1439,9 +1510,9 @@ void ColumnFamilyData::InstallSuperVersion(
   if (old_superversion == nullptr || old_superversion->current != current() ||
       old_superversion->mem != mem_ ||
       old_superversion->imm != imm_.current()) {
-    // Should not recalculate slow down condition if nothing has changed, since
-    // currently RecalculateWriteStallConditions() treats it as further slowing
-    // down is needed.
+    // Should not recalculate slow down condition if nothing has changed,
+    // since currently RecalculateWriteStallConditions() treats it as
+    // further slowing down is needed.
     super_version_->write_stall_condition =
         RecalculateWriteStallConditions(mutable_cf_options);
   } else {
@@ -1450,9 +1521,10 @@ void ColumnFamilyData::InstallSuperVersion(
   }
   if (old_superversion != nullptr) {
     // Reset SuperVersions cached in thread local storage.
-    // This should be done before old_superversion->Unref(). That's to ensure
-    // that local_sv_ never holds the last reference to SuperVersion, since
-    // it has no means to safely do SuperVersion cleanup.
+    // This should be done before old_superversion->Unref(). That's to
+    // ensure that local_sv_ never holds the last reference to
+    // SuperVersion, since it has no means to safely do SuperVersion
+    // cleanup.
     ResetThreadLocalSuperVersions();
 
     if (old_superversion->mutable_cf_options.write_buffer_size !=
@@ -1500,7 +1572,8 @@ Status ColumnFamilyData::ValidateOptions(
   if (s.ok() && db_options.unordered_write &&
       cf_options.max_successive_merges != 0) {
     s = Status::InvalidArgument(
-        "max_successive_merges > 0 is incompatible with unordered_write");
+        "max_successive_merges > 0 is incompatible with "
+        "unordered_write");
   }
   if (s.ok()) {
     s = CheckCFPathsSupported(db_options, cf_options);
@@ -1531,13 +1604,15 @@ Status ColumnFamilyData::ValidateOptions(
     if (cf_options.blob_garbage_collection_age_cutoff < 0.0 ||
         cf_options.blob_garbage_collection_age_cutoff > 1.0) {
       return Status::InvalidArgument(
-          "The age cutoff for blob garbage collection should be in the range "
+          "The age cutoff for blob garbage collection should be in the "
+          "range "
           "[0.0, 1.0].");
     }
     if (cf_options.blob_garbage_collection_force_threshold < 0.0 ||
         cf_options.blob_garbage_collection_force_threshold > 1.0) {
       return Status::InvalidArgument(
-          "The garbage ratio threshold for forcing blob garbage collection "
+          "The garbage ratio threshold for forcing blob garbage "
+          "collection "
           "should be in the range [0.0, 1.0].");
     }
   }
@@ -1553,7 +1628,8 @@ Status ColumnFamilyData::ValidateOptions(
                 cf_options.memtable_protection_bytes_per_key) ==
       supported.end()) {
     return Status::NotSupported(
-        "Memtable per key-value checksum protection only supports 0, 1, 2, 4 "
+        "Memtable per key-value checksum protection only supports 0, 1, "
+        "2, 4 "
         "or 8 bytes per key.");
   }
   return s;
@@ -1592,8 +1668,8 @@ Env::WriteLifeTimeHint ColumnFamilyData::CalculateSSTWriteHint(int level) {
   if (level - base_level >= 2) {
     return Env::WLTH_EXTREME;
   } else if (level < base_level) {
-    // There is no restriction which prevents level passed in to be smaller
-    // than base_level.
+    // There is no restriction which prevents level passed in to be
+    // smaller than base_level.
     return Env::WLTH_MEDIUM;
   }
   return static_cast<Env::WriteLifeTimeHint>(

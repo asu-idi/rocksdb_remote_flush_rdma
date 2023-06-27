@@ -658,8 +658,8 @@ class ColumnFamilyData {
       const std::string& db_session_id);
   void Pack();
   void UnPack();
-  void blockUnusedDataForTest();
-  void unblockUnusedDataForTest();
+  bool blockUnusedDataForTest();
+  bool unblockUnusedDataForTest();
 };
 
 // ColumnFamilySet has interesting thread-safety requirements

@@ -6,10 +6,12 @@ rm -rf ./db/*
 cd $PROJECT_ROOT
 mkdir build
 cd $PROJECT_ROOT/build
-cmake ..
 if [[ "$1" == "1" ]]; then
     make clean
+    rm -rf ./*
+    rm -rf .cmake
 fi
+cmake ..
 make flush_job_test -j 18
 cd $PROJECT_ROOT/dev
 
