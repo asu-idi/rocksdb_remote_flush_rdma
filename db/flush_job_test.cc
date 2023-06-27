@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <map>
 #include <string>
 
@@ -123,7 +124,7 @@ class FlushJobTestBase : public testing::Test {
     db_options_.statistics = CreateDBStatistics();
 
     cf_options_.comparator = ucmp_;
-    cf_options_.server_use_remote_flush = true;
+    // cf_options_.server_use_remote_flush = true;
 
     std::vector<ColumnFamilyDescriptor> column_families;
     cf_options_.table_factory = mock_table_factory_;
@@ -132,6 +133,8 @@ class FlushJobTestBase : public testing::Test {
     }
     ColumnFamilyOptions cf_options;
     cf_options.server_use_remote_flush = true;
+    Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output(
+        __FILE__, __LINE__, "CHECK :", dbname_);
     LOG("CHECK:");
     versions_.reset(new VersionSet(
         cf_options, dbname_, &db_options_, env_options_, table_cache_.get(),
@@ -359,7 +362,7 @@ TEST_F(FlushJobTest, DISABLED_SharedFlushJob) {
   job_context.Clean();
 }
 
-TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
+TEST_F(FlushJobTest, DISABLED_SharedFlushWithMultipleColumnFamilies) {
   autovector<ColumnFamilyData*> all_cfds;
   for (auto cfd : *versions_->GetColumnFamilySet()) {
     all_cfds.push_back(cfd);
@@ -367,7 +370,7 @@ TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
   }
   const std::vector<size_t> num_memtables = {2, 1, 3};
   assert(num_memtables.size() == column_family_names_.size());
-  const size_t num_keys_per_memtable = 1000;
+  const size_t num_keys_per_memtable = 100000;
   JobContext job_context(0);
   std::vector<uint64_t> memtable_ids;
   std::vector<SequenceNumber> smallest_seqs;
@@ -415,10 +418,20 @@ TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
   // Call reserve to avoid auto-resizing
   file_metas.reserve(flush_jobs.size());
   mutex_.Lock();
+  std::chrono::time_point<std::chrono::steady_clock> start_time =
+      std::chrono::steady_clock::now();
   for (auto& job : flush_jobs) {
     // TODO(feat): move this into RunLocal
     job->PickMemTable();
   }
+  std::chrono::time_point<std::chrono::steady_clock> pick_time =
+      std::chrono::steady_clock::now();
+  Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output(
+      __FILE__, __LINE__, "[TIME]pick time: %ld",
+      std::chrono::duration_cast<std::chrono::microseconds>(pick_time -
+                                                            start_time)
+          .count());
+
   LOG("Start block unused data");
   // MemTables
   for (auto& job : flush_jobs) {
@@ -439,7 +452,13 @@ TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
   for (auto& job : flush_jobs) {
     job->blockUnusedDataForTest();
   }
-
+  std::chrono::time_point<std::chrono::steady_clock> block_time =
+      std::chrono::steady_clock::now();
+  Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output(
+      __FILE__, __LINE__, "[TIME]block time: %ld",
+      std::chrono::duration_cast<std::chrono::microseconds>(block_time -
+                                                            pick_time)
+          .count());
   LOG("finish block unused data, Start check shared");
   for (auto& job : flush_jobs) {
     for (auto memtable : job->GetMemTables()) {
@@ -451,12 +470,27 @@ TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
       ASSERT_TRUE(memtable->CHECKShared());
     }
   }
+  std::chrono::time_point<std::chrono::steady_clock> check_time =
+      std::chrono::steady_clock::now();
+  Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output(
+      __FILE__, __LINE__, "[TIME]check time: %ld",
+      std::chrono::duration_cast<std::chrono::microseconds>(check_time -
+                                                            block_time)
+          .count());
+
   LOG("finish check shared, Start Flush");
   for (auto& job : flush_jobs) {
     FileMetaData meta;
     // Run will release and re-acquire  mutex
     ASSERT_OK(job->RunRemote(nullptr /**/, &meta));
   }
+  std::chrono::time_point<std::chrono::steady_clock> transfer_time =
+      std::chrono::steady_clock::now();
+  Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output(
+      __FILE__, __LINE__, "[TIME]transfer time: %ld",
+      std::chrono::duration_cast<std::chrono::microseconds>(transfer_time -
+                                                            check_time)
+          .count());
 
   for (auto& job : flush_jobs) {
     for (auto memtable : job->GetMemTables()) {
@@ -468,12 +502,27 @@ TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
       memtable->UnPack();
     }
   }
+  std::chrono::time_point<std::chrono::steady_clock> unpack_time =
+      std::chrono::steady_clock::now();
+  Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output(
+      __FILE__, __LINE__, "[TIME]unpack time: %ld",
+      std::chrono::duration_cast<std::chrono::microseconds>(unpack_time -
+                                                            transfer_time)
+          .count());
+
   for (auto& job : flush_jobs) {
     FileMetaData meta;
 
     ASSERT_OK(job->RunLocal(nullptr /**/, &meta));
     file_metas.emplace_back(meta);
   }
+  std::chrono::time_point<std::chrono::steady_clock> flush_time =
+      std::chrono::steady_clock::now();
+  Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output(
+      __FILE__, __LINE__, "[TIME]flush time: %ld",
+      std::chrono::duration_cast<std::chrono::microseconds>(flush_time -
+                                                            unpack_time)
+          .count());
   autovector<FileMetaData*> file_meta_ptrs;
   for (auto& meta : file_metas) {
     file_meta_ptrs.push_back(&meta);
@@ -492,22 +541,32 @@ TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
   for (auto& job : flush_jobs) {
     committed_flush_jobs_info.push_back(job->GetCommittedRemoteFlushJobsInfo());
   }
-
   Status s = InstallMemtableAtomicFlushResults(
       nullptr /* imm_lists */, all_cfds, mutable_cf_options_list, mems_list,
       versions_.get(), nullptr /* prep_tracker */, &mutex_, file_meta_ptrs,
       committed_flush_jobs_info, &job_context.memtables_to_free,
       nullptr /* db_directory */, nullptr /* log_buffer */);
+  std::chrono::time_point<std::chrono::steady_clock> install_time =
+      std::chrono::steady_clock::now();
+  Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output(
+      __FILE__, __LINE__, "[TIME]install time: %ld",
+      std::chrono::duration_cast<std::chrono::microseconds>(install_time -
+                                                            flush_time)
+          .count());
   ASSERT_OK(s);
-  LOG("finish remote flush");
+  LOG("finish remote flush,Start unblock unused data");
+  for (auto& cfd : all_cfds) {
+    cfd->unblockUnusedDataForTest();
+  }
+
   mutex_.Unlock();
   // db_options_.statistics->histogramData(FLUSH_TIME, &hist);
   // ASSERT_GT(hist.average, 0.0);
   k = 0;
   for (const auto& file_meta : file_metas) {
     ASSERT_EQ(std::to_string(0), file_meta.smallest.user_key().ToString());
-    ASSERT_EQ("999", file_meta.largest.user_key()
-                         .ToString());  // max key by bytewise comparator
+    ASSERT_EQ("99999", file_meta.largest.user_key()
+                           .ToString());  // max key by bytewise comparator
     ASSERT_EQ(smallest_seqs[k], file_meta.fd.smallest_seqno);
     ASSERT_EQ(largest_seqs[k], file_meta.fd.largest_seqno);
     // Verify that imm is empty
@@ -607,14 +666,14 @@ TEST_F(FlushJobTest, DISABLED_FlushMemTablesSingleColumnFamily) {
   job_context.Clean();
 }
 
-TEST_F(FlushJobTest, DISABLED_FlushMemtablesMultipleColumnFamilies) {
+TEST_F(FlushJobTest, FlushMemtablesMultipleColumnFamilies) {
   autovector<ColumnFamilyData*> all_cfds;
   for (auto cfd : *versions_->GetColumnFamilySet()) {
     all_cfds.push_back(cfd);
   }
   const std::vector<size_t> num_memtables = {2, 1, 3};
   assert(num_memtables.size() == column_family_names_.size());
-  const size_t num_keys_per_memtable = 1000;
+  const size_t num_keys_per_memtable = 100000;
   JobContext job_context(0);
   std::vector<uint64_t> memtable_ids;
   std::vector<SequenceNumber> smallest_seqs;
@@ -665,15 +724,33 @@ TEST_F(FlushJobTest, DISABLED_FlushMemtablesMultipleColumnFamilies) {
   // Call reserve to avoid auto-resizing
   file_metas.reserve(flush_jobs.size());
   mutex_.Lock();
+  std::chrono::steady_clock::time_point start_time =
+      std::chrono::steady_clock::now();
   for (auto& job : flush_jobs) {
     job->PickMemTable();
   }
+  std::chrono::steady_clock::time_point pick_time =
+      std::chrono::steady_clock::now();
+  Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output(
+      __FILE__, __LINE__, "[TIME]pick time: %ld",
+      std::chrono::duration_cast<std::chrono::microseconds>(pick_time -
+                                                            start_time)
+          .count());
+
   for (auto& job : flush_jobs) {
     FileMetaData meta;
     // Run will release and re-acquire  mutex
     ASSERT_OK(job->Run(nullptr /**/, &meta));
     file_metas.emplace_back(meta);
   }
+
+  std::chrono::steady_clock::time_point run_time =
+      std::chrono::steady_clock::now();
+  Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output(
+      __FILE__, __LINE__, "[TIME]run time: %ld",
+      std::chrono::duration_cast<std::chrono::microseconds>(run_time -
+                                                            pick_time)
+          .count());
   autovector<FileMetaData*> file_meta_ptrs;
   for (auto& meta : file_metas) {
     file_meta_ptrs.push_back(&meta);
@@ -692,22 +769,34 @@ TEST_F(FlushJobTest, DISABLED_FlushMemtablesMultipleColumnFamilies) {
   for (auto& job : flush_jobs) {
     committed_flush_jobs_info.push_back(job->GetCommittedFlushJobsInfo());
   }
-
+  std::chrono::steady_clock::time_point misc_time =
+      std::chrono::steady_clock::now();
+  Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output(
+      __FILE__, __LINE__, "[TIME]misc time: %ld",
+      std::chrono::duration_cast<std::chrono::microseconds>(misc_time -
+                                                            run_time)
+          .count());
   Status s = InstallMemtableAtomicFlushResults(
       nullptr /* imm_lists */, all_cfds, mutable_cf_options_list, mems_list,
       versions_.get(), nullptr /* prep_tracker */, &mutex_, file_meta_ptrs,
       committed_flush_jobs_info, &job_context.memtables_to_free,
       nullptr /* db_directory */, nullptr /* log_buffer */);
   ASSERT_OK(s);
-
+  std::chrono::steady_clock::time_point install_time =
+      std::chrono::steady_clock::now();
+  Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output(
+      __FILE__, __LINE__, "[TIME]install time: %ld",
+      std::chrono::duration_cast<std::chrono::microseconds>(install_time -
+                                                            misc_time)
+          .count());
   mutex_.Unlock();
   db_options_.statistics->histogramData(FLUSH_TIME, &hist);
   ASSERT_GT(hist.average, 0.0);
   k = 0;
   for (const auto& file_meta : file_metas) {
     ASSERT_EQ(std::to_string(0), file_meta.smallest.user_key().ToString());
-    ASSERT_EQ("999", file_meta.largest.user_key()
-                         .ToString());  // max key by bytewise comparator
+    ASSERT_EQ("99999", file_meta.largest.user_key()
+                           .ToString());  // max key by bytewise comparator
     ASSERT_EQ(smallest_seqs[k], file_meta.fd.smallest_seqno);
     ASSERT_EQ(largest_seqs[k], file_meta.fd.largest_seqno);
     // Verify that imm is empty
