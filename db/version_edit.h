@@ -265,7 +265,7 @@ struct FileMetaData {
   bool CHECKShared();
   void Pack();
   void UnPack();
-  void BlockUnusedDataForTest();
+  void blockUnusedDataForTest();
   static FileMetaData* CreateSharedMetaData();
   static FileMetaData* CreateSharedMetaData(
       uint64_t file, uint32_t file_path_id, uint64_t file_size,

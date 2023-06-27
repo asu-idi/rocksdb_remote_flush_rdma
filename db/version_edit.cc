@@ -97,7 +97,7 @@ void FileMetaData::UnPack() {
   is_packaged_ = false;
 }
 
-void FileMetaData::BlockUnusedDataForTest() {
+void FileMetaData::blockUnusedDataForTest() {
   // TODO: block Cache::Handle* table_reader_handle
 }
 

@@ -10,12 +10,16 @@
 #include "db/column_family.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cinttypes>
+#include <cstring>
 #include <limits>
+#include <memory>
 #include <sstream>
 #include <string>
 #include <vector>
 
+#include "cache/cache_reservation_manager.h"
 #include "db/blob/blob_file_cache.h"
 #include "db/blob/blob_source.h"
 #include "db/compaction/compaction_picker.h"
@@ -23,10 +27,13 @@
 #include "db/compaction/compaction_picker_level.h"
 #include "db/compaction/compaction_picker_universal.h"
 #include "db/db_impl/db_impl.h"
+#include "db/dbformat.h"
 #include "db/internal_stats.h"
 #include "db/job_context.h"
 #include "db/memtable.h"
+#include "db/memtable_list.h"
 #include "db/range_del_aggregator.h"
+#include "db/table_cache.h"
 #include "db/table_properties_collector.h"
 #include "db/version_set.h"
 #include "db/write_controller.h"
@@ -35,16 +42,21 @@
 #include "memory/concurrent_shared_arena.h"
 #include "memory/shared_mem_basic.h"
 #include "monitoring/thread_status_util.h"
+#include "options/cf_options.h"
+#include "options/db_options.h"
 #include "options/options_helper.h"
 #include "port/port.h"
 #include "rocksdb/configurable.h"
 #include "rocksdb/convenience.h"
 #include "rocksdb/table.h"
+#include "rocksdb/write_buffer_manager.h"
 #include "table/merging_iterator.h"
+#include "trace_replay/trace_replay.h"
 #include "util/autovector.h"
 #include "util/cast_util.h"
 #include "util/compression.h"
 #include "util/logger.hpp"
+#include "util/thread_local.h"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -746,12 +758,49 @@ bool ColumnFamilyData::CHECKShared() {
   return ret;
 }
 
+// TODO:[MAIN] further check all members' usage by check function called.
+void ColumnFamilyData::blockUnusedDataForTest() {
+  // dummy_versions_ = reinterpret_cast<Version*>(0x1000);
+  // current_ = reinterpret_cast<Version*>(0x1000);
+  // memset(reinterpret_cast<void*>(
+  //            const_cast<InternalKeyComparator*>(&internal_comparator_)),
+  //        0x0, sizeof(InternalKeyComparator));
+  memset(reinterpret_cast<void*>(&int_tbl_prop_collector_factories_), 0x0,
+         sizeof(std::vector<std::unique_ptr<IntTblPropCollectorFactory>>));
+  // memset(reinterpret_cast<void*>(
+  //            const_cast<ColumnFamilyOptions*>(&initial_cf_options_)),
+  //        0x0, sizeof(ColumnFamilyOptions));
+  // memset(reinterpret_cast<void*>(const_cast<ImmutableOptions*>(&ioptions_)),
+  //        0x0, sizeof(ImmutableOptions));
+  memset(reinterpret_cast<void*>(
+             const_cast<MutableCFOptions*>(&mutable_cf_options_)),
+         0x0, sizeof(MutableCFOptions));
+  // table_cache_.reset(reinterpret_cast<TableCache*>(0x1000));
+  // blob_file_cache_.reset(reinterpret_cast<BlobFileCache*>(0x1000));
+  // blob_source_.reset(reinterpret_cast<BlobSource*>(0x1000));
+  // internal_stats_.reset(reinterpret_cast<InternalStats*>(0x1000));
+  write_buffer_manager_ = reinterpret_cast<WriteBufferManager*>(0x1000);
+  // memset(reinterpret_cast<void*>(&imm_), 0x0, sizeof(MemTableList));
+  assert(super_version_ == nullptr);
+  // local_sv_.reset(reinterpret_cast<ThreadLocalPtr*>(0x1000));
+  // next_ = reinterpret_cast<ColumnFamilyData*>(0x1000);
+  // prev_ = reinterpret_cast<ColumnFamilyData*>(0x1000);
+  // compaction_picker_.reset(reinterpret_cast<CompactionPicker*>(0x1000));
+  // column_family_set_ = reinterpret_cast<ColumnFamilySet*>(0x1000);
+  assert(write_controller_token_ == nullptr);
+  // TODO: modified at remote side, need to fix mem free
+  assert(write_controller_token_ == nullptr);
+  assert(data_dirs_.size() == 0);
+  assert(file_metadata_cache_res_mgr_ == nullptr);
+}
+
+void ColumnFamilyData::Pack() {}
+void ColumnFamilyData::UnPack() {}
+
 bool ColumnFamilyData::UnrefAndTryDelete() {
   int old_refs = refs_.fetch_sub(1);
   assert(old_refs > 0);
-  LOG("DEBUG");
   if (old_refs == 1) {
-    LOG("DEBUG");
     assert(super_version_ == nullptr);
     LOG("DEBUG");
     if (is_shared_) {
@@ -768,14 +817,11 @@ bool ColumnFamilyData::UnrefAndTryDelete() {
     // Only the super_version_ holds me
     SuperVersion* sv = super_version_;
     super_version_ = nullptr;
-    LOG("DEBUG");
     // Release SuperVersion references kept in ThreadLocalPtr.
     local_sv_.reset();
-    LOG("DEBUG");
     if (sv->Unref()) {
       // Note: sv will delete this ColumnFamilyData during Cleanup()
       assert(sv->cfd == this);
-      LOG("DEBUG");
       sv->Cleanup();
       LOG("DEBUG");
       delete sv;

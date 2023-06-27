@@ -360,13 +360,11 @@ TEST_F(FlushJobTest, DISABLED_SharedFlushJob) {
 }
 
 TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
-  LOG("");
   autovector<ColumnFamilyData*> all_cfds;
   for (auto cfd : *versions_->GetColumnFamilySet()) {
     all_cfds.push_back(cfd);
     ASSERT_TRUE(cfd->GetLatestCFOptions().server_use_remote_flush == true);
   }
-  LOG("");
   const std::vector<size_t> num_memtables = {2, 1, 3};
   assert(num_memtables.size() == column_family_names_.size());
   const size_t num_keys_per_memtable = 1000;
@@ -418,6 +416,7 @@ TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
   file_metas.reserve(flush_jobs.size());
   mutex_.Lock();
   for (auto& job : flush_jobs) {
+    // TODO(feat): move this into RunLocal
     job->PickMemTable();
   }
   LOG("Start block unused data");
@@ -434,7 +433,14 @@ TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
       memtable->Pack();
     }
   }
+  for (auto& cfd : all_cfds) {
+    cfd->blockUnusedDataForTest();
+  }
+  for (auto& job : flush_jobs) {
+    job->blockUnusedDataForTest();
+  }
 
+  LOG("finish block unused data, Start check shared");
   for (auto& job : flush_jobs) {
     for (auto memtable : job->GetMemTables()) {
       ASSERT_TRUE(memtable->CHECKShared());
@@ -445,8 +451,7 @@ TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
       ASSERT_TRUE(memtable->CHECKShared());
     }
   }
-
-  LOG("Start Flush");
+  LOG("finish check shared, Start Flush");
   for (auto& job : flush_jobs) {
     FileMetaData meta;
     // Run will release and re-acquire  mutex
