@@ -645,6 +645,7 @@ class ColumnFamilyData {
   // shm_std::shared_vector<shm_std::shared_char_vector> transportable_data_;
 
  public:
+  std::vector<std::pair<void*, size_t>> temp_blocked_data_;
   bool CHECKShared();
   [[nodiscard]] bool is_shared() const { return is_shared_; }
   static ColumnFamilyData* CreateSharedColumnFamilyData(
@@ -658,7 +659,7 @@ class ColumnFamilyData {
   void Pack();
   void UnPack();
   void blockUnusedDataForTest();
-  // void unblockUnusedDataForTest();
+  void unblockUnusedDataForTest();
 };
 
 // ColumnFamilySet has interesting thread-safety requirements

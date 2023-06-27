@@ -8,5 +8,5 @@ import subprocess
 
 import os
 
-for i in range(3, 4096):
+for i in range(131299, 131300):
     os.system("ipcrm -m {}".format(i))

@@ -150,6 +150,7 @@ void RemoteFlushJob::blockUnusedDataForTest() {
   // assert(output_file_directory_ == nullptr);
   // memset(reinterpret_cast<void*>(&table_properties_), 0x0,
   //        sizeof(TableProperties));
+  //
 }
 bool RemoteFlushJob::CHECKShared() {
   bool ret = singleton<SharedContainer>::Instance().find(
@@ -884,6 +885,7 @@ Status RemoteFlushJob::WriteLevel0Table() {
           job_context_->job_id, io_priority, &table_properties_, write_hint,
           full_history_ts_low, base_, &num_input_entries,
           &memtable_payload_bytes, &memtable_garbage_bytes);
+      LOG("Call build table done: dbname=", dbname_, " version=", versions_);
       // TODO: Cleanup io_status in BuildTable and table builders
       assert(!s.ok() || io_s.ok());
       io_s.PermitUncheckedError();
@@ -898,7 +900,9 @@ Status RemoteFlushJob::WriteLevel0Table() {
       if (tboptions.reason == TableFileCreationReason::kFlush) {
         TEST_SYNC_POINT("DBImpl::RemoteFlushJob:Flush");
       }
+      LOG("Start call LogFlush");
       LogFlush(db_options_.info_log);
+      LOG("End call LogFlush");
     }
 
     if (s.ok() && output_file_directory_ != nullptr && sync_output_directory_) {
@@ -909,7 +913,9 @@ Status RemoteFlushJob::WriteLevel0Table() {
     TEST_SYNC_POINT_CALLBACK("RemoteFlushJob::WriteLevel0Table", &mems_);
     db_mutex_->Lock();
   }
+  LOG("Start call base_->Unref()");
   base_->Unref();
+  LOG("End call base_->Unref()");
 
   // Note that if file_size is zero, the file has been deleted and
   // should not be added to the manifest.
@@ -959,6 +965,7 @@ Status RemoteFlushJob::WriteLevel0Table() {
   cfd_->internal_stats()->AddCFStats(
       InternalStats::BYTES_FLUSHED,
       stats.bytes_written + stats.bytes_written_blob);
+  LOG("Start call RecordFlushIOStats");
   RecordFlushIOStats();
 
   return s;

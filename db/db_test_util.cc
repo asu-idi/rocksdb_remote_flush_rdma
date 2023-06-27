@@ -117,23 +117,23 @@ DBTestBase::DBTestBase(const std::string path, bool env_do_fsync)
 }
 
 DBTestBase::~DBTestBase() {
-  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->DisableProcessing();
-  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->LoadDependency({});
-  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->ClearAllCallBacks();
-  Close();
-  Options options;
-  options.db_paths.emplace_back(dbname_, 0);
-  options.db_paths.emplace_back(dbname_ + "_2", 0);
-  options.db_paths.emplace_back(dbname_ + "_3", 0);
-  options.db_paths.emplace_back(dbname_ + "_4", 0);
-  options.env = env_;
+  // ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->DisableProcessing();
+  // ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->LoadDependency({});
+  // ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->ClearAllCallBacks();
+  // Close();
+  // Options options;
+  // options.db_paths.emplace_back(dbname_, 0);
+  // options.db_paths.emplace_back(dbname_ + "_2", 0);
+  // options.db_paths.emplace_back(dbname_ + "_3", 0);
+  // options.db_paths.emplace_back(dbname_ + "_4", 0);
+  // options.env = env_;
 
-  if (getenv("KEEP_DB")) {
-    printf("DB is still at %s\n", dbname_.c_str());
-  } else {
-    EXPECT_OK(DestroyDB(dbname_, options));
-  }
-  delete env_;
+  // if (getenv("KEEP_DB")) {
+  //   printf("DB is still at %s\n", dbname_.c_str());
+  // } else {
+  //   EXPECT_OK(DestroyDB(dbname_, options));
+  // }
+  // delete env_;
 }
 
 bool DBTestBase::ShouldSkipOptions(int option_config, int skip_mask) {

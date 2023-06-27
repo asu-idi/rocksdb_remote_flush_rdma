@@ -10,25 +10,25 @@ cmake ..
 if [[ "$1" == "1" ]]; then
     make clean
 fi
-make all -j 18
+make flush_job_test -j 18
 cd $PROJECT_ROOT/dev
 
-cp ../build/trace_analyzer ./
-cp ../build/trace_query_test ./
+# cp ../build/trace_analyzer ./
+# cp ../build/trace_query_test ./
 cp ../build/flush_job_test ./
-cp ../build/shared_std_test ./
-cp ../build/memtable_list_test ./
+# cp ../build/shared_std_test ./
+# cp ../build/memtable_list_test ./
 # cp ../build/memtable_tracer_parser ./
 # cp ../build/trace_memtable_test ./
-cp ../build/trace_io_test ./
-cp ../build/io_tracer_parser ./
-cp ../build/shared_memory_* ./
-cp ../build/memtable_refactor_test ./
-cp ../build/open_secondary_test ./
-cp ../build/inlineskiplist_test ./
-cp ../build/db_memtable_test ./
-cp ../build/db_test3 ./
-cp ../build/db_test4 ./
+# cp ../build/trace_io_test ./
+# cp ../build/io_tracer_parser ./
+# cp ../build/shared_memory_* ./
+# cp ../build/memtable_refactor_test ./
+# cp ../build/open_secondary_test ./
+# cp ../build/inlineskiplist_test ./
+# cp ../build/db_memtable_test ./
+# cp ../build/db_test3 ./
+# cp ../build/db_test4 ./
 
 rm -rf memtable_result/
 mkdir memtable_result/

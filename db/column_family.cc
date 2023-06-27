@@ -17,6 +17,7 @@
 #include <memory>
 #include <sstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "cache/cache_reservation_manager.h"
@@ -758,9 +759,16 @@ bool ColumnFamilyData::CHECKShared() {
   return ret;
 }
 
+void ColumnFamilyData::unblockUnusedDataForTest() {
+  // dummy_versions_ = reinterpret_cast<Version*>(temp_blocked_data_[0].first);
+  temp_blocked_data_.clear();
+}
 // TODO:[MAIN] further check all members' usage by check function called.
 void ColumnFamilyData::blockUnusedDataForTest() {
+  // temp_blocked_data_.push_back(std::make_pair(
+  //     reinterpret_cast<void*>(dummy_versions_), sizeof(Version)));
   // dummy_versions_ = reinterpret_cast<Version*>(0x1000);
+
   // current_ = reinterpret_cast<Version*>(0x1000);
   // memset(reinterpret_cast<void*>(
   //            const_cast<InternalKeyComparator*>(&internal_comparator_)),
