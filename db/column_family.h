@@ -540,17 +540,6 @@ class ColumnFamilyData {
   // Recover the next epoch number of this CF and epoch number
   // of its files (if missing)
   void RecoverEpochNumbers();
-  bool CHECKShared();
-  bool is_shared() const { return is_shared_; }
-  // TODO: move it into private
-  static ColumnFamilyData* CreateSharedColumnFamilyData(
-      uint32_t id, const std::string& name, Version* dummy_versions,
-      Cache* table_cache, WriteBufferManager* write_buffer_manager,
-      const ColumnFamilyOptions& options, const ImmutableDBOptions& db_options,
-      const FileOptions* file_options, ColumnFamilySet* column_family_set,
-      BlockCacheTracer* const block_cache_tracer,
-      const std::shared_ptr<IOTracer>& io_tracer, const std::string& db_id,
-      const std::string& db_session_id);
 
  private:
   friend class ColumnFamilySet;
@@ -654,6 +643,22 @@ class ColumnFamilyData {
 
   bool is_shared_;
   // shm_std::shared_vector<shm_std::shared_char_vector> transportable_data_;
+
+ public:
+  bool CHECKShared();
+  [[nodiscard]] bool is_shared() const { return is_shared_; }
+  static ColumnFamilyData* CreateSharedColumnFamilyData(
+      uint32_t id, const std::string& name, Version* dummy_versions,
+      Cache* table_cache, WriteBufferManager* write_buffer_manager,
+      const ColumnFamilyOptions& options, const ImmutableDBOptions& db_options,
+      const FileOptions* file_options, ColumnFamilySet* column_family_set,
+      BlockCacheTracer* const block_cache_tracer,
+      const std::shared_ptr<IOTracer>& io_tracer, const std::string& db_id,
+      const std::string& db_session_id);
+  void Pack();
+  void UnPack();
+  void blockUnusedDataForTest();
+  // void unblockUnusedDataForTest();
 };
 
 // ColumnFamilySet has interesting thread-safety requirements

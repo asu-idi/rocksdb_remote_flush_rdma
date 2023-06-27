@@ -10,7 +10,9 @@
 #include "db/remote_flush_job.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cinttypes>
+#include <cstring>
 #include <vector>
 
 #include "db/builder.h"
@@ -18,6 +20,7 @@
 #include "db/dbformat.h"
 #include "db/event_helpers.h"
 #include "db/flush_job_basic.h"
+#include "db/job_context.h"
 #include "db/log_reader.h"
 #include "db/log_writer.h"
 #include "db/memtable.h"
@@ -34,12 +37,15 @@
 #include "monitoring/iostats_context_imp.h"
 #include "monitoring/perf_context_imp.h"
 #include "monitoring/thread_status_util.h"
+#include "options/cf_options.h"
+#include "options/db_options.h"
 #include "port/port.h"
 #include "rocksdb/db.h"
 #include "rocksdb/env.h"
 #include "rocksdb/statistics.h"
 #include "rocksdb/status.h"
 #include "rocksdb/table.h"
+#include "rocksdb/table_properties.h"
 #include "table/merging_iterator.h"
 #include "table/table_builder.h"
 #include "table/two_level_iterator.h"
@@ -124,6 +130,27 @@ RemoteFlushJob* RemoteFlushJob::CreateRemoteFlushJob(
 
 RemoteFlushJob::~RemoteFlushJob() { ThreadStatusUtil::ResetThreadStatus(); }
 
+void RemoteFlushJob::blockUnusedDataForTest() {
+  LOG("RemoteFlushJob::blockUnusedDataForTest()");
+  // assert(edit_ == nullptr);
+  // versions_ = reinterpret_cast<VersionSet*>(0x1000);
+  assert(existing_snapshots_.size() == 0);  // TODO: maybe need to support != 0
+  // memset(reinterpret_cast<void*>(const_cast<ImmutableDBOptions*>(&db_options_)),
+  //        0, sizeof(ImmutableDBOptions));
+  memset(reinterpret_cast<void*>(
+             const_cast<MutableCFOptions*>(&mutable_cf_options_)),
+         0x0, sizeof(MutableCFOptions));
+  memset(reinterpret_cast<void*>(const_cast<FileOptions*>(&file_options_)), 0x0,
+         sizeof(FileOptions));
+  // job_context_ = reinterpret_cast<JobContext*>(0x1000);
+  // assert(job_context_ == nullptr);
+  // db_directory_ = reinterpret_cast<FSDirectory*>(0x1000);
+  // assert(db_directory_ == nullptr);
+  // output_file_directory_ = reinterpret_cast<FSDirectory*>(0x1000);
+  // assert(output_file_directory_ == nullptr);
+  // memset(reinterpret_cast<void*>(&table_properties_), 0x0,
+  //        sizeof(TableProperties));
+}
 bool RemoteFlushJob::CHECKShared() {
   bool ret = singleton<SharedContainer>::Instance().find(
       reinterpret_cast<void*>(&measure_io_stats_), sizeof(bool));

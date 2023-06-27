@@ -116,6 +116,7 @@ class RemoteFlushJob {
   bool CHECKShared();
   void Pack();
   void UnPack();
+  void blockUnusedDataForTest();
   friend class RemoteFlushJobTest_GetRateLimiterPriorityForWrite_Test;
 
   void ReportStartedFlush();
