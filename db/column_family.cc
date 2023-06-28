@@ -559,9 +559,10 @@ ColumnFamilyData::ColumnFamilyData(
           cf_options.table_factory->IsDeleteRangeSupported()),
       write_buffer_manager_(write_buffer_manager),
       mem_(nullptr),
-      imm_(ioptions_.min_write_buffer_number_to_merge,
-           ioptions_.max_write_buffer_number_to_maintain,
-           ioptions_.max_write_buffer_size_to_maintain),
+      imm_(MemTableList::CreateSharedMemTableList(
+          ioptions_.min_write_buffer_number_to_merge,
+          ioptions_.max_write_buffer_number_to_maintain,
+          ioptions_.max_write_buffer_size_to_maintain)),
       super_version_(nullptr),
       super_version_number_(0),
       local_sv_(new ThreadLocalPtr(&SuperVersionUnrefHandle)),
@@ -731,12 +732,15 @@ ColumnFamilyData::~ColumnFamilyData() {
   }
   autovector<MemTable*> to_delete;
   LOG("DEBUG");
-  imm_.current()->Unref(&to_delete);
+  imm_->current()->Unref(&to_delete);
   for (MemTable* m : to_delete) {
     LOG("DEBUG");
     delete m;
     LOG("DEBUG");
   }
+  imm_->~MemTableList();  // empty
+  shm_delete(reinterpret_cast<char*>(imm_));
+
   LOG("DEBUG");
   if (db_paths_registered_) {
     // TODO(cc): considering using ioptions_.fs, currently some tests rely on
@@ -756,6 +760,7 @@ bool ColumnFamilyData::CHECKShared() {
   bool ret = singleton<SharedContainer>::Instance().find(
       mem, sizeof(ColumnFamilyData));
   // TODO: add ColumnFamilyData member checker
+  ret = ret && imm_->CHECKShared();
 
   return ret;
 }
@@ -878,6 +883,8 @@ void ColumnFamilyData::Pack() {
   // TODO:[MAIN]
   internal_comparator_.Pack();
 
+  // ioptions_;
+  // table_cache_
   is_packaged_ = true;
 }
 void ColumnFamilyData::UnPack() {
@@ -1521,14 +1528,14 @@ void ColumnFamilyData::InstallSuperVersion(
     const MutableCFOptions& mutable_cf_options) {
   SuperVersion* new_superversion = sv_context->new_superversion.release();
   new_superversion->mutable_cf_options = mutable_cf_options;
-  new_superversion->Init(this, mem_, imm_.current(), current_);
+  new_superversion->Init(this, mem_, imm_->current(), current_);
   SuperVersion* old_superversion = super_version_;
   super_version_ = new_superversion;
   ++super_version_number_;
   super_version_->version_number = super_version_number_;
   if (old_superversion == nullptr || old_superversion->current != current() ||
       old_superversion->mem != mem_ ||
-      old_superversion->imm != imm_.current()) {
+      old_superversion->imm != imm_->current()) {
     // Should not recalculate slow down condition if nothing has changed,
     // since currently RecalculateWriteStallConditions() treats it as
     // further slowing down is needed.

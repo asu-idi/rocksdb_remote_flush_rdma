@@ -531,8 +531,8 @@ TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
     committed_flush_jobs_info.push_back(job->GetCommittedRemoteFlushJobsInfo());
   }
   LOG("Start unblock unused data");
-  for (auto& cfd : all_cfds) {
-    cfd->unblockUnusedDataForTest();
+  for (auto& job : flush_jobs) {
+    job->unblockUnusedDataForTest();
   }
   std::chrono::time_point<std::chrono::steady_clock> unblock_time =
       std::chrono::steady_clock::now();
