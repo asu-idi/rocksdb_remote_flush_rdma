@@ -9,6 +9,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 #include <deque>
 #include <limits>
 #include <list>
@@ -113,10 +114,7 @@ class RemoteFlushJob {
   std::list<std::unique_ptr<FlushJobInfo>>* GetCommittedRemoteFlushJobsInfo() {
     return &committed_flush_jobs_info_;
   }
-  bool CHECKShared();
-  void Pack();
-  void UnPack();
-  void blockUnusedDataForTest();
+
   friend class RemoteFlushJobTest_GetRateLimiterPriorityForWrite_Test;
 
   void ReportStartedFlush();
@@ -128,6 +126,13 @@ class RemoteFlushJob {
   Env::IOPriority GetRateLimiterPriorityForWrite();
   std::unique_ptr<FlushJobInfo> GetRemoteFlushJobInfo() const;
 
+  // shared
+  bool CHECKShared();
+  void Pack();
+  void UnPack();
+  void blockUnusedDataForTest();
+  void unblockUnusedDataForTest();
+  std::vector<std::pair<void*, size_t>> temp_block_;
   // encode needed
   const std::string& dbname_;
   const std::string db_id_;

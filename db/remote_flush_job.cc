@@ -156,6 +156,13 @@ void RemoteFlushJob::blockUnusedDataForTest() {
   //        sizeof(TableProperties));
   //
 }
+
+void RemoteFlushJob::unblockUnusedDataForTest() {
+  cfd_->unblockUnusedDataForTest();
+  for (auto memtable : mems_) {
+    // memtable->unblockUnusedDataForTest();
+  }
+}
 bool RemoteFlushJob::CHECKShared() {
   bool ret = singleton<SharedContainer>::Instance().find(
       reinterpret_cast<void*>(&measure_io_stats_), sizeof(bool));
@@ -193,7 +200,6 @@ Status RemoteFlushJob::RunRemote(LogsWithPrepTracker* prep_tracker,
                                  FileMetaData* file_meta,
                                  bool* switched_to_mempurge) {
   // TEST_SYNC_POINT("RemoteFlushJob::Start");
-  RemoteFlushJob::Pack();
   return CHECKShared() ? Status::OK()
                        : Status::Corruption("RemoteFlushJob::RunRemote");
 }
