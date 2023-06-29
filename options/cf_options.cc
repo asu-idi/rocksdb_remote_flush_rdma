@@ -988,31 +988,31 @@ void ImmutableOptions::blockUnusedDataForTest() {
   if (!temp_block_.empty()) return;
   ImmutableDBOptions::blockUnusedDataForTest();
   ImmutableCFOptions::blockUnusedDataForTest();
-  void* ptr = reinterpret_cast<void*>(env);
-  memset(reinterpret_cast<char*>(&env), 0x1, sizeof(Env*));
-  temp_block_.emplace_back(ptr, sizeof(Env*));
+  // void* ptr = reinterpret_cast<void*>(env);
+  // memset(reinterpret_cast<char*>(&env), 0x1, sizeof(Env*));
+  // temp_block_.emplace_back(ptr, sizeof(Env*));
 
-  void* mem = malloc(sizeof(std::shared_ptr<RateLimiter>));
-  memcpy(mem, &rate_limiter, sizeof(std::shared_ptr<RateLimiter>));
-  memset(&rate_limiter, 0x1, sizeof(std::shared_ptr<RateLimiter>));
-  temp_block_.emplace_back(mem, sizeof(std::shared_ptr<RateLimiter>));
+  // void* mem = malloc(sizeof(std::shared_ptr<RateLimiter>));
+  // memcpy(mem, &rate_limiter, sizeof(std::shared_ptr<RateLimiter>));
+  // memset(&rate_limiter, 0x1, sizeof(std::shared_ptr<RateLimiter>));
+  // temp_block_.emplace_back(mem, sizeof(std::shared_ptr<RateLimiter>));
 
-  mem = malloc(sizeof(std::shared_ptr<SstFileManager>));
-  memcpy(mem, &sst_file_manager, sizeof(std::shared_ptr<SstFileManager>));
-  memset(&sst_file_manager, 0x1, sizeof(std::shared_ptr<SstFileManager>));
-  temp_block_.emplace_back(mem, sizeof(std::shared_ptr<SstFileManager>));
+  // mem = malloc(sizeof(std::shared_ptr<SstFileManager>));
+  // memcpy(mem, &sst_file_manager, sizeof(std::shared_ptr<SstFileManager>));
+  // memset(&sst_file_manager, 0x1, sizeof(std::shared_ptr<SstFileManager>));
+  // temp_block_.emplace_back(mem, sizeof(std::shared_ptr<SstFileManager>));
 }
 void ImmutableOptions::unblockUnusedDataForTest() {
   if (temp_block_.empty()) return;
   ImmutableDBOptions::unblockUnusedDataForTest();
   ImmutableCFOptions::unblockUnusedDataForTest();
-  env = reinterpret_cast<Env*>(temp_block_[0].first);
-  memcpy(&rate_limiter, temp_block_[1].first,
-         sizeof(std::shared_ptr<RateLimiter>));
-  free(temp_block_[1].first);
-  memcpy(&sst_file_manager, temp_block_[2].first,
-         sizeof(std::shared_ptr<SstFileManager>));
-  free(temp_block_[2].first);
+  // env = reinterpret_cast<Env*>(temp_block_[0].first);
+  // memcpy(&rate_limiter, temp_block_[1].first,
+  //        sizeof(std::shared_ptr<RateLimiter>));
+  // free(temp_block_[1].first);
+  // memcpy(&sst_file_manager, temp_block_[2].first,
+  //        sizeof(std::shared_ptr<SstFileManager>));
+  // free(temp_block_[2].first);
 
   temp_block_.clear();
 }
