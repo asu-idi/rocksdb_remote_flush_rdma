@@ -780,13 +780,16 @@ std::string generate_option_file_name() {
 void ImmutableDBOptions::Pack() {
   if (is_pacakged) return;
   std::string file_name = generate_option_file_name();
-  void* mem = shm_alloc(file_name.size());
-  memcpy(mem, file_name.c_str(), file_name.size());
+  void* mem = shm_alloc(file_name.length());
+  memcpy(mem, file_name.c_str(), file_name.length());
   option_file_path = reinterpret_cast<char*>(mem);
-
+  LOG("option file path is ", option_file_path);
   DBOptions db_options = BuildDBOptions(*this, MutableDBOptions());
   std::vector<std::string> cf_names_;
+  // TODO: remove this
   std::vector<ColumnFamilyOptions> cf_opts_;
+  cf_names_.push_back("default");
+  cf_opts_.push_back(ColumnFamilyOptions());
   Status ret = PersistRocksDBOptions(db_options, cf_names_, cf_opts_, file_name,
                                      fs.get());
   assert(ret.ok());
