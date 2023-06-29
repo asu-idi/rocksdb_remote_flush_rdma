@@ -20,6 +20,13 @@ struct ImmutableDBOptions {
 
   void Dump(Logger* log) const;
 
+  void Pack();
+  void UnPack();
+  bool is_shared();
+  void blockUnusedDataForTest();
+  void unblockUnusedDataForTest();
+  void CHECKShared();
+
   bool create_if_missing;
   bool create_missing_column_families;
   bool error_if_exists;
@@ -104,6 +111,9 @@ struct ImmutableDBOptions {
   Logger* logger;
   std::shared_ptr<CompactionService> compaction_service;
   bool enforce_single_del_contracts;
+
+  const char* option_file_path = nullptr;
+  bool is_pacakged = false;
 
   bool IsWalDirSameAsDBPath() const;
   bool IsWalDirSameAsDBPath(const std::string& path) const;

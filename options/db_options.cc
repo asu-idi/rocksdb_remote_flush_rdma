@@ -5,23 +5,31 @@
 
 #include "options/db_options.h"
 
+#include <cassert>
 #include <cinttypes>
+#include <vector>
 
+#include "file/filename.h"
 #include "logging/logging.h"
+#include "memory/shared_mem_basic.h"
 #include "options/configurable_helper.h"
 #include "options/options_helper.h"
 #include "options/options_parser.h"
 #include "port/port.h"
 #include "rocksdb/advanced_cache.h"
 #include "rocksdb/configurable.h"
+#include "rocksdb/convenience.h"
+#include "rocksdb/db.h"
 #include "rocksdb/env.h"
 #include "rocksdb/file_system.h"
 #include "rocksdb/listener.h"
 #include "rocksdb/rate_limiter.h"
 #include "rocksdb/sst_file_manager.h"
 #include "rocksdb/statistics.h"
+#include "rocksdb/status.h"
 #include "rocksdb/system_clock.h"
 #include "rocksdb/utilities/options_type.h"
+#include "rocksdb/utilities/options_util.h"
 #include "rocksdb/wal_filter.h"
 #include "util/string_util.h"
 
@@ -762,6 +770,50 @@ ImmutableDBOptions::ImmutableDBOptions(const DBOptions& options)
   stats = statistics.get();
 }
 
+std::string generate_option_file_name() {
+  std::string ret = "/tmp/rocksdb_options_dir/OPTION-";
+  for (int i = 0; i < 10; i++) {
+    ret += std::to_string(rand() % 10);
+  }
+  return ret;
+}
+void ImmutableDBOptions::Pack() {
+  if (is_pacakged) return;
+  std::string file_name = generate_option_file_name();
+  void* mem = shm_alloc(file_name.size());
+  memcpy(mem, file_name.c_str(), file_name.size());
+  option_file_path = reinterpret_cast<char*>(mem);
+
+  DBOptions db_options = BuildDBOptions(*this, MutableDBOptions());
+  std::vector<std::string> cf_names_;
+  std::vector<ColumnFamilyOptions> cf_opts_;
+  Status ret = PersistRocksDBOptions(db_options, cf_names_, cf_opts_, file_name,
+                                     fs.get());
+  assert(ret.ok());
+  is_pacakged = true;
+}
+void ImmutableDBOptions::UnPack() {
+  if (!is_pacakged) return;
+  std::string file_name = option_file_path;
+  DBOptions db_options;
+  ConfigOptions config_options;
+  std::vector<ColumnFamilyDescriptor> loaded_cf_descs;
+  Status ret = LoadOptionsFromFile(config_options, file_name, &db_options,
+                                   &loaded_cf_descs);
+
+  assert(ret.ok());
+  *this = BuildImmutableDBOptions(db_options);
+  shm_delete(const_cast<char*>(option_file_path));
+  option_file_path = nullptr;
+  is_pacakged = false;
+}
+bool ImmutableDBOptions::is_shared() {
+  return singleton<SharedContainer>::Instance().find(
+      reinterpret_cast<void*>(this), sizeof(ImmutableDBOptions));
+}
+void ImmutableDBOptions::blockUnusedDataForTest() {}
+void ImmutableDBOptions::unblockUnusedDataForTest() {}
+
 void ImmutableDBOptions::Dump(Logger* log) const {
   ROCKS_LOG_HEADER(log, "                        Options.error_if_exists: %d",
                    error_if_exists);
@@ -899,8 +951,7 @@ void ImmutableDBOptions::Dump(Logger* log) const {
   ROCKS_LOG_HEADER(log, "            Options.wal_compression: %d",
                    wal_compression);
   ROCKS_LOG_HEADER(log, "            Options.atomic_flush: %d", atomic_flush);
-  ROCKS_LOG_HEADER(log,
-                   "            Options.avoid_unnecessary_blocking_io: %d",
+  ROCKS_LOG_HEADER(log, "            Options.avoid_unnecessary_blocking_io: %d",
                    avoid_unnecessary_blocking_io);
   ROCKS_LOG_HEADER(log, "                Options.persist_stats_to_disk: %u",
                    persist_stats_to_disk);
@@ -1036,14 +1087,13 @@ void MutableDBOptions::Dump(Logger* log) const {
   ROCKS_LOG_HEADER(log,
                    "                     Options.wal_bytes_per_sync: %" PRIu64,
                    wal_bytes_per_sync);
-  ROCKS_LOG_HEADER(log,
-                   "                  Options.strict_bytes_per_sync: %d",
+  ROCKS_LOG_HEADER(log, "                  Options.strict_bytes_per_sync: %d",
                    strict_bytes_per_sync);
   ROCKS_LOG_HEADER(log,
                    "      Options.compaction_readahead_size: %" ROCKSDB_PRIszt,
                    compaction_readahead_size);
   ROCKS_LOG_HEADER(log, "                 Options.max_background_flushes: %d",
-                          max_background_flushes);
+                   max_background_flushes);
 }
 
 Status GetMutableDBOptionsFromStrings(
