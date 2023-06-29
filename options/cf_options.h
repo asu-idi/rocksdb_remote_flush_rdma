@@ -25,6 +25,12 @@ struct ImmutableCFOptions {
   explicit ImmutableCFOptions();
   explicit ImmutableCFOptions(const ColumnFamilyOptions& cf_options);
 
+  void Pack();
+  void UnPack();
+  bool is_shared();
+  void blockUnusedDataForTest();
+  void unblockUnusedDataForTest();
+
   CompactionStyle compaction_style;
 
   CompactionPri compaction_pri;
@@ -103,6 +109,15 @@ struct ImmutableOptions : public ImmutableDBOptions, public ImmutableCFOptions {
 
   ImmutableOptions(const ImmutableDBOptions& db_options,
                    const ColumnFamilyOptions& cf_options);
+
+  void Pack();
+  void UnPack();
+  bool is_shared() const;
+  void blockUnusedDataForTest();
+  void unblockUnusedDataForTest();
+  bool CEHCKShared();
+  bool is_packaged_ = false;
+  std::vector<std::pair<void*, size_t>> temp_block_;
 };
 
 struct MutableCFOptions {

@@ -792,6 +792,7 @@ bool ColumnFamilyData::unblockUnusedDataForTest() {
          temp_blocked_data_[7].first, sizeof(ColumnFamilySet*));
   free(temp_blocked_data_[7].first);
 
+  ioptions_.unblockUnusedDataForTest();
   assert(super_version_ == nullptr);
   assert(write_controller_token_ == nullptr);
   assert(data_dirs_.size() == 0);
@@ -869,10 +870,11 @@ bool ColumnFamilyData::blockUnusedDataForTest() {
          sizeof(ColumnFamilySet*));
   temp_blocked_data_.emplace_back(column_family_set_cp_,
                                   sizeof(ColumnFamilySet*));
+  ioptions_.blockUnusedDataForTest();
   return true;
 }
 
-// internal_comparator_ ; ioptions_ ; table_cache_ ; internal_stats_ ; imm_ ;
+// internal_comparator_ ; imm_ ; ioptions_ ; table_cache_ ; internal_stats_ ;
 // local_sv_ ; compaction_picker_ ;
 void ColumnFamilyData::Pack() {
   assert(is_shared());
@@ -882,9 +884,7 @@ void ColumnFamilyData::Pack() {
   }
   // TODO:[MAIN]
   internal_comparator_.Pack();
-
-  // ioptions_;
-  // table_cache_
+  ioptions_.Pack();
   is_packaged_ = true;
 }
 void ColumnFamilyData::UnPack() {
@@ -894,6 +894,7 @@ void ColumnFamilyData::UnPack() {
     return;
   }
   internal_comparator_.UnPack();
+  ioptions_.UnPack();
   is_packaged_ = false;
 }
 

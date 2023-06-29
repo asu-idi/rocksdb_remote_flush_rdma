@@ -7,10 +7,14 @@
 
 #include <cassert>
 #include <cinttypes>
+#include <cstdlib>
+#include <cstring>
+#include <iterator>
 #include <limits>
 #include <string>
 
 #include "logging/logging.h"
+#include "memory/shared_mem_basic.h"
 #include "options/configurable_helper.h"
 #include "options/db_options.h"
 #include "options/options_helper.h"
@@ -25,6 +29,7 @@
 #include "rocksdb/file_system.h"
 #include "rocksdb/merge_operator.h"
 #include "rocksdb/options.h"
+#include "rocksdb/rate_limiter.h"
 #include "rocksdb/table.h"
 #include "rocksdb/utilities/object_registry.h"
 #include "rocksdb/utilities/options_type.h"
@@ -941,6 +946,78 @@ ImmutableOptions::ImmutableOptions(const ImmutableDBOptions& db_options,
                                    const ImmutableCFOptions& cf_options)
     : ImmutableDBOptions(db_options), ImmutableCFOptions(cf_options) {}
 
+void ImmutableCFOptions::Pack() {
+  // TODO: add Dump
+}
+void ImmutableCFOptions::UnPack() {
+  // TODO: add Parse
+}
+bool ImmutableCFOptions::is_shared() {
+  return singleton<SharedContainer>::Instance().find(
+      reinterpret_cast<void*>(this), sizeof(ImmutableCFOptions));
+}
+void ImmutableCFOptions::blockUnusedDataForTest() {}
+void ImmutableCFOptions::unblockUnusedDataForTest() {}
+
+void ImmutableOptions::Pack() {
+  assert(is_shared());
+  if (is_packaged_) {
+    LOG("ImmutableOptions is already packaged");
+    return;
+  }
+  ImmutableDBOptions::Pack();
+  ImmutableCFOptions::Pack();
+  is_packaged_ = true;
+}
+void ImmutableOptions::UnPack() {
+  assert(is_shared());
+  if (!is_packaged_) {
+    LOG("ImmutableOptions is already unpackaged");
+    return;
+  }
+  ImmutableDBOptions::UnPack();
+  ImmutableCFOptions::UnPack();
+  is_packaged_ = false;
+}
+bool ImmutableOptions::is_shared() const {
+  return singleton<SharedContainer>::Instance().find(
+      reinterpret_cast<void*>(const_cast<ImmutableOptions*>(this)),
+      sizeof(ImmutableOptions));
+}
+void ImmutableOptions::blockUnusedDataForTest() {
+  if (!temp_block_.empty()) return;
+  ImmutableDBOptions::blockUnusedDataForTest();
+  ImmutableCFOptions::blockUnusedDataForTest();
+  void* ptr = reinterpret_cast<void*>(env);
+  memset(reinterpret_cast<char*>(&env), 0x1, sizeof(Env*));
+  temp_block_.emplace_back(ptr, sizeof(Env*));
+
+  void* mem = malloc(sizeof(std::shared_ptr<RateLimiter>));
+  memcpy(mem, &rate_limiter, sizeof(std::shared_ptr<RateLimiter>));
+  memset(&rate_limiter, 0x1, sizeof(std::shared_ptr<RateLimiter>));
+  temp_block_.emplace_back(mem, sizeof(std::shared_ptr<RateLimiter>));
+
+  mem = malloc(sizeof(std::shared_ptr<SstFileManager>));
+  memcpy(mem, &sst_file_manager, sizeof(std::shared_ptr<SstFileManager>));
+  memset(&sst_file_manager, 0x1, sizeof(std::shared_ptr<SstFileManager>));
+  temp_block_.emplace_back(mem, sizeof(std::shared_ptr<SstFileManager>));
+}
+void ImmutableOptions::unblockUnusedDataForTest() {
+  if (temp_block_.empty()) return;
+  ImmutableDBOptions::unblockUnusedDataForTest();
+  ImmutableCFOptions::unblockUnusedDataForTest();
+  env = reinterpret_cast<Env*>(temp_block_[0].first);
+  memcpy(&rate_limiter, temp_block_[1].first,
+         sizeof(std::shared_ptr<RateLimiter>));
+  free(temp_block_[1].first);
+  memcpy(&sst_file_manager, temp_block_[2].first,
+         sizeof(std::shared_ptr<SstFileManager>));
+  free(temp_block_[2].first);
+
+  temp_block_.clear();
+}
+bool ImmutableOptions::CEHCKShared() { return true; }
+
 // Multiple two operands. If they overflow, return op1.
 uint64_t MultiplyCheckOverflow(uint64_t op1, double op2) {
   if (op1 == 0 || op2 <= 0) {
@@ -955,9 +1032,9 @@ uint64_t MultiplyCheckOverflow(uint64_t op1, double op2) {
 // when level_compaction_dynamic_level_bytes is true and leveled compaction
 // is used, the base level is not always L1, so precomupted max_file_size can
 // no longer be used. Recompute file_size_for_level from base level.
-uint64_t MaxFileSizeForLevel(const MutableCFOptions& cf_options,
-    int level, CompactionStyle compaction_style, int base_level,
-    bool level_compaction_dynamic_level_bytes) {
+uint64_t MaxFileSizeForLevel(const MutableCFOptions& cf_options, int level,
+                             CompactionStyle compaction_style, int base_level,
+                             bool level_compaction_dynamic_level_bytes) {
   if (!level_compaction_dynamic_level_bytes || level < base_level ||
       compaction_style != kCompactionStyleLevel) {
     assert(level >= 0);

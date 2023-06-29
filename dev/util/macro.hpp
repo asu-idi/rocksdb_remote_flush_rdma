@@ -31,7 +31,6 @@ class Singleton : public Noncopyable::Noncopyable {
   }
 };
 }  // namespace Singleton
-#define LOG(...)
-/*                                                 \
-// Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output( \
-   __FILE__, __LINE__, __FUNCTION__, __VA_ARGS__); */
+#define LOG(...)                                                     \
+  Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output( \
+      __FILE__, __LINE__, __FUNCTION__, __VA_ARGS__);

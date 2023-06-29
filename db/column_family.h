@@ -570,7 +570,8 @@ class ColumnFamilyData {
   IntTblPropCollectorFactories int_tbl_prop_collector_factories_;
 
   const ColumnFamilyOptions initial_cf_options_;
-  const ImmutableOptions ioptions_;
+  // const
+  ImmutableOptions ioptions_;
   MutableCFOptions mutable_cf_options_;
 
   const bool is_delete_range_supported_;
