@@ -51,6 +51,7 @@ class FlushJobTestBase : public testing::Test {
         shutting_down_(false),
         mock_table_factory_(new mock::MockTableFactory()) {
     options_.server_use_remote_flush = true;  // trigger remote flush
+    db_options_.worker_use_remote_flush = true;
   }
 
   virtual ~FlushJobTestBase() {

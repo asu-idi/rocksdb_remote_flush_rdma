@@ -2040,6 +2040,7 @@ class DBImpl : public DB {
   ColumnFamilyData* GetColumnFamilyDataByName(const std::string& cf_name);
 
   void MaybeScheduleFlushOrCompaction();
+  static void RemoteFlushListener();
 
   struct FlushRequest {
     FlushReason flush_reason;

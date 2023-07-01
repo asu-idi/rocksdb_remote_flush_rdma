@@ -8,6 +8,9 @@
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 #include <cassert>
 #include <cinttypes>
+#include <cstddef>
+#include <functional>
+#include <thread>
 
 #include "db/builder.h"
 #include "db/db_impl/db_impl.h"
@@ -1728,7 +1731,7 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
   DBOptions db_options(options);
   ColumnFamilyOptions cf_options(options);
   // note: server_use_remote_flush bind to cf_options
-  LOG("DB::Open check cf options remote_flush:",
+  LOG("DB::Open server remote_flush:",
       cf_options.server_use_remote_flush ? "true" : "false");
   std::vector<ColumnFamilyDescriptor> column_families;
   column_families.push_back(
@@ -1736,10 +1739,6 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
   if (db_options.persist_stats_to_disk) {
     column_families.push_back(
         ColumnFamilyDescriptor(kPersistentStatsColumnFamilyName, cf_options));
-  }
-  for (auto& column_family : column_families) {
-    LOG("CHECK:remote_flush:",
-        column_family.options.server_use_remote_flush ? "true" : "false");
   }
   std::vector<ColumnFamilyHandle*> handles;
   Status s = DB::Open(db_options, dbname, column_families, &handles, dbptr);
@@ -1958,9 +1957,9 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
   uint64_t recovered_seq(kMaxSequenceNumber);
   LOG("Call recover,check impl->column_families:");
   for (auto& cf : column_families) {
-    LOG("cf options:=", cf.options.server_use_remote_flush == true
-                            ? "remote_flush"
-                            : "remote flush not used");
+    LOG("cf options:=", cf.options.server_use_remote_flush
+                            ? "server remote_flush"
+                            : "server remote flush not used");
   }
   LOG("CHECK FINISH");
   s = impl->Recover(column_families, false /* read_only */,
@@ -2226,6 +2225,14 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
     delete impl;
     *dbptr = nullptr;
   }
+
+  if (db_options.worker_use_remote_flush) {
+    for (size_t thn = 0; thn < db_options.worker_use_remote_flush; ++thn) {
+      std::function<void()> func = &DBImpl::RemoteFlushListener;
+      std::thread(func).detach();
+    }
+  }
+
   return s;
 }
 }  // namespace ROCKSDB_NAMESPACE
