@@ -1393,6 +1393,8 @@ struct DBOptions {
   // of the contract leads to undefined behaviors with high possibility of data
   // inconsistency, e.g. deleted old data become visible again, etc.
   bool enforce_single_del_contracts = true;
+
+  size_t worker_use_remote_flush = 0;
 };
 
 // Options to control the behavior of a database (passed to DB::Open)

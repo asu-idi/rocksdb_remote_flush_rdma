@@ -112,6 +112,8 @@ struct ImmutableDBOptions {
   std::shared_ptr<CompactionService> compaction_service;
   bool enforce_single_del_contracts;
 
+  size_t worker_use_remote_flush = 0;
+
   const char* option_file_path = nullptr;
   bool is_pacakged = false;
 
