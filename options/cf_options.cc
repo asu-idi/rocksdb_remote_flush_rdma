@@ -984,10 +984,11 @@ bool ImmutableOptions::is_shared() const {
       reinterpret_cast<void*>(const_cast<ImmutableOptions*>(this)),
       sizeof(ImmutableOptions));
 }
-void ImmutableOptions::blockUnusedDataForTest() {
+void ImmutableOptions::blockUnusedDataForTest(const ColumnFamilyOptions& opts) {
   if (!temp_block_.empty()) return;
   ImmutableDBOptions::blockUnusedDataForTest();
-  ImmutableCFOptions::blockUnusedDataForTest();
+  // opts.blockUnusedDataForTest();
+
   // void* ptr = reinterpret_cast<void*>(env);
   // memset(reinterpret_cast<char*>(&env), 0x1, sizeof(Env*));
   // temp_block_.emplace_back(ptr, sizeof(Env*));
@@ -1004,8 +1005,9 @@ void ImmutableOptions::blockUnusedDataForTest() {
 }
 void ImmutableOptions::unblockUnusedDataForTest() {
   if (temp_block_.empty()) return;
-  ImmutableDBOptions::unblockUnusedDataForTest();
-  ImmutableCFOptions::unblockUnusedDataForTest();
+  // TODO:[MAIN]
+  // *this = (ImmutableDBOptions(), ColumnFamilyOptions());
+
   // env = reinterpret_cast<Env*>(temp_block_[0].first);
   // memcpy(&rate_limiter, temp_block_[1].first,
   //        sizeof(std::shared_ptr<RateLimiter>));

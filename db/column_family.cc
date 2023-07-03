@@ -766,7 +766,7 @@ bool ColumnFamilyData::CHECKShared() {
 }
 
 bool ColumnFamilyData::unblockUnusedDataForTest() {
-  if (temp_blocked_data_.size() != 8) {
+  if (temp_blocked_data_.size() != 12) {
     return false;
   }
   dummy_versions_ = reinterpret_cast<Version*>(temp_blocked_data_[0].first);
@@ -791,6 +791,19 @@ bool ColumnFamilyData::unblockUnusedDataForTest() {
   memcpy(reinterpret_cast<void*>(&column_family_set_),
          temp_blocked_data_[7].first, sizeof(ColumnFamilySet*));
   free(temp_blocked_data_[7].first);
+  memcpy(reinterpret_cast<void*>(&compaction_picker_),
+         temp_blocked_data_[8].first,
+         sizeof(std::unique_ptr<CompactionPicker>));
+  free(temp_blocked_data_[8].first);
+  memcpy(reinterpret_cast<void*>(&internal_stats_), temp_blocked_data_[9].first,
+         sizeof(std::unique_ptr<InternalStats>));
+  free(temp_blocked_data_[9].first);
+  memcpy(reinterpret_cast<void*>(&table_cache_), temp_blocked_data_[10].first,
+         sizeof(std::unique_ptr<TableCache>));
+  free(temp_blocked_data_[10].first);
+  memcpy(reinterpret_cast<void*>(&local_sv_), temp_blocked_data_[11].first,
+         sizeof(std::unique_ptr<ThreadLocalPtr>));
+  free(temp_blocked_data_[11].first);
 
   ioptions_.unblockUnusedDataForTest();
   assert(super_version_ == nullptr);
@@ -803,11 +816,27 @@ bool ColumnFamilyData::unblockUnusedDataForTest() {
 }
 
 // internal_comparator_ ; ioptions_ ; table_cache_ ; internal_stats_ ; imm_ ;
-// local_sv_ ; compaction_picker_ ;
+
+// table_cache_ option todo(currently not supported)
+// internal_stats_(currently not supported) could support this by record its
+// change(Add\AddCompactionStats\AddCFStats) later
+
+// ioptions_ TODO const, construct from default(db_options_,
+// initial_cf_options_) or try to support dump&parse(time consuming)
+// internal_comparator_ already support builtin
+// imm_ already supported
+
 bool ColumnFamilyData::blockUnusedDataForTest() {
   if (temp_blocked_data_.size() != 0) {
     return false;
   }
+  write_buffer_manager_ = reinterpret_cast<WriteBufferManager*>(0x1000);
+  mem_->blockUnusedDataForTest();
+  assert(super_version_ == nullptr);
+  assert(data_dirs_.size() == 0);  // TODO: maybe needed
+  assert(file_metadata_cache_res_mgr_ == nullptr);
+  ioptions_.blockUnusedDataForTest(initial_cf_options_);
+
   temp_blocked_data_.emplace_back(reinterpret_cast<void*>(dummy_versions_),
                                   sizeof(Version));
   dummy_versions_ = reinterpret_cast<Version*>(0x1000);
@@ -848,12 +877,6 @@ bool ColumnFamilyData::blockUnusedDataForTest() {
   temp_blocked_data_.emplace_back(blob_source_cp_,
                                   sizeof(std::unique_ptr<BlobSource>));
 
-  write_buffer_manager_ = reinterpret_cast<WriteBufferManager*>(0x1000);
-  mem_->blockUnusedDataForTest();
-  assert(super_version_ == nullptr);
-  assert(data_dirs_.size() == 0);  // TODO: maybe needed
-  assert(file_metadata_cache_res_mgr_ == nullptr);
-
   void* prev_cp_ = malloc(sizeof(ColumnFamilyData*));
   memcpy(prev_cp_, reinterpret_cast<void*>(&prev_), sizeof(ColumnFamilyData*));
   memset(reinterpret_cast<void*>(&prev_), 0x1, sizeof(ColumnFamilyData*));
@@ -870,7 +893,39 @@ bool ColumnFamilyData::blockUnusedDataForTest() {
          sizeof(ColumnFamilySet*));
   temp_blocked_data_.emplace_back(column_family_set_cp_,
                                   sizeof(ColumnFamilySet*));
-  ioptions_.blockUnusedDataForTest();
+  void* compaction_picker_cp_ =
+      malloc(sizeof(std::unique_ptr<CompactionPicker>));
+  memcpy(compaction_picker_cp_, reinterpret_cast<void*>(&compaction_picker_),
+         sizeof(std::unique_ptr<CompactionPicker>));
+  memset(reinterpret_cast<void*>(&compaction_picker_), 0x1,
+         sizeof(std::unique_ptr<CompactionPicker>));
+  temp_blocked_data_.emplace_back(compaction_picker_cp_,
+                                  sizeof(std::unique_ptr<CompactionPicker>));
+
+  void* internal_stats_cp_ = malloc(sizeof(std::unique_ptr<InternalStats>));
+  memcpy(internal_stats_cp_, reinterpret_cast<void*>(&internal_stats_),
+         sizeof(std::unique_ptr<InternalStats>));
+  memset(reinterpret_cast<void*>(&internal_stats_), 0x1,
+         sizeof(std::unique_ptr<InternalStats>));
+  temp_blocked_data_.emplace_back(internal_stats_cp_,
+                                  sizeof(std::unique_ptr<InternalStats>));
+
+  void* table_cache_cp_ = malloc(sizeof(std::unique_ptr<TableCache>));
+  memcpy(table_cache_cp_, reinterpret_cast<void*>(&table_cache_),
+         sizeof(std::unique_ptr<TableCache>));
+  memset(reinterpret_cast<void*>(&table_cache_), 0x1,
+         sizeof(std::unique_ptr<TableCache>));
+  temp_blocked_data_.emplace_back(table_cache_cp_,
+                                  sizeof(std::unique_ptr<TableCache>));
+
+  void* local_sv_cp_ = malloc(sizeof(std::unique_ptr<ThreadLocalPtr>));
+  memcpy(local_sv_cp_, reinterpret_cast<void*>(&local_sv_),
+         sizeof(std::unique_ptr<ThreadLocalPtr>));
+  memset(reinterpret_cast<void*>(&local_sv_), 0x1,
+         sizeof(std::unique_ptr<ThreadLocalPtr>));
+  temp_blocked_data_.emplace_back(local_sv_cp_,
+                                  sizeof(std::unique_ptr<ThreadLocalPtr>));
+
   return true;
 }
 
@@ -1450,6 +1505,7 @@ SuperVersion* ColumnFamilyData::GetReferencedSuperVersion(DBImpl* db) {
 }
 
 SuperVersion* ColumnFamilyData::GetThreadLocalSuperVersion(DBImpl* db) {
+  LOG("local_sv_ check: GetThreadLocalSuperVersion() %s", GetName().c_str());
   // The SuperVersion is cached in thread local storage to avoid
   // acquiring mutex when SuperVersion does not change since the last
   // use. When a new SuperVersion is installed, the compaction or flush
@@ -1500,6 +1556,7 @@ SuperVersion* ColumnFamilyData::GetThreadLocalSuperVersion(DBImpl* db) {
 }
 
 bool ColumnFamilyData::ReturnThreadLocalSuperVersion(SuperVersion* sv) {
+  LOG("local_sv_ check: ReturnThreadLocalSuperVersion() %s", GetName().c_str());
   assert(sv != nullptr);
   // Put the SuperVersion back
   void* expected = SuperVersion::kSVInUse;
@@ -1572,6 +1629,7 @@ void ColumnFamilyData::InstallSuperVersion(
 }
 
 void ColumnFamilyData::ResetThreadLocalSuperVersions() {
+  LOG("local_sv_ check: ResetThreadLocalSuperVersions() %s", GetName().c_str());
   autovector<void*> sv_ptrs;
   local_sv_->Scrape(&sv_ptrs, SuperVersion::kSVObsolete);
   for (auto ptr : sv_ptrs) {

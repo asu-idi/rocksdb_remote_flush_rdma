@@ -71,13 +71,10 @@ void VersionEditHandlerBase::Iterate(log::Reader& reader,
       }
     }
   }
-  LOG("DEBUG");
   if (!log_read_status->ok()) {
     s = *log_read_status;
   }
-  LOG("DEBUG");
   CheckIterationResult(reader, &s);
-  LOG("DEBUG");
   if (!s.ok()) {
     if (s.IsCorruption()) {
       // when we find a Corruption error, something is
