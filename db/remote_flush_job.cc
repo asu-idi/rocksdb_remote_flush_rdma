@@ -900,8 +900,8 @@ Status RemoteFlushJob::WriteLevel0Table() {
           cfd_->table_cache(), iter.get(), std::move(range_del_iters), &meta_,
           &blob_file_additions, existing_snapshots_,
           earliest_write_conflict_snapshot_, job_snapshot_seq,
-          mutable_cf_options_.paranoid_file_checks, cfd_->internal_stats(),
-          &io_s, BlobFileCreationReason::kFlush, seqno_to_time_mapping_,
+          mutable_cf_options_.paranoid_file_checks, nullptr, &io_s,
+          BlobFileCreationReason::kFlush, seqno_to_time_mapping_,
           job_context_->job_id, io_priority, &table_properties_, write_hint,
           full_history_ts_low, base_, &num_input_entries,
           &memtable_payload_bytes, &memtable_garbage_bytes);
@@ -980,11 +980,10 @@ Status RemoteFlushJob::WriteLevel0Table() {
 
   stats.num_output_files_blob = static_cast<int>(blobs.size());
 
-  // DEBUG: cfd_ : internal_stats() important
-  cfd_->internal_stats()->AddCompactionStats(0 /* level */, thread_pri_, stats);
-  cfd_->internal_stats()->AddCFStats(
-      InternalStats::BYTES_FLUSHED,
-      stats.bytes_written + stats.bytes_written_blob);
+  // cfd_->internal_stats()->AddCompactionStats(0 /* level */, thread_pri_,
+  // stats); cfd_->internal_stats()->AddCFStats(
+  //     InternalStats::BYTES_FLUSHED,
+  //     stats.bytes_written + stats.bytes_written_blob);
   LOG("Start call RecordFlushIOStats");
   RecordFlushIOStats();
 

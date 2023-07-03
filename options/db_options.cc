@@ -771,7 +771,7 @@ ImmutableDBOptions::ImmutableDBOptions(const DBOptions& options)
 }
 
 std::string generate_option_file_name() {
-  std::string ret = "/tmp/rocksdb_options_dir/OPTION-";
+  std::string ret = "/tmp/rocksdb_options_dir/ImmutableDBOptions-";
   for (int i = 0; i < 10; i++) {
     ret += std::to_string(rand() % 10);
   }
@@ -793,6 +793,8 @@ void ImmutableDBOptions::Pack() {
   Status ret = PersistRocksDBOptions(db_options, cf_names_, cf_opts_, file_name,
                                      fs.get());
   assert(ret.ok());
+  // auto* temp_logger = new Logger();
+  // this->Dump(temp_logger);
   is_pacakged = true;
 }
 void ImmutableDBOptions::UnPack() {

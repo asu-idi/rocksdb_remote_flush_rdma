@@ -113,7 +113,7 @@ struct ImmutableOptions : public ImmutableDBOptions, public ImmutableCFOptions {
   void Pack();
   void UnPack();
   bool is_shared() const;
-  void blockUnusedDataForTest();
+  void blockUnusedDataForTest(const ColumnFamilyOptions& cf_options);
   void unblockUnusedDataForTest();
   bool CEHCKShared();
   bool is_packaged_ = false;

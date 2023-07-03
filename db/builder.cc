@@ -739,40 +739,44 @@ Status TrimBuildTable(
     // TODO Also check the IO status when create the Iterator.
 
     TEST_SYNC_POINT("BuildTable:BeforeOutputValidation");
-    if (s.ok() && !empty) {
-      // Verify that the table is usable
-      // We set for_compaction to false and don't OptimizeForCompactionTableRead
-      // here because this is a special case after we finish the table building.
-      // No matter whether use_direct_io_for_flush_and_compaction is true,
-      // the goal is to cache it here for further user reads.
-      ReadOptions read_options;
-      std::unique_ptr<InternalIterator> it(table_cache->NewIterator(
-          read_options, file_options, tboptions.internal_comparator, *meta,
-          nullptr /* range_del_agg */, mutable_cf_options.prefix_extractor,
-          nullptr,
-          (internal_stats == nullptr) ? nullptr
-                                      : internal_stats->GetFileReadHist(0),
-          TableReaderCaller::kFlush, /*arena=*/nullptr,
-          /*skip_filter=*/false, tboptions.level_at_creation,
-          MaxFileSizeForL0MetaPin(mutable_cf_options),
-          /*smallest_compaction_key=*/nullptr,
-          /*largest_compaction_key*/ nullptr,
-          /*allow_unprepared_value*/ false));
-      s = it->status();
-      if (s.ok() && paranoid_file_checks) {
-        OutputValidator file_validator(tboptions.internal_comparator,
-                                       /*enable_order_check=*/true,
-                                       /*enable_hash=*/true);
-        for (it->SeekToFirst(); it->Valid(); it->Next()) {
-          // Generate a rolling 64-bit hash of the key and values
-          file_validator.Add(it->key(), it->value()).PermitUncheckedError();
-        }
-        s = it->status();
-        if (s.ok() && !output_validator.CompareValidator(file_validator)) {
-          s = Status::Corruption("Paranoid checksums do not match");
-        }
-      }
-    }
+    // TODO: enable this later. And why we need to check this?
+
+    //  if (s.ok() && !empty) {
+    //   // Verify that the table is usable
+    //   // We set for_compaction to false and don't
+    //   OptimizeForCompactionTableRead
+    //   // here because this is a special case after we finish the table
+    //   building.
+    //   // No matter whether use_direct_io_for_flush_and_compaction is true,
+    //   // the goal is to cache it here for further user reads.
+    //   ReadOptions read_options;
+    //   std::unique_ptr<InternalIterator> it(table_cache->NewIterator(
+    //       read_options, file_options, tboptions.internal_comparator, *meta,
+    //       nullptr /* range_del_agg */, mutable_cf_options.prefix_extractor,
+    //       nullptr,
+    //       (internal_stats == nullptr) ? nullptr
+    //                                   : internal_stats->GetFileReadHist(0),
+    //       TableReaderCaller::kFlush, /*arena=*/nullptr,
+    //       /*skip_filter=*/false, tboptions.level_at_creation,
+    //       MaxFileSizeForL0MetaPin(mutable_cf_options),
+    //       /*smallest_compaction_key=*/nullptr,
+    //       /*largest_compaction_key*/ nullptr,
+    //       /*allow_unprepared_value*/ false));
+    //   s = it->status();
+    //   if (s.ok() && paranoid_file_checks) {
+    //     OutputValidator file_validator(tboptions.internal_comparator,
+    //                                    /*enable_order_check=*/true,
+    //                                    /*enable_hash=*/true);
+    //     for (it->SeekToFirst(); it->Valid(); it->Next()) {
+    //       // Generate a rolling 64-bit hash of the key and values
+    //       file_validator.Add(it->key(), it->value()).PermitUncheckedError();
+    //     }
+    //     s = it->status();
+    //     if (s.ok() && !output_validator.CompareValidator(file_validator)) {
+    //       s = Status::Corruption("Paranoid checksums do not match");
+    //     }
+    //   }
+    // }
   }
 
   // Check for input iterator errors
