@@ -139,6 +139,8 @@ class RemoteFlushJob {
   const std::string db_session_id_;
   // truncate needed
   VersionSet* versions_;  // partly transfered
+  std::vector<std::pair<void*, size_t>> version_prefetech_;
+
   VersionEdit* edit_;
   Version* base_;
   // easy to shared
@@ -172,6 +174,8 @@ class RemoteFlushJob {
 
   // no need to shared
   InstrumentedMutex* db_mutex_;
+
+  std::vector<std::pair<void*, size_t>> block_;
 
  private:
 };

@@ -672,6 +672,147 @@ Status MemTableList::TryInstallMemtableFlushResults(
   return s;
 }
 
+// Status MemTableList::RemoteTryInstallMemtableFlushResults(
+//     ColumnFamilyData* cfd, const MutableCFOptions& mutable_cf_options,
+//     const autovector<MemTable*>& mems, LogsWithPrepTracker* prep_tracker,
+//     const std::vector<std::pair<void*, size_t>>& prefetch,
+//     InstrumentedMutex* mu, uint64_t file_number,
+//     autovector<MemTable*>* to_delete, FSDirectory* db_directory,
+//     LogBuffer* log_buffer,
+//     std::list<std::unique_ptr<FlushJobInfo>>* committed_flush_jobs_info,
+//     bool write_edits) {
+//   AutoThreadOperationStageUpdater stage_updater(
+//       ThreadStatus::STAGE_MEMTABLE_INSTALL_FLUSH_RESULTS);
+//   mu->AssertHeld();
+
+//   // Flush was successful
+//   // Record the status on the memtable object. Either this call or a call by
+//   a
+//   // concurrent flush thread will read the status and write it to manifest.
+//   for (size_t i = 0; i < mems.size(); ++i) {
+//     // All the edits are associated with the first memtable of this batch.
+//     assert(i == 0 || mems[i]->GetEdits()->NumEntries() == 0);
+
+//     mems[i]->flush_completed_ = true;
+//     mems[i]->file_number_ = file_number;
+//   }
+
+//   // if some other thread is already committing, then return
+//   Status s;
+//   if (commit_in_progress_) {
+//     TEST_SYNC_POINT("MemTableList::TryInstallMemtableFlushResults:InProgress");
+//     return s;
+//   }
+
+//   // Only a single thread can be executing this piece of code
+//   commit_in_progress_ = true;
+
+//   // Retry until all completed flushes are committed. New flushes can finish
+//   // while the current thread is writing manifest where mutex is released.
+//   while (s.ok()) {
+//     auto& memlist = current_->memlist_;
+//     // The back is the oldest; if flush_completed_ is not set to it, it means
+//     // that we were assigned a more recent memtable. The memtables' flushes
+//     // must be recorded in manifest in order. A concurrent flush thread, who
+//     // is assigned to flush the oldest memtable, will later wake up and does
+//     // all the pending writes to manifest, in order.
+//     if (memlist.empty() || !memlist.back()->flush_completed_) {
+//       break;
+//     }
+//     // scan all memtables from the earliest, and commit those
+//     // (in that order) that have finished flushing. Memtables
+//     // are always committed in the order that they were created.
+//     uint64_t batch_file_number = 0;
+//     size_t batch_count = 0;
+//     autovector<VersionEdit*> edit_list;
+//     autovector<MemTable*> memtables_to_flush;
+//     // enumerate from the last (earliest) element to see how many batch
+//     // finished
+//     for (auto it = memlist.rbegin(); it != memlist.rend(); ++it) {
+//       MemTable* m = *it;
+//       if (!m->flush_completed_) {
+//         break;
+//       }
+//       if (it == memlist.rbegin() || batch_file_number != m->file_number_) {
+//         batch_file_number = m->file_number_;
+//         edit_list.push_back(&m->edit_);
+//         memtables_to_flush.push_back(m);
+//         std::unique_ptr<FlushJobInfo> info = m->ReleaseFlushJobInfo();
+//         if (info != nullptr) {
+//           committed_flush_jobs_info->push_back(std::move(info));
+//         }
+//       }
+//       batch_count++;
+//     }
+
+//     // TODO(myabandeh): Not sure how batch_count could be 0 here.
+//     if (batch_count > 0) {
+//       uint64_t min_wal_number_to_keep = 0;
+//       assert(edit_list.size() > 0);
+//       if (*reinterpret_cast<bool*>(prefetch[0].first) ==
+//           true) {  // prefetch: vset->db_options()->allow_2pc
+//         // Note that if mempurge is successful, the edit_list will
+//         // not be applicable (contains info of new min_log number to keep,
+//         // and level 0 file path of SST file created during normal flush,
+//         // so both pieces of information are irrelevant after a successful
+//         // mempurge operation).
+//         min_wal_number_to_keep = PrecomputeMinLogNumberToKeep2PC(
+//             vset, *cfd, edit_list, memtables_to_flush, prep_tracker);
+
+//         // We piggyback the information of earliest log file to keep in the
+//         // manifest entry for the last file flushed.
+//       } else {
+//         min_wal_number_to_keep =
+//             PrecomputeMinLogNumberToKeepNon2PC(vset, *cfd, edit_list);
+//       }
+
+//       VersionEdit wal_deletion;
+//       wal_deletion.SetMinLogNumberToKeep(min_wal_number_to_keep);
+//       if (*(reinterpret_cast<bool*>(prefetch[1].first))) {
+//         if (min_wal_number_to_keep >
+//             vset->GetWalSet().GetMinWalNumberToKeep()) {
+//           wal_deletion.DeleteWalsBefore(min_wal_number_to_keep);
+//         }
+//         TEST_SYNC_POINT_CALLBACK(
+//             "MemTableList::TryInstallMemtableFlushResults:"
+//             "AfterComputeMinWalToKeep",
+//             nullptr);
+//       }
+//       edit_list.push_back(&wal_deletion);
+
+//       const auto manifest_write_cb = [this, cfd, batch_count, log_buffer,
+//                                       to_delete, mu](const Status& status) {
+//         RemoveMemTablesOrRestoreFlags(status, cfd, batch_count, log_buffer,
+//                                       to_delete, mu);
+//       };
+//       if (write_edits) {
+//         // this can release and reacquire the mutex.
+//         s = vset->LogAndApply(cfd, mutable_cf_options, edit_list, mu,
+//                               db_directory, /*new_descriptor_log=*/false,
+//                               /*column_family_options=*/nullptr,
+//                               manifest_write_cb);
+//       } else {
+//         // If write_edit is false (e.g: successful mempurge),
+//         // then remove old memtables, wake up manifest write queue threads,
+//         // and don't commit anything to the manifest file.
+//         RemoveMemTablesOrRestoreFlags(s, cfd, batch_count, log_buffer,
+//                                       to_delete, mu);
+//         // Note: cfd->SetLogNumber is only called when a VersionEdit
+//         // is written to MANIFEST. When mempurge is succesful, we skip
+//         // this step, therefore cfd->GetLogNumber is always is
+//         // earliest log with data unflushed.
+//         // Notify new head of manifest write queue.
+//         // wake up all the waiting writers
+//         // TODO(bjlemaire): explain full reason WakeUpWaitingManifestWriters
+//         // needed or investigate more.
+//         vset->WakeUpWaitingManifestWriters();
+//       }
+//     }
+//   }
+//   commit_in_progress_ = false;
+//   return s;
+// }
+
 // New memtables are inserted at the front of the list.
 void MemTableList::Add(MemTable* m, autovector<MemTable*>* to_delete) {
   assert(static_cast<int>(current_->memlist_.size()) >= num_flush_not_started_);

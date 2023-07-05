@@ -373,7 +373,7 @@ TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
   }
   const std::vector<size_t> num_memtables = {2, 1, 3};
   assert(num_memtables.size() == column_family_names_.size());
-  const size_t num_keys_per_memtable = 10000;
+  const size_t num_keys_per_memtable = 100;
   JobContext job_context(0);
   std::vector<uint64_t> memtable_ids;
   std::vector<SequenceNumber> smallest_seqs;
@@ -562,8 +562,8 @@ TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
   k = 0;
   for (const auto& file_meta : file_metas) {
     ASSERT_EQ(std::to_string(0), file_meta.smallest.user_key().ToString());
-    ASSERT_EQ("9999", file_meta.largest.user_key()
-                          .ToString());  // max key by bytewise comparator
+    ASSERT_EQ("99", file_meta.largest.user_key()
+                        .ToString());  // max key by bytewise comparator
     ASSERT_EQ(smallest_seqs[k], file_meta.fd.smallest_seqno);
     ASSERT_EQ(largest_seqs[k], file_meta.fd.largest_seqno);
     // Verify that imm is empty

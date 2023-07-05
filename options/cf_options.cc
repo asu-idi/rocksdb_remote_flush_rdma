@@ -1097,7 +1097,6 @@ void ImmutableOptions::blockUnusedDataForTest(const ColumnFamilyOptions& opts) {
 }
 void ImmutableOptions::unblockUnusedDataForTest() {
   if (temp_block_.empty()) return;
-  // TODO:[MAIN]
   // *this = (ImmutableDBOptions(), ColumnFamilyOptions());
 
   // env = reinterpret_cast<Env*>(temp_block_[0].first);
