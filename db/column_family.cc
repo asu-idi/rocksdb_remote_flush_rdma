@@ -766,46 +766,46 @@ bool ColumnFamilyData::CHECKShared() {
 }
 
 bool ColumnFamilyData::unblockUnusedDataForTest() {
-  if (temp_blocked_data_.size() != 12) {
+  if (temp_blocked_data_.size() != 11) {
     return false;
   }
   dummy_versions_ = reinterpret_cast<Version*>(temp_blocked_data_[0].first);
   current_ = reinterpret_cast<Version*>(temp_blocked_data_[1].first);
-  memcpy(reinterpret_cast<void*>(
-             const_cast<ColumnFamilyOptions*>(&initial_cf_options_)),
-         temp_blocked_data_[2].first, sizeof(ColumnFamilyOptions));
-  free(temp_blocked_data_[2].first);
+  // memcpy(reinterpret_cast<void*>(
+  //            const_cast<ColumnFamilyOptions*>(&initial_cf_options_)),
+  //        temp_blocked_data_[2].first, sizeof(ColumnFamilyOptions));
+  // free(temp_blocked_data_[2].first);
   memcpy(reinterpret_cast<void*>(&blob_file_cache_),
-         temp_blocked_data_[3].first, sizeof(std::unique_ptr<BlobFileCache>));
-  free(temp_blocked_data_[3].first);
+         temp_blocked_data_[2].first, sizeof(std::unique_ptr<BlobFileCache>));
+  free(temp_blocked_data_[2].first);
 
-  memcpy(reinterpret_cast<void*>(&blob_source_), temp_blocked_data_[4].first,
+  memcpy(reinterpret_cast<void*>(&blob_source_), temp_blocked_data_[3].first,
          sizeof(std::unique_ptr<BlobSource>));
+  free(temp_blocked_data_[3].first);
+  memcpy(reinterpret_cast<void*>(&prev_), temp_blocked_data_[4].first,
+         sizeof(ColumnFamilyData*));
   free(temp_blocked_data_[4].first);
-  memcpy(reinterpret_cast<void*>(&prev_), temp_blocked_data_[5].first,
+  memcpy(reinterpret_cast<void*>(&next_), temp_blocked_data_[5].first,
          sizeof(ColumnFamilyData*));
   free(temp_blocked_data_[5].first);
-  memcpy(reinterpret_cast<void*>(&next_), temp_blocked_data_[6].first,
-         sizeof(ColumnFamilyData*));
-  free(temp_blocked_data_[6].first);
   memcpy(reinterpret_cast<void*>(&column_family_set_),
-         temp_blocked_data_[7].first, sizeof(ColumnFamilySet*));
-  free(temp_blocked_data_[7].first);
+         temp_blocked_data_[6].first, sizeof(ColumnFamilySet*));
+  free(temp_blocked_data_[6].first);
   memcpy(reinterpret_cast<void*>(&compaction_picker_),
-         temp_blocked_data_[8].first,
+         temp_blocked_data_[7].first,
          sizeof(std::unique_ptr<CompactionPicker>));
-  free(temp_blocked_data_[8].first);
-  memcpy(reinterpret_cast<void*>(&internal_stats_), temp_blocked_data_[9].first,
+  free(temp_blocked_data_[7].first);
+  memcpy(reinterpret_cast<void*>(&internal_stats_), temp_blocked_data_[8].first,
          sizeof(std::unique_ptr<InternalStats>));
-  free(temp_blocked_data_[9].first);
-  memcpy(reinterpret_cast<void*>(&table_cache_), temp_blocked_data_[10].first,
+  free(temp_blocked_data_[8].first);
+  memcpy(reinterpret_cast<void*>(&table_cache_), temp_blocked_data_[9].first,
          sizeof(std::unique_ptr<TableCache>));
-  free(temp_blocked_data_[10].first);
-  memcpy(reinterpret_cast<void*>(&local_sv_), temp_blocked_data_[11].first,
+  free(temp_blocked_data_[9].first);
+  memcpy(reinterpret_cast<void*>(&local_sv_), temp_blocked_data_[10].first,
          sizeof(std::unique_ptr<ThreadLocalPtr>));
-  free(temp_blocked_data_[11].first);
+  free(temp_blocked_data_[10].first);
 
-  ioptions_.unblockUnusedDataForTest();
+  // ioptions_.unblockUnusedDataForTest();
   assert(super_version_ == nullptr);
   assert(write_controller_token_ == nullptr);
   assert(data_dirs_.size() == 0);
@@ -835,7 +835,7 @@ bool ColumnFamilyData::blockUnusedDataForTest() {
   assert(super_version_ == nullptr);
   assert(data_dirs_.size() == 0);  // TODO: maybe needed
   assert(file_metadata_cache_res_mgr_ == nullptr);
-  ioptions_.blockUnusedDataForTest(initial_cf_options_);
+  // ioptions_.blockUnusedDataForTest(initial_cf_options_);
 
   temp_blocked_data_.emplace_back(reinterpret_cast<void*>(dummy_versions_),
                                   sizeof(Version));
@@ -846,20 +846,20 @@ bool ColumnFamilyData::blockUnusedDataForTest() {
   memset(reinterpret_cast<void*>(&int_tbl_prop_collector_factories_), 0x0,
          sizeof(std::vector<std::unique_ptr<IntTblPropCollectorFactory>>));
   //*******************************
-  void* initial_cf_options_cp_ = malloc(sizeof(ColumnFamilyOptions));
-  memcpy(initial_cf_options_cp_,
-         reinterpret_cast<void*>(
-             const_cast<ColumnFamilyOptions*>(&initial_cf_options_)),
-         sizeof(ColumnFamilyOptions));
-  memset(reinterpret_cast<void*>(
-             const_cast<ColumnFamilyOptions*>(&initial_cf_options_)),
-         0x0, sizeof(ColumnFamilyOptions));
-  temp_blocked_data_.emplace_back(initial_cf_options_cp_,
-                                  sizeof(ColumnFamilyOptions));
+  // void* initial_cf_options_cp_ = malloc(sizeof(ColumnFamilyOptions));
+  // memcpy(initial_cf_options_cp_,
+  //        reinterpret_cast<void*>(
+  //            const_cast<ColumnFamilyOptions*>(&initial_cf_options_)),
+  //        sizeof(ColumnFamilyOptions));
+  // memset(reinterpret_cast<void*>(
+  //            const_cast<ColumnFamilyOptions*>(&initial_cf_options_)),
+  //        0x1, sizeof(ColumnFamilyOptions));
+  // temp_blocked_data_.emplace_back(initial_cf_options_cp_,
+  //                                 sizeof(ColumnFamilyOptions));
   //*******************************
   memset(reinterpret_cast<void*>(
              const_cast<MutableCFOptions*>(&mutable_cf_options_)),
-         0x0, sizeof(MutableCFOptions));
+         0x1, sizeof(MutableCFOptions));
 
   void* blob_file_cache_cp_ = malloc(sizeof(std::unique_ptr<BlobFileCache>));
   memcpy(blob_file_cache_cp_, reinterpret_cast<void*>(&blob_file_cache_),
@@ -939,7 +939,7 @@ void ColumnFamilyData::Pack() {
   }
   // TODO:[MAIN]
   internal_comparator_.Pack();
-  ioptions_.Pack();
+  ioptions_.Pack(const_cast<ColumnFamilyOptions&>(initial_cf_options_));
   is_packaged_ = true;
 }
 void ColumnFamilyData::UnPack() {
@@ -949,7 +949,7 @@ void ColumnFamilyData::UnPack() {
     return;
   }
   internal_comparator_.UnPack();
-  ioptions_.UnPack();
+  ioptions_.UnPack(const_cast<ColumnFamilyOptions&>(initial_cf_options_));
   is_packaged_ = false;
 }
 

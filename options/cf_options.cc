@@ -7,6 +7,7 @@
 
 #include <cassert>
 #include <cinttypes>
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <iterator>
@@ -33,6 +34,7 @@
 #include "rocksdb/table.h"
 #include "rocksdb/utilities/object_registry.h"
 #include "rocksdb/utilities/options_type.h"
+#include "table/mock_table.h"
 #include "util/cast_util.h"
 
 // NOTE: in this file, many option flags that were deprecated
@@ -959,24 +961,114 @@ bool ImmutableCFOptions::is_shared() {
 void ImmutableCFOptions::blockUnusedDataForTest() {}
 void ImmutableCFOptions::unblockUnusedDataForTest() {}
 
-void ImmutableOptions::Pack() {
+void ImmutableOptions::Pack(ColumnFamilyOptions& cf_options) {
   assert(is_shared());
   if (is_packaged_) {
     LOG("ImmutableOptions is already packaged");
     return;
   }
-  ImmutableDBOptions::Pack();
-  ImmutableCFOptions::Pack();
+  dumped_db_options_ = ImmutableDBOptions::Pack();
+  dumped_cf_options_ = cf_options.Pack(fs);
+  for (auto& path : cf_options.cf_paths) {
+    void* path_name = malloc(path.path.length());
+    memcpy(path_name, path.path.c_str(), path.path.length());
+    void* path_target_size = malloc(sizeof(path.target_size));
+    memcpy(path_target_size, &path.target_size, sizeof(path.target_size));
+    options_db_path_.emplace_back(path_name, path.path.length());
+    options_db_path_.emplace_back(path_target_size, sizeof(path.target_size));
+  }
   is_packaged_ = true;
 }
-void ImmutableOptions::UnPack() {
+void ImmutableOptions::UnPack(ColumnFamilyOptions& cf_options) {
   assert(is_shared());
   if (!is_packaged_) {
     LOG("ImmutableOptions is already unpackaged");
     return;
   }
-  ImmutableDBOptions::UnPack();
-  ImmutableCFOptions::UnPack();
+
+  ImmutableDBOptions immutable_db_options =
+      *this->ImmutableDBOptions::UnPack(dumped_db_options_);
+  ColumnFamilyOptions unpack_cf_options =
+      *cf_options.Unpack(dumped_cf_options_);
+  for (size_t i = 0; i < options_db_path_.size(); i += 2) {
+    std::string name = reinterpret_cast<char*>(options_db_path_[i].first);
+    auto target_size =
+        *reinterpret_cast<uint64_t*>(options_db_path_[i + 1].first);
+    unpack_cf_options.cf_paths.emplace_back(name, target_size);
+  }
+  ImmutableOptions ret(immutable_db_options, unpack_cf_options);
+  *this = ret;
+  table_factory.reset(new mock::MockTableFactory());
+  options_db_path_.clear();
+  dumped_cf_options_ = nullptr;
+  dumped_db_options_ = nullptr;
+  {
+    LOG("we check the unpacked options");
+    if (unpack_cf_options.sst_partitioner_factory != nullptr) {
+      LOG("sst_partitioner_factory",
+          unpack_cf_options.sst_partitioner_factory->Name(), ' ',
+          unpack_cf_options.sst_partitioner_factory.get()->GetId());
+    }
+    if (unpack_cf_options.blob_cache != nullptr) {
+      LOG("blob_cache", unpack_cf_options.blob_cache->Name(), ' ',
+          unpack_cf_options.blob_cache->GetPrintableOptions());
+    }
+    if (unpack_cf_options.memtable_factory != nullptr) {
+      LOG("memtable_factory", unpack_cf_options.memtable_factory->Name(), ' ',
+          unpack_cf_options.memtable_factory.get()->GetId());
+    }
+    if (unpack_cf_options.table_factory != nullptr) {
+      LOG("table_factory", unpack_cf_options.table_factory->Name(), ' ',
+          unpack_cf_options.table_factory.get()->GetId());
+    }
+    if (unpack_cf_options.compaction_filter_factory != nullptr) {
+      LOG("compaction_filter_factory",
+          unpack_cf_options.compaction_filter_factory->Name(), ' ',
+          unpack_cf_options.compaction_filter_factory.get()->GetId());
+    }
+    if (unpack_cf_options.compaction_thread_limiter != nullptr) {
+      LOG("compaction_thread_limiter",
+          unpack_cf_options.compaction_thread_limiter->GetName(), ' ',
+          unpack_cf_options.compaction_thread_limiter.get()
+              ->GetOutstandingTask());
+    }
+    if (!unpack_cf_options.cf_paths.empty()) {
+      for (auto& path : unpack_cf_options.cf_paths) {
+        LOG("cf_paths", path.path, ' ', path.target_size);
+      }
+    }
+    if (unpack_cf_options.prefix_extractor != nullptr) {
+      LOG("prefix_extractor", unpack_cf_options.prefix_extractor->Name(), ' ',
+          unpack_cf_options.prefix_extractor.get()->GetId());
+    }
+    if (unpack_cf_options.compaction_filter != nullptr) {
+      LOG("compaction_filter", unpack_cf_options.compaction_filter->Name(), ' ',
+          unpack_cf_options.compaction_filter->GetId());
+    }
+    if (unpack_cf_options.merge_operator != nullptr) {
+      LOG("merge_operator", unpack_cf_options.merge_operator->Name(), ' ',
+          unpack_cf_options.merge_operator->GetId());
+    }
+    if (unpack_cf_options.comparator != nullptr) {
+      LOG("comparator", unpack_cf_options.comparator->Name(), ' ',
+          unpack_cf_options.comparator->GetId());
+    }
+    LOG(unpack_cf_options.disable_auto_compactions, ' ',
+        unpack_cf_options.max_bytes_for_level_base, ' ',
+        unpack_cf_options.snap_refresh_nanos, ' ',
+        unpack_cf_options.level0_file_num_compaction_trigger, ' ',
+        unpack_cf_options.compression, ' ', unpack_cf_options.write_buffer_size,
+        ' ');
+    LOG("compressOpts:", unpack_cf_options.compression_opts.level, ' ',
+        unpack_cf_options.compression_opts.enabled, ' ',
+        unpack_cf_options.compression_opts.max_dict_buffer_bytes, ' ');
+    LOG("bottommost_compression_opts:",
+        unpack_cf_options.bottommost_compression_opts.level, ' ',
+        unpack_cf_options.bottommost_compression_opts.enabled, ' ',
+        unpack_cf_options.bottommost_compression_opts.max_dict_buffer_bytes,
+        ' ');
+    LOG("we check the unpacked options end");
+  }
   is_packaged_ = false;
 }
 bool ImmutableOptions::is_shared() const {

@@ -1,6 +1,8 @@
 #pragma once
+#include <cstdarg>
 #include <fstream>
 #include <ios>
+#include <string>
 
 #include "rocksdb/env.h"
 
@@ -17,6 +19,7 @@ class OptionLogger : public Logger {
     char buffer[1000];
     vsnprintf(buffer, sizeof(buffer), format, ap);
     string_.append(buffer);
+    string_.append("\n");
   }
   std::string string() const { return string_; }
   void clear() { string_.clear(); }
