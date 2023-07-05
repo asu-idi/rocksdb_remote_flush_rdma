@@ -434,17 +434,6 @@ TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
       std::chrono::duration_cast<std::chrono::microseconds>(pick_time -
                                                             start_time)
           .count());
-  LOG("Start block unused data");
-  for (auto& job : flush_jobs) {
-    job->blockUnusedDataForTest();
-  }
-  std::chrono::time_point<std::chrono::steady_clock> block_time =
-      std::chrono::steady_clock::now();
-  Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output(
-      __FILE__, __LINE__, "[TIME]block time:",
-      std::chrono::duration_cast<std::chrono::microseconds>(block_time -
-                                                            pick_time)
-          .count());
   LOG("Start pack");
   for (auto& job : flush_jobs) {
     job->Pack();
@@ -454,7 +443,18 @@ TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
   Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output(
       __FILE__, __LINE__, "[TIME]pack time: %ld",
       std::chrono::duration_cast<std::chrono::microseconds>(pack_time -
-                                                            block_time)
+                                                            pick_time)
+          .count());
+  LOG("Start block unused data");
+  for (auto& job : flush_jobs) {
+    job->blockUnusedDataForTest();
+  }
+  std::chrono::time_point<std::chrono::steady_clock> block_time =
+      std::chrono::steady_clock::now();
+  Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output(
+      __FILE__, __LINE__, "[TIME]block time:",
+      std::chrono::duration_cast<std::chrono::microseconds>(block_time -
+                                                            pack_time)
           .count());
   LOG("finish block unused data, Start check shared");
   for (auto& job : flush_jobs) {

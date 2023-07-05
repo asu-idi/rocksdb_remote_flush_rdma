@@ -110,13 +110,17 @@ struct ImmutableOptions : public ImmutableDBOptions, public ImmutableCFOptions {
   ImmutableOptions(const ImmutableDBOptions& db_options,
                    const ColumnFamilyOptions& cf_options);
 
-  void Pack();
-  void UnPack();
+  void Pack(ColumnFamilyOptions& cf_options);
+  void UnPack(ColumnFamilyOptions& cf_options);
   bool is_shared() const;
   void blockUnusedDataForTest(const ColumnFamilyOptions& cf_options);
   void unblockUnusedDataForTest();
   bool CEHCKShared();
   bool is_packaged_ = false;
+  void* dumped_cf_options_ = nullptr;
+  void* dumped_db_options_ = nullptr;
+  std::vector<std::pair<void*, size_t>> options_db_path_;
+
   std::vector<std::pair<void*, size_t>> temp_block_;
 };
 

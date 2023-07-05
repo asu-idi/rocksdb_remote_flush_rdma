@@ -20,8 +20,8 @@ struct ImmutableDBOptions {
 
   void Dump(Logger* log) const;
 
-  void Pack();
-  void UnPack();
+  void* Pack();
+  ImmutableDBOptions* UnPack(void* dumped_file);
   bool is_shared();
   void blockUnusedDataForTest();
   void unblockUnusedDataForTest();
@@ -114,7 +114,7 @@ struct ImmutableDBOptions {
 
   size_t worker_use_remote_flush = 0;
 
-  const char* option_file_path = nullptr;
+  void* option_file_path = nullptr;
   bool is_pacakged = false;
 
   bool IsWalDirSameAsDBPath() const;

@@ -205,16 +205,16 @@ Status RemoteFlushJob::RunRemote(LogsWithPrepTracker* prep_tracker,
 }
 
 void RemoteFlushJob::Pack() {
+  cfd_->Pack();
   for (auto memtable : mems_) {
     memtable->Pack();
   }
-  cfd_->Pack();
 }
 void RemoteFlushJob::UnPack() {
+  cfd_->UnPack();
   for (auto memtable : mems_) {
     memtable->UnPack();
   }
-  cfd_->UnPack();
 }
 
 void RemoteFlushJob::PickMemTable() {
