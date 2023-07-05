@@ -13,8 +13,11 @@
 #include <array>
 #include <cinttypes>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <list>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -39,8 +42,12 @@
 #include "db/table_cache.h"
 #include "db/version_builder.h"
 #include "db/version_edit_handler.h"
+#include "rocksdb/file_system.h"
 #include "rocksdb/options.h"
+#include "rocksdb/statistics.h"
+#include "rocksdb/system_clock.h"
 #include "table/compaction_merging_iterator.h"
+#include "trace_replay/io_tracer.h"
 
 #if USE_COROUTINES
 #include "folly/experimental/coro/BlockingWait.h"
@@ -1528,6 +1535,154 @@ void LevelIterator::InitFileIterator(size_t new_file_index) {
   }
 }
 }  // anonymous namespace
+
+void Version::Pack() {
+  if (is_packaged_) return;
+  is_packaged_ = true;
+}
+
+void Version::UnPack() {
+  if (!is_packaged_) return;
+  is_packaged_ = false;
+}
+
+void Version::blockUnusedDataForTest() {
+  LOG("blockUnusedDataForTest");
+  void* mem = malloc(sizeof(Logger*));
+  memcpy(mem, reinterpret_cast<void*>(&info_log_), sizeof(Logger*));
+  memset(reinterpret_cast<void*>(&info_log_), 0x1, sizeof(Logger*));
+  block_.emplace_back(mem, sizeof(Logger*));
+
+  mem = malloc(sizeof(Env*));
+  memcpy(mem, reinterpret_cast<void*>(&env_), sizeof(Env*));
+  memset(reinterpret_cast<void*>(&env_), 0x1, sizeof(Env*));
+  block_.emplace_back(mem, sizeof(Env*));
+
+  mem = malloc(sizeof(SystemClock*));
+  memcpy(mem, reinterpret_cast<void*>(&clock_), sizeof(SystemClock*));
+  memset(reinterpret_cast<void*>(&clock_), 0x1, sizeof(SystemClock*));
+  block_.emplace_back(mem, sizeof(SystemClock*));
+
+  mem = malloc(sizeof(ColumnFamilyData*));
+  memcpy(mem, reinterpret_cast<void*>(&cfd_), sizeof(ColumnFamilyData*));
+  memset(reinterpret_cast<void*>(&cfd_), 0x1, sizeof(ColumnFamilyData*));
+  block_.emplace_back(mem, sizeof(ColumnFamilyData*));
+
+  mem = malloc(sizeof(Statistics*));
+  memcpy(mem, reinterpret_cast<void*>(&db_statistics_), sizeof(Statistics*));
+  memset(reinterpret_cast<void*>(&db_statistics_), 0x1, sizeof(Statistics*));
+  block_.emplace_back(mem, sizeof(Statistics*));
+  mem = malloc(sizeof(TableCache*));
+  memcpy(mem, reinterpret_cast<void*>(&table_cache_), sizeof(TableCache*));
+  memset(reinterpret_cast<void*>(&table_cache_), 0x1, sizeof(TableCache*));
+  block_.emplace_back(mem, sizeof(TableCache*));
+
+  mem = malloc(sizeof(BlobSource*));
+  memcpy(mem, reinterpret_cast<void*>(&blob_source_), sizeof(BlobSource*));
+  memset(reinterpret_cast<void*>(&blob_source_), 0x1, sizeof(BlobSource*));
+  block_.emplace_back(mem, sizeof(BlobSource*));
+
+  mem = malloc(sizeof(MergeOperator*));
+  memcpy(mem, reinterpret_cast<void*>(&merge_operator_),
+         sizeof(MergeOperator*));
+  memset(reinterpret_cast<void*>(&merge_operator_), 0x1,
+         sizeof(MergeOperator*));
+  block_.emplace_back(mem, sizeof(MergeOperator*));
+
+  mem = malloc(sizeof(VersionStorageInfo));
+  memcpy(mem, reinterpret_cast<void*>(&storage_info_),
+         sizeof(VersionStorageInfo));
+  memset(reinterpret_cast<void*>(&storage_info_), 0x1,
+         sizeof(VersionStorageInfo));
+  block_.emplace_back(mem, sizeof(VersionStorageInfo));
+
+  mem = malloc(sizeof(VersionSet*));
+  memcpy(mem, reinterpret_cast<void*>(&vset_), sizeof(VersionSet*));
+  memset(reinterpret_cast<void*>(&vset_), 0x1, sizeof(VersionSet*));
+  block_.emplace_back(mem, sizeof(VersionSet*));
+
+  mem = malloc(sizeof(Version*));
+  memcpy(mem, reinterpret_cast<void*>(&prev_), sizeof(Version*));
+  memset(reinterpret_cast<void*>(&prev_), 0x1, sizeof(Version*));
+  block_.emplace_back(mem, sizeof(Version*));
+
+  mem = malloc(sizeof(Version*));
+  memcpy(mem, reinterpret_cast<void*>(&next_), sizeof(Version*));
+  memset(reinterpret_cast<void*>(&next_), 0x1, sizeof(Version*));
+  block_.emplace_back(mem, sizeof(Version*));
+
+  mem = malloc(sizeof(FileOptions));
+  memcpy(mem, reinterpret_cast<void*>(const_cast<FileOptions*>(&file_options_)),
+         sizeof(FileOptions));
+  memset(reinterpret_cast<void*>(const_cast<FileOptions*>(&file_options_)), 0x1,
+         sizeof(FileOptions));
+  block_.emplace_back(mem, sizeof(FileOptions));
+
+  mem = malloc(sizeof(MutableCFOptions));
+  memcpy(mem,
+         reinterpret_cast<void*>(
+             const_cast<MutableCFOptions*>(&mutable_cf_options_)),
+         sizeof(MutableCFOptions));
+  memset(reinterpret_cast<void*>(
+             const_cast<MutableCFOptions*>(&mutable_cf_options_)),
+         0x1, sizeof(MutableCFOptions));
+  block_.emplace_back(mem, sizeof(MutableCFOptions));
+
+  mem = malloc(sizeof(std::shared_ptr<IOTracer>));
+  memcpy(mem, reinterpret_cast<void*>(&io_tracer_),
+         sizeof(std::shared_ptr<IOTracer>));
+  memset(reinterpret_cast<void*>(&io_tracer_), 0x1,
+         sizeof(std::shared_ptr<IOTracer>));
+  block_.emplace_back(mem, sizeof(std::shared_ptr<IOTracer>));
+}
+void Version::unblockUnusedDataForTest() {
+  LOG("unblockUnusedDataForTest");
+  memcpy(reinterpret_cast<void*>(&info_log_), block_[0].first,
+         block_[0].second);
+  free(block_[0].first);
+  memcpy(reinterpret_cast<void*>(&env_), block_[1].first, block_[1].second);
+  free(block_[1].first);
+  memcpy(reinterpret_cast<void*>(&clock_), block_[2].first, block_[2].second);
+  free(block_[2].first);
+  memcpy(reinterpret_cast<void*>(&cfd_), block_[3].first, block_[3].second);
+  free(block_[3].first);
+  memcpy(reinterpret_cast<void*>(&db_statistics_), block_[4].first,
+         block_[4].second);
+  free(block_[4].first);
+  memcpy(reinterpret_cast<void*>(&table_cache_), block_[5].first,
+         block_[5].second);
+  free(block_[5].first);
+  memcpy(reinterpret_cast<void*>(&blob_source_), block_[6].first,
+         block_[6].second);
+  free(block_[6].first);
+  memcpy(reinterpret_cast<void*>(&merge_operator_), block_[7].first,
+         block_[7].second);
+  free(block_[7].first);
+  memcpy(reinterpret_cast<void*>(&storage_info_), block_[8].first,
+         block_[8].second);
+  free(block_[8].first);
+  memcpy(reinterpret_cast<void*>(&vset_), block_[9].first, block_[9].second);
+  free(block_[9].first);
+  memcpy(reinterpret_cast<void*>(&prev_), block_[10].first, block_[10].second);
+  free(block_[10].first);
+  memcpy(reinterpret_cast<void*>(&next_), block_[11].first, block_[11].second);
+  free(block_[11].first);
+  memcpy(reinterpret_cast<void*>(const_cast<FileOptions*>(&file_options_)),
+         block_[12].first, block_[12].second);
+  free(block_[12].first);
+
+  memcpy(reinterpret_cast<void*>(
+             const_cast<MutableCFOptions*>(&mutable_cf_options_)),
+         block_[13].first, block_[13].second);
+  free(block_[13].first);
+  memcpy(reinterpret_cast<void*>(&io_tracer_), block_[14].first,
+         block_[14].second);
+  free(block_[14].first);
+  block_.clear();
+  LOG("unblockUnusedDataForTest");
+}
+
+bool Version::is_shared() { return true; }
 
 Status Version::GetTableProperties(std::shared_ptr<const TableProperties>* tp,
                                    const FileMetaData* file_meta,

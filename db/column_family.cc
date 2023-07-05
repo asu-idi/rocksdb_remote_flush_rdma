@@ -937,7 +937,6 @@ void ColumnFamilyData::Pack() {
     LOG("ColumnFamilyData is already packaged");
     return;
   }
-  // TODO:[MAIN]
   internal_comparator_.Pack();
   ioptions_.Pack(const_cast<ColumnFamilyOptions&>(initial_cf_options_));
   is_packaged_ = true;

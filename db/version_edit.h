@@ -703,16 +703,16 @@ class VersionEdit {
   bool has_last_sequence_ = false;
 
   // Compaction cursors for round-robin compaction policy
-  CompactCursors compact_cursors_;
+  CompactCursors compact_cursors_;  // TODO
 
-  DeletedFiles deleted_files_;
-  NewFiles new_files_;
+  DeletedFiles deleted_files_;  // TODO
+  NewFiles new_files_;          // TODO
 
-  BlobFileAdditions blob_file_additions_;
-  BlobFileGarbages blob_file_garbages_;
+  BlobFileAdditions blob_file_additions_;  // TODO
+  BlobFileGarbages blob_file_garbages_;    // TODO
 
-  WalAdditions wal_additions_;
-  WalDeletion wal_deletion_;
+  WalAdditions wal_additions_;  // TODO
+  WalDeletion wal_deletion_;//TODO
 
   // Each version edit record should have column_family_ set
   // If it's not set, it is default (0)

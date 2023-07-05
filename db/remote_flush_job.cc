@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cinttypes>
+#include <cstdlib>
 #include <cstring>
 #include <vector>
 
@@ -136,6 +137,11 @@ void RemoteFlushJob::blockUnusedDataForTest() {
   for (auto memtable : mems_) {
     memtable->blockUnusedDataForTest();
   }
+  base_->blockUnusedDataForTest();
+  // LOG("check block : ");
+  // LOG(std::hex, base_->GetSstFilesSize(), ' ',
+  //     reinterpret_cast<void*>(base_->Next()), ' ');
+
   // assert(edit_ == nullptr);
   // versions_ = reinterpret_cast<VersionSet*>(0x1000);
   assert(existing_snapshots_.size() == 0);  // TODO: maybe need to support != 0
@@ -162,6 +168,10 @@ void RemoteFlushJob::unblockUnusedDataForTest() {
   for (auto memtable : mems_) {
     // memtable->unblockUnusedDataForTest();
   }
+  // memcpy(const_cast<Version**>(&base_), block_[0].first, block_[0].second);
+  // free(block_[0].first);
+  // block_.clear();
+  base_->unblockUnusedDataForTest();
 }
 bool RemoteFlushJob::CHECKShared() {
   bool ret = singleton<SharedContainer>::Instance().find(
@@ -209,12 +219,38 @@ void RemoteFlushJob::Pack() {
   for (auto memtable : mems_) {
     memtable->Pack();
   }
+  // TODO:[MAIN]
+  base_->Pack();
+
+  // void* prefetch = nullptr;
+  // prefetch = malloc(sizeof(bool));
+  // memcpy(prefetch, &versions_->db_options()->allow_2pc, sizeof(bool));
+  // version_prefetech_.emplace_back(prefetch, sizeof(bool));
+
+  // TODO: add column_family_set_: call
+  // PrecomputeMinLogNumberToKeepNon2PC(vset,*cfd, edit_list);
+  // autovector<VersionEdit*> mock_edit_list_;
+  //  uint64_t ret = PrecomputeMinLogNumberToKeep2PC(
+  //     versions_, cfd_, , memtables_to_flush, prep_tracker);
+
+  // bool now = versions_->db_options()->track_and_verify_wals_in_manifest;
+  // prefetch = malloc(sizeof(bool));
+  // memcpy(prefetch, &now, sizeof(bool));
+  // version_prefetech_.emplace_back(prefetch, sizeof(bool));
 }
 void RemoteFlushJob::UnPack() {
   cfd_->UnPack();
   for (auto memtable : mems_) {
     memtable->UnPack();
   }
+  base_->UnPack();
+  // void* prefetch = nullptr;
+  // memcpy(reinterpret_cast<void*>(
+  //            const_cast<bool*>(&versions_->db_options()->allow_2pc)),
+  //        version_prefetech_[0].first, version_prefetech_[0].second);
+  // free(version_prefetech_[0].first);
+
+  // version_prefetech_.clear();
 }
 
 void RemoteFlushJob::PickMemTable() {
@@ -342,7 +378,7 @@ Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
     // Replace immutable memtable with the generated Table
     // DEBUG: cfd_ : MemTableList::InstallMemtableFlushResults set_remote
     s = cfd_->imm()->TryInstallMemtableFlushResults(
-        cfd_, mutable_cf_options_, mems_, prep_tracker, versions_, db_mutex_,
+        cfd_, mutable_cf_options_, mems_, prep_tracker,/*version_prefetech_*/ versions_, db_mutex_,
         meta_.fd.GetNumber(), &job_context_->memtables_to_free, db_directory_,
         nullptr, &committed_flush_jobs_info_,
         !(mempurge_s.ok()) /* write_edit : true if no mempurge happened (or if aborted),
@@ -893,7 +929,6 @@ Status RemoteFlushJob::WriteLevel0Table() {
           meta_.fd.GetNumber());
       const SequenceNumber job_snapshot_seq =
           job_context_->GetJobSnapshotSequence();
-      LOG("Call build table: dbname=", dbname_, " version=", versions_);
       s = TrimBuildTable(
           // DEBUG: cfd_ : tableCache() internal_stats()
           dbname_, versions_, db_options_, tboptions, file_options_,
@@ -905,7 +940,6 @@ Status RemoteFlushJob::WriteLevel0Table() {
           job_context_->job_id, io_priority, &table_properties_, write_hint,
           full_history_ts_low, base_, &num_input_entries,
           &memtable_payload_bytes, &memtable_garbage_bytes);
-      LOG("Call build table done: dbname=", dbname_, " version=", versions_);
       // TODO: Cleanup io_status in BuildTable and table builders
       assert(!s.ok() || io_s.ok());
       io_s.PermitUncheckedError();
