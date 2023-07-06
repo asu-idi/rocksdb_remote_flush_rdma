@@ -42,11 +42,15 @@
 #include "db/table_cache.h"
 #include "db/version_builder.h"
 #include "db/version_edit_handler.h"
+#include "db/wal_edit.h"
+#include "options/db_options.h"
+#include "rocksdb/advanced_cache.h"
 #include "rocksdb/file_system.h"
 #include "rocksdb/options.h"
 #include "rocksdb/statistics.h"
 #include "rocksdb/system_clock.h"
 #include "table/compaction_merging_iterator.h"
+#include "trace_replay/block_cache_tracer.h"
 #include "trace_replay/io_tracer.h"
 
 #if USE_COROUTINES
@@ -4983,6 +4987,174 @@ void AtomicGroupReadBuffer::Clear() {
   replay_buffer_.clear();
 }
 
+void VersionSet::Pack() {
+  if (is_packaged_) return;
+  is_packaged_ = true;
+}
+void VersionSet::UnPack() {
+  if (!is_packaged_) return;
+  is_packaged_ = false;
+}
+void VersionSet::blockUnusedDataForTest() {
+  void* mem = malloc(sizeof(WalSet));
+  memcpy(mem, reinterpret_cast<void*>(&wals_), sizeof(WalSet));
+  memset(reinterpret_cast<void*>(&wals_), 0x1, sizeof(WalSet));
+  block_.emplace_back(mem, sizeof(WalSet));
+
+  mem = malloc(sizeof(ColumnFamilyOptions));
+  memcpy(mem,
+         reinterpret_cast<void*>(
+             const_cast<ColumnFamilyOptions*>(&dummy_cf_options_)),
+         sizeof(ColumnFamilyOptions));
+  memset(reinterpret_cast<void*>(
+             const_cast<ColumnFamilyOptions*>(&dummy_cf_options_)),
+         0x1, sizeof(ColumnFamilyOptions));
+  block_.emplace_back(mem, sizeof(ColumnFamilyOptions));
+  mem = malloc(sizeof(Cache*));
+  memcpy(mem, reinterpret_cast<void*>(&table_cache_), sizeof(Cache*));
+  memset(reinterpret_cast<void*>(&table_cache_), 0x1, sizeof(Cache*));
+  block_.emplace_back(mem, sizeof(Cache*));
+
+  mem = malloc(sizeof(Env*));
+  memcpy(mem, reinterpret_cast<void*>(const_cast<Env**>(&env_)), sizeof(Env*));
+  memset(reinterpret_cast<void*>(const_cast<Env**>(&env_)), 0x1, sizeof(Env*));
+  block_.emplace_back(mem, sizeof(Env*));
+
+  mem = malloc(sizeof(FileSystemPtr));
+  memcpy(mem, reinterpret_cast<void*>(const_cast<FileSystemPtr*>(&fs_)),
+         sizeof(FileSystemPtr));
+  memset(reinterpret_cast<void*>(const_cast<FileSystemPtr*>(&fs_)), 0x1,
+         sizeof(FileSystemPtr));
+  block_.emplace_back(mem, sizeof(FileSystemPtr));
+
+  mem = malloc(sizeof(SystemClock*));
+  memcpy(mem, reinterpret_cast<void*>(const_cast<SystemClock**>(&clock_)),
+         sizeof(SystemClock*));
+  memset(reinterpret_cast<void*>(const_cast<SystemClock**>(&clock_)), 0x1,
+         sizeof(SystemClock*));
+  block_.emplace_back(mem, sizeof(SystemClock*));
+
+  mem = malloc(sizeof(ImmutableDBOptions*));
+  memcpy(
+      mem,
+      reinterpret_cast<void*>(const_cast<ImmutableDBOptions**>(&db_options_)),
+      sizeof(ImmutableDBOptions*));
+  memset(
+      reinterpret_cast<void*>(const_cast<ImmutableDBOptions**>(&db_options_)),
+      0x1, sizeof(ImmutableDBOptions*));
+  block_.emplace_back(mem, sizeof(ImmutableDBOptions*));
+
+  mem = malloc(sizeof(std::unique_ptr<log::Writer>));
+  memcpy(mem, reinterpret_cast<void*>(&descriptor_log_),
+         sizeof(std::unique_ptr<log::Writer>));
+  memset(reinterpret_cast<void*>(&descriptor_log_), 0x1,
+         sizeof(std::unique_ptr<log::Writer>));
+  block_.emplace_back(mem, sizeof(std::unique_ptr<log::Writer>));
+
+  mem = malloc(sizeof(std::deque<ManifestWriter*>));
+  memcpy(mem, reinterpret_cast<void*>(&manifest_writers_),
+         sizeof(std::deque<ManifestWriter*>));
+  memset(reinterpret_cast<void*>(&manifest_writers_), 0x1,
+         sizeof(std::deque<ManifestWriter*>));
+  block_.emplace_back(mem, sizeof(std::deque<ManifestWriter*>));
+
+  mem = malloc(sizeof(std::vector<ObsoleteFileInfo>));
+  memcpy(mem, reinterpret_cast<void*>(&obsolete_files_),
+         sizeof(std::vector<ObsoleteFileInfo>));
+  memset(reinterpret_cast<void*>(&obsolete_files_), 0x1,
+         sizeof(std::vector<ObsoleteFileInfo>));
+  block_.emplace_back(mem, sizeof(std::vector<ObsoleteFileInfo>));
+
+  mem = malloc(sizeof(std::vector<ObsoleteBlobFileInfo>));
+  memcpy(mem, reinterpret_cast<void*>(&obsolete_blob_files_),
+         sizeof(std::vector<ObsoleteBlobFileInfo>));
+  memset(reinterpret_cast<void*>(&obsolete_blob_files_), 0x1,
+         sizeof(std::vector<ObsoleteBlobFileInfo>));
+  block_.emplace_back(mem, sizeof(std::vector<ObsoleteBlobFileInfo>));
+
+  mem = malloc(sizeof(FileOptions));
+  memcpy(mem, reinterpret_cast<void*>(&file_options_), sizeof(FileOptions));
+  memset(reinterpret_cast<void*>(&file_options_), 0x1, sizeof(FileOptions));
+  block_.emplace_back(mem, sizeof(FileOptions));
+
+  mem = malloc(sizeof(BlockCacheTracer*));
+  memcpy(mem,
+         reinterpret_cast<void*>(
+             const_cast<BlockCacheTracer**>(&block_cache_tracer_)),
+         sizeof(BlockCacheTracer*));
+  memset(reinterpret_cast<void*>(
+             const_cast<BlockCacheTracer**>(&block_cache_tracer_)),
+         0x1, sizeof(BlockCacheTracer*));
+  block_.emplace_back(mem, sizeof(BlockCacheTracer*));
+
+  mem = malloc(sizeof(std::shared_ptr<IOTracer>));
+  memcpy(mem, reinterpret_cast<void*>(&io_tracer_),
+         sizeof(std::shared_ptr<IOTracer>));
+  memset(reinterpret_cast<void*>(&io_tracer_), 0x1,
+         sizeof(std::shared_ptr<IOTracer>));
+  block_.emplace_back(mem, sizeof(std::shared_ptr<IOTracer>));
+  // mem = malloc(sizeof(std::unique_ptr<ColumnFamilySet>));
+  // memcpy(mem, reinterpret_cast<void*>(&column_family_set_),
+  //        sizeof(std::unique_ptr<ColumnFamilySet>));
+  // memset(reinterpret_cast<void*>(&column_family_set_), 0x1,
+  //        sizeof(std::unique_ptr<ColumnFamilySet>));
+  // block_.emplace_back(mem, sizeof(std::unique_ptr<ColumnFamilySet>));
+}
+void VersionSet::unblockUnusedDataForTest() {
+  if (block_.empty()) return;
+  memcpy(reinterpret_cast<void*>(&wals_), block_[0].first, block_[0].second);
+  free(block_[0].first);
+  memcpy(reinterpret_cast<void*>(
+             const_cast<ColumnFamilyOptions*>(&dummy_cf_options_)),
+         block_[1].first, block_[1].second);
+  free(block_[1].first);
+  memcpy(reinterpret_cast<void*>(&table_cache_), block_[2].first,
+         block_[2].second);
+  free(block_[2].first);
+
+  memcpy(reinterpret_cast<void*>(const_cast<Env**>(&env_)), block_[3].first,
+         block_[3].second);
+  free(block_[3].first);
+
+  memcpy(reinterpret_cast<void*>(const_cast<FileSystemPtr*>(&fs_)),
+         block_[4].first, block_[4].second);
+  free(block_[4].first);
+  memcpy(reinterpret_cast<void*>(const_cast<SystemClock**>(&clock_)),
+         block_[5].first, block_[5].second);
+  free(block_[5].first);
+  memcpy(
+      reinterpret_cast<void*>(const_cast<ImmutableDBOptions**>(&db_options_)),
+      block_[6].first, block_[6].second);
+  free(block_[6].first);
+  memcpy(reinterpret_cast<void*>(&descriptor_log_), block_[7].first,
+         block_[7].second);
+  free(block_[7].first);
+  memcpy(reinterpret_cast<void*>(&manifest_writers_), block_[8].first,
+         block_[8].second);
+  free(block_[8].first);
+  memcpy(reinterpret_cast<void*>(&obsolete_files_), block_[9].first,
+         block_[9].second);
+  free(block_[9].first);
+  memcpy(reinterpret_cast<void*>(&obsolete_blob_files_), block_[10].first,
+         block_[10].second);
+  free(block_[10].first);
+  memcpy(reinterpret_cast<void*>(&file_options_), block_[11].first,
+         block_[11].second);
+  free(block_[11].first);
+  memcpy(reinterpret_cast<void*>(
+             const_cast<BlockCacheTracer**>(&block_cache_tracer_)),
+         block_[12].first, block_[12].second);
+  free(block_[12].first);
+  memcpy(reinterpret_cast<void*>(&io_tracer_), block_[13].first,
+         block_[13].second);
+  free(block_[13].first);
+  // memcpy(reinterpret_cast<void*>(&column_family_set_), block_[14].first,
+  //        block_[14].second);
+  // free(block_[14].first);
+  block_.clear();
+}
+void VersionSet::CHECKShared() {}
+bool VersionSet::is_shared() { return true; }
 VersionSet::VersionSet(const ColumnFamilyOptions& dummy_cf_options,
                        const std::string& dbname,
                        const ImmutableDBOptions* _db_options,

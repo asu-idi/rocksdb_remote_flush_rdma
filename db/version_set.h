@@ -1552,16 +1552,16 @@ class VersionSet {
                             int level, const FileMetaData& meta);
 
   // Protected by DB mutex.
-  WalSet wals_;                                         // TODO
-  const ColumnFamilyOptions dummy_cf_options_;          // DONE
+  WalSet wals_;
+  const ColumnFamilyOptions dummy_cf_options_;
   std::unique_ptr<ColumnFamilySet> column_family_set_;  // TODO
-  Cache* table_cache_;                                  // TODO
-  Env* const env_;                                      // TODO
-  FileSystemPtr const fs_;                              // TODO
-  SystemClock* const clock_;                            // TODO
-  const std::string dbname_;                            //
-  std::string db_id_;                                   //
-  const ImmutableDBOptions* const db_options_;          // DONE
+  Cache* table_cache_;
+  Env* const env_;
+  FileSystemPtr const fs_;
+  SystemClock* const clock_;
+  const std::string dbname_;  // TODO
+  std::string db_id_;
+  const ImmutableDBOptions* const db_options_;  // DONE
   std::atomic<uint64_t> next_file_number_;
   // Any WAL number smaller than this should be ignored during recovery,
   // and is qualified for being deleted.
@@ -1591,32 +1591,42 @@ class VersionSet {
   uint64_t prev_log_number_;  // 0 or backing store for memtable being compacted
 
   // Opened lazily
-  std::unique_ptr<log::Writer> descriptor_log_;  // TODO
+  std::unique_ptr<log::Writer> descriptor_log_;
 
   // generates a increasing version number for every new version
   uint64_t current_version_number_;
 
   // Queue of writers to the manifest file
-  std::deque<ManifestWriter*> manifest_writers_;  // TODO
+  std::deque<ManifestWriter*> manifest_writers_;
 
   // Current size of manifest file
   uint64_t manifest_file_size_;
 
-  std::vector<ObsoleteFileInfo> obsolete_files_;           // TODO
-  std::vector<ObsoleteBlobFileInfo> obsolete_blob_files_;  // TODO
+  std::vector<ObsoleteFileInfo> obsolete_files_;
+  std::vector<ObsoleteBlobFileInfo> obsolete_blob_files_;
   std::vector<std::string> obsolete_manifests_;
 
   // env options for all reads and writes except compactions
-  FileOptions file_options_;  // TODO
+  FileOptions file_options_;
 
-  BlockCacheTracer* const block_cache_tracer_;  // TODO
+  BlockCacheTracer* const block_cache_tracer_;
 
   // Store the IO status when Manifest is written
   IOStatus io_status_;
 
-  std::shared_ptr<IOTracer> io_tracer_;  // TODO
+  std::shared_ptr<IOTracer> io_tracer_;
 
   std::string db_session_id_;
+
+ public:
+  void Pack();
+  void UnPack();
+  void blockUnusedDataForTest();
+  void unblockUnusedDataForTest();
+  void CHECKShared();
+  bool is_shared();
+  bool is_packaged_ = false;
+  std::vector<std::pair<void*, size_t>> block_;
 
  private:
   // REQUIRES db mutex at beginning. may release and re-acquire db mutex
