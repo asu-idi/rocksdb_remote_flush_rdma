@@ -138,6 +138,9 @@ void RemoteFlushJob::blockUnusedDataForTest() {
     memtable->blockUnusedDataForTest();
   }
   base_->blockUnusedDataForTest();
+  versions_->blockUnusedDataForTest();
+  // edit_->blockUnusedDataForTest();
+
   // LOG("check block : ");
   // LOG(std::hex, base_->GetSstFilesSize(), ' ',
   //     reinterpret_cast<void*>(base_->Next()), ' ');
@@ -172,6 +175,7 @@ void RemoteFlushJob::unblockUnusedDataForTest() {
   // free(block_[0].first);
   // block_.clear();
   base_->unblockUnusedDataForTest();
+  versions_->unblockUnusedDataForTest();
 }
 bool RemoteFlushJob::CHECKShared() {
   bool ret = singleton<SharedContainer>::Instance().find(
