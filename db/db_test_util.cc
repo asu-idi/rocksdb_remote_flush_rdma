@@ -338,6 +338,8 @@ Options DBTestBase::GetDefaultOptions() const {
   options.max_open_files = 5000;
   options.wal_recovery_mode = WALRecoveryMode::kTolerateCorruptedTailRecords;
   options.compaction_pri = CompactionPri::kByCompensatedSize;
+  options.server_use_remote_flush = true;
+  // options.worker_use_remote_flush = true;
   options.env = env_;
   if (!env_->skip_fsync_) {
     options.track_and_verify_wals_in_manifest = true;
@@ -685,6 +687,7 @@ void DBTestBase::Close() {
   if (db_ && db_->GetOptions().server_use_remote_flush == true) {
     LOG("DEBUG", "destroying db remote flush");
     db_->~DB();
+    LOG("DEBUG", "destroying db remote flush finish");
     shm_delete(reinterpret_cast<char*>(db_));
   } else {
     LOG("DEBUG", "destroying db local flush or nullptr");

@@ -226,12 +226,19 @@ Status RemoteFlushJob::RunRemote(LogsWithPrepTracker* prep_tracker,
 
 void RemoteFlushJob::Pack() {
   cfd_->Pack();
+  LOG("cfd pack finished");
   for (auto memtable : mems_) {
     memtable->Pack();
   }
+  LOG("memtable pack finished");
   // TODO:[MAIN]
-  base_->Pack();
+  if (base_ != nullptr)
+    base_->Pack();
+  else
+    LOG("base_ == nullptr");
+  LOG("base pack finished");
   versions_->Pack();
+  LOG("versions pack finished");
 
   // void* prefetch = nullptr;
   // prefetch = malloc(sizeof(bool));
@@ -254,7 +261,7 @@ void RemoteFlushJob::UnPack() {
   for (auto memtable : mems_) {
     memtable->UnPack();
   }
-  base_->UnPack();
+  if (base_ != nullptr) base_->UnPack();
   versions_->UnPack();
   clock_ = db_options_.clock;
   // void* prefetch = nullptr;
@@ -282,9 +289,10 @@ void RemoteFlushJob::PickMemTable() {
   uint64_t max_next_log_number = 0;
 
   // Save the contents of the earliest memtable as a new Table
-  // DEBUG: cfd : before remote
+  LOG("PickMemTableToFlush");
   cfd_->imm()->PickMemtablesToFlush(max_memtable_id_, &mems_,
                                     &max_next_log_number);
+  LOG("PickMemTableToFlush finished", mems_.size());
   if (mems_.empty()) {
     return;
   }
@@ -300,22 +308,20 @@ void RemoteFlushJob::PickMemTable() {
   // SetLogNumber(log_num) indicates logs with number smaller than log_num
   // will no longer be picked up for recovery.
   edit_->SetLogNumber(max_next_log_number);
-  // DEBUG: cfd
   edit_->SetColumnFamily(cfd_->GetID());
 
   // path 0 for level 0 file.
   meta_.fd = FileDescriptor(versions_->NewFileNumber(), 0, 0);
-  // DEBUG: cfd
   meta_.epoch_number = cfd_->NewEpochNumber();
-  // DEBUG: cfd
   base_ = cfd_->current();
+  LOG(std::hex, reinterpret_cast<void*>(base_), ' ', base_->block_.size());
   base_->Ref();  // it is likely that we do not need this reference
 }
 
 Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
                                 FileMetaData* file_meta,
                                 bool* switched_to_mempurge) {
-  RemoteFlushJob::UnPack();
+  // RemoteFlushJob::UnPack();
   TEST_SYNC_POINT("RemoteFlushJob::Start");
   db_mutex_->AssertHeld();
   assert(pick_memtable_called);
@@ -372,6 +378,7 @@ Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
     // This will release and re-acquire the mutex.
     LOG("Run job: write l0table");
     s = WriteLevel0Table();
+    LOG("Run job: write l0table finished");
   }
 
   if (s.ok() && cfd_->IsDropped()) {
@@ -381,15 +388,17 @@ Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
       shutting_down_->load(std::memory_order_acquire)) {
     s = Status::ShutdownInProgress("Database shutdown");
   }
-
+  LOG("Run job: checkpoint 1");
   if (!s.ok()) {
     // DEBUG: cfd_ : mems_->(all memtable).edit_(VersionEdit).Clear(all member)
     // TODO: delay it?
+    LOG("Run job: checkpoint 2");
     cfd_->imm()->RollbackMemtableFlush(mems_, meta_.fd.GetNumber());
   } else if (write_manifest_) {
     TEST_SYNC_POINT("RemoteFlushJob::InstallResults");
     // Replace immutable memtable with the generated Table
     // DEBUG: cfd_ : MemTableList::InstallMemtableFlushResults set_remote
+    LOG("Run job: checkpoint 3");
     s = cfd_->imm()->TryInstallMemtableFlushResults(
         cfd_, mutable_cf_options_, mems_, prep_tracker,/*version_prefetech_*/ versions_, db_mutex_,
         meta_.fd.GetNumber(), &job_context_->memtables_to_free, db_directory_,
@@ -398,12 +407,13 @@ Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
                               but 'false' if mempurge successful: no new min log number
                               or new level 0 file path to write to manifest. */);
   }
-
+  LOG("Run job: checkpoint 4");
   if (s.ok() && file_meta != nullptr) {
     *file_meta = meta_;
   }
+  LOG("Run job: checkpoint 5");
   RecordFlushIOStats();
-
+  LOG("Run job: checkpoint 6");
   return s;
 }
 

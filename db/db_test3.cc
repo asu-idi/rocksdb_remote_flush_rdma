@@ -147,11 +147,8 @@ TEST_F(DBTest3, ShmMockEnvTest) {
   LOG("finish flush,Start recheck kv");
   for (size_t i = 0; i < 3; ++i) {
     std::string res;
-    LOG("");
     ASSERT_OK(db->Get(ReadOptions(), keys[i], &res));
-    LOG("");
     ASSERT_TRUE(res == vals[i]);
-    LOG("");
   }
   LOG("Finish recheck kv, delete db");
   delete db;

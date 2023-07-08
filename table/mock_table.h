@@ -26,7 +26,7 @@
 #include "util/mutexlock.h"
 
 namespace ROCKSDB_NAMESPACE {
-namespace mock {
+// namespace mock {
 using KVPair = std::pair<std::string, std::string>;
 using KVVector = std::vector<KVPair>;
 
@@ -90,5 +90,5 @@ class MockTableFactory : public TableFactory {
   size_t key_value_size_ = 1;
 };
 
-}  // namespace mock
+// }  // namespace mock
 }  // namespace ROCKSDB_NAMESPACE

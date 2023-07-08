@@ -19,8 +19,10 @@
 #include "db/error_handler.h"
 #include "db/event_helpers.h"
 #include "db/remote_flush_job.h"
+#include "db/version_edit.h"
 #include "file/sst_file_manager_impl.h"
 #include "logging/logging.h"
+#include "memory/shared_mem_basic.h"
 #include "monitoring/iostats_context_imp.h"
 #include "monitoring/perf_context_imp.h"
 #include "monitoring/thread_status_updater.h"
@@ -221,7 +223,7 @@ Status DBImpl::FlushMemTableToOutputFile(
         GetCompressionFlush(*cfd->ioptions(), mutable_cf_options),
         mutable_cf_options.report_bg_io_stats, true, true, thread_pri,
         seqno_time_mapping_);
-    FileMetaData file_meta;
+    auto* file_meta = new FileMetaData();  // todo: delete
 
     Status s;
     bool need_cancel = false;
@@ -255,8 +257,17 @@ Status DBImpl::FlushMemTableToOutputFile(
       remote_flush_job->PickMemTable();
       need_cancel = true;
     }
-    // TEST_SYNC_POINT_CALLBACK(
-    //     "DBImpl::FlushMemTableToOutputFile:AfterPickMemtables", &flush_job);
+    if (remote_flush_job->GetMemTables().empty()) {
+      // todo
+      TEST_SYNC_POINT("DBImpl::FlushMemTableToOutputFile:Finish");
+      remote_flush_job->~RemoteFlushJob();
+      shm_delete(reinterpret_cast<char*>(remote_flush_job));
+      LOG("return");
+      return Status::Aborted("No memtable to flush");
+    }
+    TEST_SYNC_POINT_CALLBACK(
+        "DBImpl::FlushMemTableToOutputFile:AfterPickMemtables",
+        &remote_flush_job);
     LOG("flush job pick all Memtable finish");
     for (auto* memtable : remote_flush_job->GetMemTables()) {
       LOG("FlushJob pick memtable:", memtable->GetID(),
@@ -264,7 +275,7 @@ Status DBImpl::FlushMemTableToOutputFile(
           " file-number=", memtable->GetFileNumber());
     }
     // may temporarily unlock and lock the mutex.
-    NotifyOnFlushBegin(cfd, &file_meta, mutable_cf_options, job_context->job_id,
+    NotifyOnFlushBegin(cfd, file_meta, mutable_cf_options, job_context->job_id,
                        flush_reason);
 
     bool switched_to_mempurge = false;
@@ -277,16 +288,20 @@ Status DBImpl::FlushMemTableToOutputFile(
     if (s.ok()) {
       // TODO:
       remote_flush_job->Pack();
-      s = remote_flush_job->RunRemote(&logs_with_prep_tracker_, &file_meta,
+      s = remote_flush_job->RunRemote(&logs_with_prep_tracker_, file_meta,
                                       &switched_to_mempurge);
+      remote_flush_job->UnPack();
+      s = remote_flush_job->RunLocal(&logs_with_prep_tracker_, file_meta,
+                                     &switched_to_mempurge);
+      LOG("ret");
       need_cancel = false;
     }
 
     if (!s.ok() && need_cancel) {
       remote_flush_job->Cancel();
     }
-
     if (s.ok()) {
+      LOG("InstallSuperVersionAndScheduleWork");
       InstallSuperVersionAndScheduleWork(cfd, superversion_context,
                                          mutable_cf_options);
       if (made_progress) {
@@ -297,7 +312,7 @@ Status DBImpl::FlushMemTableToOutputFile(
 
       Version* const current = cfd->current();
       assert(current);
-
+      LOG("versionstorageinfo");
       const VersionStorageInfo* const storage_info = current->storage_info();
       assert(storage_info);
 
@@ -318,7 +333,7 @@ Status DBImpl::FlushMemTableToOutputFile(
             blob_files.back()->GetBlobFileNumber());
       }
     }
-
+    LOG("FlushJob finish");
     if (!s.ok() && !s.IsShutdownInProgress() && !s.IsColumnFamilyDropped()) {
       if (log_io_s.ok()) {
         // Error while writing to MANIFEST.
@@ -347,33 +362,42 @@ Status DBImpl::FlushMemTableToOutputFile(
     }
     // If flush ran smoothly and no mempurge happened
     // install new SST file path.
+    LOG("switched_to_mempurge:", switched_to_mempurge);
     if (s.ok() && (!switched_to_mempurge)) {
       // may temporarily unlock and lock the mutex.
+      LOG("NotifyOnFlushCompleted");
       NotifyOnFlushCompleted(
           cfd, mutable_cf_options,
           remote_flush_job->GetCommittedRemoteFlushJobsInfo());
+      LOG("NotifyOnFlushCompleted finish");
       auto sfm = static_cast<SstFileManagerImpl*>(
           immutable_db_options_.sst_file_manager.get());
       if (sfm) {
         // Notify sst_file_manager that a new file was added
         std::string file_path = MakeTableFileName(
-            cfd->ioptions()->cf_paths[0].path, file_meta.fd.GetNumber());
+            cfd->ioptions()->cf_paths[0].path, file_meta->fd.GetNumber());
         // TODO (PR7798).  We should only add the file to the FileManager if it
         // exists. Otherwise, some tests may fail.  Ignore the error in the
         // interim.
+        LOG("OnAddFile");
         sfm->OnAddFile(file_path).PermitUncheckedError();
+        LOG("OnAddFile finish");
         if (sfm->IsMaxAllowedSpaceReached()) {
           Status new_bg_error =
               Status::SpaceLimit("Max allowed space was reached");
           TEST_SYNC_POINT_CALLBACK(
               "DBImpl::FlushMemTableToOutputFile:MaxAllowedSpaceReached",
               &new_bg_error);
+          LOG("SetBGError");
           error_handler_.SetBGError(new_bg_error,
                                     BackgroundErrorReason::kFlush);
         }
       }
     }
     TEST_SYNC_POINT("DBImpl::FlushMemTableToOutputFile:Finish");
+    remote_flush_job->~RemoteFlushJob();
+    shm_delete(reinterpret_cast<char*>(remote_flush_job));
+    LOG("return");
     return s;
   } else {
     FlushJob flush_job(
@@ -566,6 +590,7 @@ Status DBImpl::FlushMemTablesToOutputFiles(
       cfd, mutable_cf_options_copy, made_progress, job_context, flush_reason,
       superversion_context, snapshot_seqs, earliest_write_conflict_snapshot,
       snapshot_checker, log_buffer, thread_pri);
+  LOG("FlushMemTableToOutputFile finish");
   return s;
 }
 
@@ -1495,6 +1520,7 @@ Status DBImpl::CompactFiles(const CompactionOptions& compact_options,
       // no mutex is locked here.  No need to Unlock() and Lock() here.
       PurgeObsoleteFiles(job_context);
     }
+    LOG("traccking test");
     job_context.Clean();
   }
 
@@ -3005,7 +3031,9 @@ void DBImpl::BGWorkFlush(void* arg) {
 
   IOSTATS_SET_THREAD_POOL_ID(fta.thread_pri_);
   TEST_SYNC_POINT("DBImpl::BGWorkFlush");
+  LOG("Flush started");
   static_cast_with_check<DBImpl>(fta.db_)->BackgroundCallFlush(fta.thread_pri_);
+  LOG("Flush done");
   TEST_SYNC_POINT("DBImpl::BGWorkFlush:done");
 }
 
@@ -3069,6 +3097,7 @@ void DBImpl::UnscheduleCompactionCallback(void* arg) {
 }
 
 void DBImpl::UnscheduleFlushCallback(void* arg) {
+  LOG("UnscheduleFlushCallback");
   // Decrement bg_flush_scheduled_ in flush callback
   reinterpret_cast<FlushThreadArg*>(arg)->db_->bg_flush_scheduled_--;
   Env::Priority flush_pri = reinterpret_cast<FlushThreadArg*>(arg)->thread_pri_;
@@ -3077,6 +3106,7 @@ void DBImpl::UnscheduleFlushCallback(void* arg) {
   } else if (Env::Priority::HIGH == flush_pri) {
     TEST_SYNC_POINT("DBImpl::UnscheduleHighFlushCallback");
   }
+  LOG("UnscheduleFlushCallback done");
   delete reinterpret_cast<FlushThreadArg*>(arg);
   TEST_SYNC_POINT("DBImpl::UnscheduleFlushCallback");
 }
@@ -3152,6 +3182,7 @@ Status DBImpl::BackgroundFlush(bool* made_progress, JobContext* job_context,
     LOG("FlushMemTablesToOutputFiles");
     status = FlushMemTablesToOutputFiles(bg_flush_args, made_progress,
                                          job_context, log_buffer, thread_pri);
+    LOG("FlushMemTablesToOutputFiles done");
     TEST_SYNC_POINT("DBImpl::BackgroundFlush:BeforeFlush");
 // All the CFD/bg_flush_arg in the FlushReq must have the same flush reason, so
 // just grab the first one
@@ -3196,6 +3227,7 @@ void DBImpl::BackgroundCallFlush(Env::Priority thread_pri) {
     LOG("background flush thread_id=", std::this_thread::get_id());
     Status s = BackgroundFlush(&made_progress, &job_context, &log_buffer,
                                &reason, thread_pri);
+    LOG("BackgroundFlush done");
     if (!s.ok() && !s.IsShutdownInProgress() && !s.IsColumnFamilyDropped() &&
         reason != FlushReason::kErrorRecovery) {
       // Wait a little bit before retrying background flush in
@@ -3215,10 +3247,10 @@ void DBImpl::BackgroundCallFlush(Env::Priority thread_pri) {
       immutable_db_options_.clock->SleepForMicroseconds(1000000);
       mutex_.Lock();
     }
-
+    LOG("BackgroundFlush done 2");
     TEST_SYNC_POINT("DBImpl::BackgroundCallFlush:FlushFinish:0");
     ReleaseFileNumberFromPendingOutputs(pending_outputs_inserted_elem);
-
+    LOG("BackgroundFlush done 3");
     // If flush failed, we want to delete all temporary files that we might have
     // created. Thus, we force full scan in FindObsoleteFiles()
     FindObsoleteFiles(&job_context, !s.ok() && !s.IsShutdownInProgress() &&
@@ -3236,7 +3268,9 @@ void DBImpl::BackgroundCallFlush(Env::Priority thread_pri) {
       log_buffer.FlushBufferToLog();
       if (job_context.HaveSomethingToDelete()) {
         PurgeObsoleteFiles(job_context);
+        LOG("BackgroundFlush done 4");
       }
+      LOG("traccking test");
       job_context.Clean();
       mutex_.Lock();
     }
@@ -3247,6 +3281,7 @@ void DBImpl::BackgroundCallFlush(Env::Priority thread_pri) {
     bg_flush_scheduled_--;
     // See if there's more work to be done
     MaybeScheduleFlushOrCompaction();
+    LOG("BackgroundFlush done 5");
     atomic_flush_install_cv_.SignalAll();
     bg_cv_.SignalAll();
     // IMPORTANT: there should be no code after calling SignalAll. This call may
@@ -3254,6 +3289,7 @@ void DBImpl::BackgroundCallFlush(Env::Priority thread_pri) {
     // that case, all DB variables will be dealloacated and referencing them
     // will cause trouble.
   }
+  LOG("END");
 }
 
 void DBImpl::BackgroundCallCompaction(PrepickedCompaction* prepicked_compaction,
@@ -3335,6 +3371,7 @@ void DBImpl::BackgroundCallCompaction(PrepickedCompaction* prepicked_compaction,
         PurgeObsoleteFiles(job_context);
         TEST_SYNC_POINT("DBImpl::BackgroundCallCompaction:PurgedObsoleteFiles");
       }
+      LOG("traccking test");
       job_context.Clean();
       mutex_.Lock();
     }

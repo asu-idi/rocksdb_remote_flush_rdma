@@ -788,7 +788,7 @@ void* ImmutableDBOptions::Pack() {
   void* mem = shm_alloc(file_name.length());
   memcpy(mem, file_name.c_str(), file_name.length());
   option_file_path = reinterpret_cast<char*>(mem);
-  LOG("option file path is ", option_file_path);
+  LOG("option file path is ", reinterpret_cast<char*>(mem));
   DBOptions db_options = BuildDBOptions(*this, MutableDBOptions());
   std::vector<std::string> cf_names_;
   std::vector<ColumnFamilyOptions> cf_opts_;

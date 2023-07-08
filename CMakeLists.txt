@@ -868,6 +868,7 @@ set(SOURCES
         table/table_properties.cc
         table/two_level_iterator.cc
         table/unique_id.cc
+        table/mock_table.cc
         test_util/sync_point.cc
         test_util/sync_point_impl.cc
         test_util/testutil.cc
@@ -1515,7 +1516,6 @@ if(WITH_TESTS)
       db/db_test_util.cc
       db/db_with_timestamp_test_util.cc
       monitoring/thread_status_updater_debug.cc
-      table/mock_table.cc
       utilities/agg_merge/test_agg_merge.cc
       utilities/cassandra/test_utils.cc
   )

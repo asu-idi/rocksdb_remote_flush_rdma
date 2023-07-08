@@ -120,7 +120,6 @@ void ReadOnlyInlineSkipList<Comparator>::CHECK_all_addr() const {
     if (ptr == head_) {
       break;
     }
-    LOG("");
     // DecodedKey key_val = compare_.decode_key(ptr->key());
     // LOG("key:", std::hex, (long long)ptr, std::dec, " ", key_val.data());
   }
@@ -157,12 +156,6 @@ inline void ReadOnlyInlineSkipList<Comparator>::Iterator::SetList(
 }
 template <class Comparator>
 inline bool ReadOnlyInlineSkipList<Comparator>::Iterator::Valid() const {
-  LOG("Check iter valid");
-  if (node_ == nullptr) {
-    LOG("");
-  } else if (node_ == list_->head_) {
-    LOG("");
-  }
   return node_ != nullptr && node_ != list_->head_;
 }
 template <class Comparator>
@@ -211,7 +204,7 @@ template <class Comparator>
 typename ReadOnlyInlineSkipList<Comparator>::Node*
 ReadOnlyInlineSkipList<Comparator>::AllocateNode(size_t key_size) {
   auto prefix = sizeof(std::atomic<Node*>);
-  char* raw = allocator_->AllocateAligned(prefix + sizeof(Node) + key_size);
+  char* raw = allocator_->Allocate(prefix + sizeof(Node) + key_size);
   Node* x = reinterpret_cast<Node*>(raw + prefix);
   x->SetNext(nullptr);
   x->SetPrev(nullptr);
@@ -542,7 +535,7 @@ InlineSkipList<Comparator>::CreateSharedInlineSkipList(
     int32_t branching_factor) {
   assert(strcmp(allocator->name(), "ConcurrentSharedArena") == 0);
   LOG("allocate shared inlineSkiplist");
-  void* mem = allocator->AllocateAligned(sizeof(InlineSkipList<Comparator>));
+  void* mem = allocator->Allocate(sizeof(InlineSkipList<Comparator>));
   auto* ret = new (mem) InlineSkipList<Comparator>(cmp, allocator, max_height,
                                                    branching_factor, true);
   return ret;
@@ -919,7 +912,7 @@ InlineSkipList<Comparator>::AllocateNode(size_t key_size, int height) {
   // starts at raw + prefix, and holds the bottom-mode (level 0)
   // skip list pointer next_[0].  key_size is the bytes for the
   // key, which comes just after the Node.
-  char* raw = allocator_->AllocateAligned(prefix + sizeof(Node) + key_size);
+  char* raw = allocator_->Allocate(prefix + sizeof(Node) + key_size);
   Node* x = reinterpret_cast<Node*>(raw + prefix);
 
   // Once we've linked the node into the skip list we don't
@@ -939,7 +932,7 @@ typename InlineSkipList<Comparator>::Splice*
 InlineSkipList<Comparator>::AllocateSplice() {
   // size of prev_ and next_
   size_t array_size = sizeof(Node*) * (kMaxHeight_ + 1);
-  char* raw = allocator_->AllocateAligned(sizeof(Splice) + array_size * 2);
+  char* raw = allocator_->Allocate(sizeof(Splice) + array_size * 2);
   Splice* splice = reinterpret_cast<Splice*>(raw);
   splice->height_ = 0;
   splice->prev_ = reinterpret_cast<Node**>(raw + sizeof(Splice));

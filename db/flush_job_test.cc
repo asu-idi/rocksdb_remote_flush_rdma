@@ -49,7 +49,7 @@ class FlushJobTestBase : public testing::Test {
         table_cache_(NewLRUCache(50000, 16)),
         write_buffer_manager_(db_options_.db_write_buffer_size),
         shutting_down_(false),
-        mock_table_factory_(new mock::MockTableFactory()) {
+        mock_table_factory_(new MockTableFactory()) {
     options_.server_use_remote_flush = true;  // trigger remote flush
     db_options_.worker_use_remote_flush = true;
   }
@@ -169,7 +169,7 @@ class FlushJobTestBase : public testing::Test {
   std::unique_ptr<VersionSet> versions_;
   InstrumentedMutex mutex_;
   std::atomic<bool> shutting_down_;
-  std::shared_ptr<mock::MockTableFactory> mock_table_factory_;
+  std::shared_ptr<MockTableFactory> mock_table_factory_;
 
   SeqnoToTimeMapping empty_seqno_to_time_mapping_;
 };
@@ -209,7 +209,7 @@ TEST_F(FlushJobTest, DISABLED_NonEmpty) {
   auto new_mem = cfd->ConstructNewMemtable(*cfd->GetLatestMutableCFOptions(),
                                            kMaxSequenceNumber);
   new_mem->Ref();
-  auto inserted_keys = mock::MakeMockFile();
+  auto inserted_keys = MakeMockFile();
   // Test data:
   //   seqno [    1,    2 ... 8998, 8999, 9000, 9001, 9002 ... 9999 ]
   //   key   [ 1001, 1002 ... 9998, 9999,    0,    1,    2 ...  999 ]
@@ -261,7 +261,7 @@ TEST_F(FlushJobTest, DISABLED_NonEmpty) {
     InternalKey internal_key(key, seq, kTypeBlobIndex);
     inserted_keys.push_back({internal_key.Encode().ToString(), blob_index});
   }
-  mock::SortKVVector(&inserted_keys);
+  SortKVVector(&inserted_keys);
 
   autovector<MemTable*> to_delete;
   new_mem->ConstructFragmentedRangeTombstones();
@@ -311,7 +311,7 @@ TEST_F(FlushJobTest, DISABLED_SharedFlushJob) {
   auto new_mem = cfd->ConstructNewMemtable(*cfd->GetLatestMutableCFOptions(),
                                            kMaxSequenceNumber);
   new_mem->Ref();
-  auto inserted_keys = mock::MakeMockFile();
+  auto inserted_keys = MakeMockFile();
   // Test data:
   //   seqno [    1, 2, 3, 4, 5 ]
   //   key   [ 1001, 1002, 1003, 1004, 1005 ]
@@ -323,7 +323,7 @@ TEST_F(FlushJobTest, DISABLED_SharedFlushJob) {
     InternalKey internal_key(key, SequenceNumber(i), kTypeValue);
     inserted_keys.push_back({internal_key.Encode().ToString(), value});
   }
-  mock::SortKVVector(&inserted_keys);
+  SortKVVector(&inserted_keys);
   autovector<MemTable*> to_delete;
   new_mem->ConstructFragmentedRangeTombstones();
   cfd->imm()->Add(new_mem, &to_delete);
@@ -832,7 +832,7 @@ TEST_F(FlushJobTest, DISABLED_Snapshots) {
 
   new_mem->Ref();
   SequenceNumber current_seqno = 0;
-  auto inserted_keys = mock::MakeMockFile();
+  auto inserted_keys = MakeMockFile();
   for (int i = 1; i < keys; ++i) {
     std::string key(std::to_string(i));
     int insertions = rnd.Uniform(max_inserts_per_keys);
@@ -852,7 +852,7 @@ TEST_F(FlushJobTest, DISABLED_Snapshots) {
       }
     }
   }
-  mock::SortKVVector(&inserted_keys);
+  SortKVVector(&inserted_keys);
 
   autovector<MemTable*> to_delete;
   new_mem->ConstructFragmentedRangeTombstones();

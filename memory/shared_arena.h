@@ -72,11 +72,10 @@ inline char* SharedArena::Allocate(size_t bytes) {
     LOG("alloc bytes less than SHMMIN, alloc ", SHMMIN);
     bytes = SHMMIN;
   }
-  LOG("shared mem arena alloc: ", bytes);
   auto* ptr = shm_alloc(bytes);
-  LOG("shared mem arena alloc ptr: ", std::hex, (long long)ptr, std::dec);
+  LOG("memtable allocator:alloc ptr: ", std::hex, (long long)ptr, std::dec);
   std::unique_ptr<char, void (*)(char* p)> uni_ptr(ptr, [](char* p) {
-    LOG("shared_mem free: ", p);
+    LOG("memtable allocator:delete ptr: ", std::hex, (long long)p, std::dec);
     shm_delete(p);
   });
   mp_blocks_.insert(std::make_pair(++block_count_,
