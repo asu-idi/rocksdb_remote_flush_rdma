@@ -45,6 +45,7 @@
 #include "rocksdb/env.h"
 #include "rocksdb/statistics.h"
 #include "rocksdb/status.h"
+#include "rocksdb/system_clock.h"
 #include "rocksdb/table.h"
 #include "rocksdb/table_properties.h"
 #include "table/merging_iterator.h"
@@ -139,6 +140,10 @@ void RemoteFlushJob::blockUnusedDataForTest() {
   }
   base_->blockUnusedDataForTest();
   versions_->blockUnusedDataForTest();
+  void* mem = malloc(sizeof(SystemClock*));
+  memcpy(mem, &clock_, sizeof(SystemClock*));
+  memset(reinterpret_cast<void*>(&clock_), 0x1, sizeof(SystemClock*));
+  block_.emplace_back(mem, sizeof(SystemClock*));
   // edit_->blockUnusedDataForTest();
 
   // LOG("check block : ");
@@ -181,6 +186,7 @@ bool RemoteFlushJob::CHECKShared() {
   bool ret = singleton<SharedContainer>::Instance().find(
       reinterpret_cast<void*>(&measure_io_stats_), sizeof(bool));
   ret = ret && cfd_->CHECKShared();
+  ret = ret && edit_->CHECKShared();  // todo: check
   return true;
 }
 
@@ -225,6 +231,7 @@ void RemoteFlushJob::Pack() {
   }
   // TODO:[MAIN]
   base_->Pack();
+  versions_->Pack();
 
   // void* prefetch = nullptr;
   // prefetch = malloc(sizeof(bool));
@@ -248,6 +255,8 @@ void RemoteFlushJob::UnPack() {
     memtable->UnPack();
   }
   base_->UnPack();
+  versions_->UnPack();
+  clock_ = db_options_.clock;
   // void* prefetch = nullptr;
   // memcpy(reinterpret_cast<void*>(
   //            const_cast<bool*>(&versions_->db_options()->allow_2pc)),
