@@ -161,21 +161,20 @@ class RemoteFlushJob {
   const ImmutableDBOptions& db_options_;
   const MutableCFOptions& mutable_cf_options_;
   const FileOptions file_options_;
-  JobContext* job_context_;
-  FSDirectory* db_directory_;           // shared
-  FSDirectory* output_file_directory_;  // shared
-  TableProperties table_properties_;    // maybe no need to share
-  FileMetaData meta_;
-  std::list<std::unique_ptr<FlushJobInfo>> committed_flush_jobs_info_;
+  JobContext* job_context_;             // TODO
+  FSDirectory* db_directory_;           // TODO
+  FSDirectory* output_file_directory_;  // TODO
+  TableProperties table_properties_;    // builtin
+  FileMetaData meta_;                   // TODO
+  std::list<std::unique_ptr<FlushJobInfo>> committed_flush_jobs_info_;  // TODO
   autovector<MemTable*> mems_;
-  const SeqnoToTimeMapping& db_impl_seqno_time_mapping_;
-  SeqnoToTimeMapping seqno_to_time_mapping_;
-  SystemClock* clock_;  // shared
+  const SeqnoToTimeMapping& db_impl_seqno_time_mapping_;  // builtin
+  SeqnoToTimeMapping seqno_to_time_mapping_;              // builtin
+  SystemClock* clock_;
+  std::vector<std::pair<void*, size_t>> block_;
 
   // no need to shared
   InstrumentedMutex* db_mutex_;
-
-  std::vector<std::pair<void*, size_t>> block_;
 
  private:
 };
