@@ -27,21 +27,16 @@ void VersionEditHandlerBase::Iterate(log::Reader& reader,
   std::string scratch;
   assert(log_read_status);
   assert(log_read_status->ok());
-  LOG("DEBUG");
   [[maybe_unused]] size_t recovered_edits = 0;
   Status s = Initialize();
-  LOG("DEBUG");
   while (reader.LastRecordEnd() < max_manifest_read_size_ && s.ok() &&
          reader.ReadRecord(&record, &scratch) && log_read_status->ok()) {
-    LOG("DEBUG");
     VersionEdit edit;
     s = edit.DecodeFrom(record);
     if (!s.ok()) {
       break;
     }
-    LOG("DEBUG");
     s = read_buffer_.AddEdit(&edit);
-    LOG("DEBUG");
     if (!s.ok()) {
       break;
     }
@@ -49,9 +44,7 @@ void VersionEditHandlerBase::Iterate(log::Reader& reader,
     if (edit.is_in_atomic_group_) {
       if (read_buffer_.IsFull()) {
         for (auto& e : read_buffer_.replay_buffer()) {
-          LOG("DEBUG");
           s = ApplyVersionEdit(e, &cfd);
-          LOG("DEBUG");
           if (!s.ok()) {
             break;
           }
@@ -63,9 +56,7 @@ void VersionEditHandlerBase::Iterate(log::Reader& reader,
         read_buffer_.Clear();
       }
     } else {
-      LOG("DEBUG");
       s = ApplyVersionEdit(edit, &cfd);
-      LOG("DEBUG");
       if (s.ok()) {
         ++recovered_edits;
       }
@@ -501,19 +492,14 @@ ColumnFamilyData* VersionEditHandler::CreateCfAndInit(
   LOG("CreateCfAndInit,CHECK cf remote_flush:",
       cf_options.server_use_remote_flush ? "true" : "false");
   ColumnFamilyData* cfd = version_set_->CreateColumnFamily(cf_options, &edit);
-  LOG("DEBUG");
   assert(cfd != nullptr);
   cfd->set_initialized();
-  LOG("DEBUG");
   assert(builders_.find(edit.column_family_) == builders_.end());
   builders_.emplace(edit.column_family_,
                     VersionBuilderUPtr(new BaseReferencedVersionBuilder(cfd)));
-  LOG("DEBUG");
   if (track_missing_files_) {
-    LOG("DEBUG");
     cf_to_missing_files_.emplace(edit.column_family_,
                                  std::unordered_set<uint64_t>());
-    LOG("DEBUG");
     cf_to_missing_blob_files_high_.emplace(edit.column_family_,
                                            kInvalidBlobFileNumber);
   }

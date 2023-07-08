@@ -2465,7 +2465,6 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
                 &storage_info_.file_indexer_, user_comparator(),
                 internal_comparator());
   FdWithKeyRange* f = fp.GetNextFile();
-  LOG("");
   while (f != nullptr) {
     if (*max_covering_tombstone_seq > 0) {
       // The remaining files we look at will only contain covered keys, so we
@@ -2475,12 +2474,10 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
     if (get_context.sample()) {
       sample_file_read_inc(f->file_metadata);
     }
-    LOG("");
     bool timer_enabled =
         GetPerfLevel() >= PerfLevel::kEnableTimeExceptForMutex &&
         get_perf_context()->per_level_perf_context_enabled;
     StopWatchNano timer(clock_, timer_enabled /* auto_start */);
-    LOG("");
     *status = table_cache_->Get(
         read_options, *internal_comparator(), *f->file_metadata, ikey,
         &get_context, mutable_cf_options_.prefix_extractor,
@@ -2489,37 +2486,30 @@ void Version::Get(const ReadOptions& read_options, const LookupKey& k,
                         fp.IsHitFileLastInLevel()),
         fp.GetHitFileLevel(), max_file_size_for_l0_meta_pin_);
     // TODO: examine the behavior for corrupted key
-    LOG("");
     if (timer_enabled) {
       PERF_COUNTER_BY_LEVEL_ADD(get_from_table_nanos, timer.ElapsedNanos(),
                                 fp.GetHitFileLevel());
     }
-    LOG("");
     if (!status->ok()) {
       if (db_statistics_ != nullptr) {
         get_context.ReportCounters();
       }
       return;
     }
-    LOG("");
     // report the counters before returning
     if (get_context.State() != GetContext::kNotFound &&
         get_context.State() != GetContext::kMerge &&
         db_statistics_ != nullptr) {
       get_context.ReportCounters();
     }
-    LOG("");
     switch (get_context.State()) {
       case GetContext::kNotFound:
-        LOG("");
         // Keep searching in other files
         break;
       case GetContext::kMerge:
-        LOG("");
         // TODO: update per-level perfcontext user_key_return_count for kMerge
         break;
       case GetContext::kFound:
-        LOG("");
         if (fp.GetHitFileLevel() == 0) {
           RecordTick(db_statistics_, GET_HIT_L0);
         } else if (fp.GetHitFileLevel() == 1) {
@@ -5195,24 +5185,19 @@ VersionSet::VersionSet(const ColumnFamilyOptions& dummy_cf_options,
 VersionSet::~VersionSet() {
   // we need to delete column_family_set_ because its destructor depends on
   // VersionSet
-  LOG("DEBUG");
+  LOG("~VersionSet begin");
   column_family_set_.reset();
-  LOG("DEBUG");
+  LOG("ColumnFamilySet deleted");
   for (auto& file : obsolete_files_) {
     if (file.metadata->table_reader_handle) {
-      LOG("DEBUG");
       table_cache_->Release(file.metadata->table_reader_handle);
-      LOG("DEBUG");
       TableCache::Evict(table_cache_, file.metadata->fd.GetNumber());
     }
-    LOG("DEBUG");
     file.DeleteMetadata();
-    LOG("DEBUG");
   }
-  LOG("DEBUG");
   obsolete_files_.clear();
-  LOG("DEBUG");
   io_status_.PermitUncheckedError();
+  LOG("~VersionSet end");
 }
 
 void VersionSet::Reset() {
@@ -7194,9 +7179,7 @@ ColumnFamilyData* VersionSet::CreateColumnFamily(
                                                                     : "false");
   new_cfd->CreateNewMemtable(*new_cfd->GetLatestMutableCFOptions(),
                              LastSequence());
-  LOG("DEBUG");
   new_cfd->SetLogNumber(edit->log_number_);
-  LOG("DEBUG");
   return new_cfd;
 }
 

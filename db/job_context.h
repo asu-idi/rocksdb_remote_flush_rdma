@@ -95,6 +95,7 @@ struct SuperVersionContext {
       delete s;
     }
     superversions_to_free.clear();
+    LOG("SuperVersionContext::Clean() done 2");
   }
 
   ~SuperVersionContext() {
@@ -213,17 +214,21 @@ struct JobContext {
   // doing potentially slow Clean() with locked DB mutex.
   void Clean() {
     // free superversions
+    LOG("JobContext::Clean()");
     for (auto& sv_context : superversion_contexts) {
       sv_context.Clean();
     }
     // free pending memtables
     for (auto m : memtables_to_free) {
       if (m->IsSharedMemtable()) {
+        LOG("JobContext::Clean() shm_delete");
         shm_delete(reinterpret_cast<char*>(m));
       } else {
+        LOG("JobContext::Clean() delete");
         delete m;
       }
     }
+    LOG("JobContext::Clean() done");
     for (auto l : logs_to_free) {
       delete l;
     }
@@ -231,6 +236,7 @@ struct JobContext {
     memtables_to_free.clear();
     logs_to_free.clear();
     job_snapshot.reset();
+    LOG("JobContext::Clean() done 4");
   }
 
   ~JobContext() {

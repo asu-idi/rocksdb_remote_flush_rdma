@@ -66,21 +66,17 @@ ConSharedArena::~ConSharedArena() {
 }
 
 char* ConSharedArena::AllocateFallback(size_t bytes, bool aligned) {
-  if (bytes > kBlockSize / 4) {
+  if (bytes > kBlockSize) {
     ++irregular_block_num;
     // Object is more than a quarter of our block size.  Allocate it separately
     // to avoid wasting too much space in leftover bytes.
-    LOG("fallback use AllocateNewBlock");
+    LOG("fallback use AllocateNewBlock, kBlockSize= ", kBlockSize);
     return AllocateNewBlock(bytes);
   }
 
   // We waste the remaining space in the current block.
   size_t size = 0;
   char* block_head = nullptr;
-  if (MemMapping::kHugePageSupported && hugetlb_size_ > 0) {
-    size = hugetlb_size_;
-    block_head = AllocateFromHugePage(size);
-  }
   if (!block_head) {
     size = kBlockSize;
     LOG("fallback use AllocateNewBlock");
@@ -145,7 +141,7 @@ char* ConSharedArena::AllocateAligned(size_t bytes, size_t huge_page_size,
     alloc_bytes_remaining_ -= needed;
   } else {
     // AllocateFallback always returns aligned memory
-    LOG("allocate fallback to normal block");
+    LOG("allocate fallback to normal block, alloc size= ", bytes);
     result = AllocateFallback(bytes, true /* aligned */);
   }
   assert((reinterpret_cast<uintptr_t>(result) & (kAlignUnit - 1)) == 0);
@@ -155,7 +151,8 @@ char* ConSharedArena::AllocateAligned(size_t bytes, size_t huge_page_size,
 char* ConSharedArena::AllocateNewBlock(size_t block_bytes) {
   // NOTE: std::make_unique zero-initializes the block so is not appropriate
   // here
-  assert(block_bytes >= 4096 && block_bytes % 4096 == 0);
+  block_bytes =
+      block_bytes % 4096 == 0 ? block_bytes : ((block_bytes / 4096) + 1) * 4096;
   LOG("alloc new block with size=", block_bytes);
   //   char* block = new char[block_bytes];
   char* block = shm_alloc(block_bytes);
@@ -170,6 +167,7 @@ char* ConSharedArena::AllocateNewBlock(size_t block_bytes) {
   allocated_size = block_bytes;
   blocks_memory_ += allocated_size;
   if (tracker_ != nullptr) {
+    LOG("ConSharedArena::AllocateNewBlock tracker_ add:", allocated_size);
     tracker_->Allocate(allocated_size);
   }
   return block;

@@ -51,6 +51,7 @@
 #include "port/port.h"
 #include "rocksdb/configurable.h"
 #include "rocksdb/convenience.h"
+#include "rocksdb/env.h"
 #include "rocksdb/table.h"
 #include "rocksdb/write_buffer_manager.h"
 #include "table/merging_iterator.h"
@@ -95,6 +96,7 @@ ColumnFamilyHandleImpl::~ColumnFamilyHandleImpl() {
           db_->immutable_db_options().avoid_unnecessary_blocking_io;
       db_->PurgeObsoleteFiles(job_context, defer_purge);
     }
+    LOG("traccking test");
     job_context.Clean();
   }
 }
@@ -460,9 +462,16 @@ void* const SuperVersion::kSVInUse = &SuperVersion::dummy;
 void* const SuperVersion::kSVObsolete = nullptr;
 
 SuperVersion::~SuperVersion() {
+  LOG("SuperVersion::~SuperVersion()");
   for (auto td : to_delete) {
-    delete td;
+    if (td->IsSharedMemtable()) {
+      td->~MemTable();
+      shm_delete(reinterpret_cast<char*>(td));
+    } else {
+      delete td;
+    }
   }
+  LOG("SuperVersion::~SuperVersion() end");
 }
 
 SuperVersion* SuperVersion::Ref() {
@@ -720,7 +729,6 @@ ColumnFamilyData::~ColumnFamilyData() {
     deleted = dummy_versions_->Unref();
     assert(deleted);
   }
-  LOG("DEBUG");
   if (mem_ != nullptr) {
     if (this->initial_cf_options().server_use_remote_flush == true) {
       // TODO: check memtable free!
@@ -728,20 +736,7 @@ ColumnFamilyData::~ColumnFamilyData() {
     } else {
       delete mem_->Unref();
     }
-    LOG("DEBUG");
   }
-  autovector<MemTable*> to_delete;
-  LOG("DEBUG");
-  imm_->current()->Unref(&to_delete);
-  for (MemTable* m : to_delete) {
-    LOG("DEBUG");
-    delete m;
-    LOG("DEBUG");
-  }
-  imm_->~MemTableList();  // empty
-  shm_delete(reinterpret_cast<char*>(imm_));
-
-  LOG("DEBUG");
   if (db_paths_registered_) {
     // TODO(cc): considering using ioptions_.fs, currently some tests rely on
     // EnvWrapper, that's the main reason why we use env here.
@@ -753,6 +748,18 @@ ColumnFamilyData::~ColumnFamilyData() {
           id_, name_.c_str());
     }
   }
+  autovector<MemTable*> to_delete;
+  imm_->current()->Unref(&to_delete);
+  for (MemTable* m : to_delete) {
+    if (m->IsSharedMemtable()) {
+      m->~MemTable();
+      shm_delete(reinterpret_cast<char*>(m));
+    } else {
+      delete m;
+    }
+  }
+  imm_->~MemTableList();
+  shm_delete(reinterpret_cast<char*>(imm_));
 }
 
 bool ColumnFamilyData::CHECKShared() {
@@ -957,14 +964,12 @@ bool ColumnFamilyData::UnrefAndTryDelete() {
   assert(old_refs > 0);
   if (old_refs == 1) {
     assert(super_version_ == nullptr);
-    LOG("DEBUG");
     if (is_shared()) {
       this->~ColumnFamilyData();
       shm_delete(reinterpret_cast<char*>(this));
     } else {
       delete this;
     }
-    LOG("DEBUG");
     return true;
   }
 
@@ -978,9 +983,7 @@ bool ColumnFamilyData::UnrefAndTryDelete() {
       // Note: sv will delete this ColumnFamilyData during Cleanup()
       assert(sv->cfd == this);
       sv->Cleanup();
-      LOG("DEBUG");
       delete sv;
-      LOG("DEBUG");
       return true;
     }
   }
@@ -1375,17 +1378,15 @@ void ColumnFamilyData::CreateNewMemtable(
   if (mem_ != nullptr) {
     if (this->initial_cf_options().server_use_remote_flush == true) {
       // TODO: check memtable free!
-      LOG("CHECK");
+      LOG("mem_->Unref called");
       mem_->Unref();
     } else {
       delete mem_->Unref();
     }
-    LOG("DEBUG");
   }
   MemTable* ptr = ConstructNewMemtable(mutable_cf_options, earliest_seq);
   SetMemtable(ptr);
   mem_->Ref();
-  LOG("DEBUG");
 }
 
 bool ColumnFamilyData::NeedsCompaction() const {
@@ -1504,7 +1505,6 @@ SuperVersion* ColumnFamilyData::GetReferencedSuperVersion(DBImpl* db) {
 }
 
 SuperVersion* ColumnFamilyData::GetThreadLocalSuperVersion(DBImpl* db) {
-  LOG("local_sv_ check: GetThreadLocalSuperVersion() %s", GetName().c_str());
   // The SuperVersion is cached in thread local storage to avoid
   // acquiring mutex when SuperVersion does not change since the last
   // use. When a new SuperVersion is installed, the compaction or flush
@@ -1555,7 +1555,6 @@ SuperVersion* ColumnFamilyData::GetThreadLocalSuperVersion(DBImpl* db) {
 }
 
 bool ColumnFamilyData::ReturnThreadLocalSuperVersion(SuperVersion* sv) {
-  LOG("local_sv_ check: ReturnThreadLocalSuperVersion() %s", GetName().c_str());
   assert(sv != nullptr);
   // Put the SuperVersion back
   void* expected = SuperVersion::kSVInUse;
@@ -1628,7 +1627,6 @@ void ColumnFamilyData::InstallSuperVersion(
 }
 
 void ColumnFamilyData::ResetThreadLocalSuperVersions() {
-  LOG("local_sv_ check: ResetThreadLocalSuperVersions() %s", GetName().c_str());
   autovector<void*> sv_ptrs;
   local_sv_->Scrape(&sv_ptrs, SuperVersion::kSVObsolete);
   for (auto ptr : sv_ptrs) {
@@ -1840,6 +1838,7 @@ ColumnFamilySet::ColumnFamilySet(
 }
 
 ColumnFamilySet::~ColumnFamilySet() {
+  LOG("~ColumnFamilySet: delete column_family_data_");
   while (column_family_data_.size() > 0) {
     // cfd destructor will delete itself from column_family_data_
     auto cfd = column_family_data_.begin()->second;
@@ -1847,9 +1846,11 @@ ColumnFamilySet::~ColumnFamilySet() {
     last_ref = cfd->UnrefAndTryDelete();
     assert(last_ref);
   }
+  LOG("~ColumnFamilySet: delete dummy_cfd_");
   bool dummy_last_ref __attribute__((__unused__));
   dummy_last_ref = dummy_cfd_->UnrefAndTryDelete();
   assert(dummy_last_ref);
+  LOG("~ColumnFamilySet: finish");
 }
 
 ColumnFamilyData* ColumnFamilySet::GetDefault() const {

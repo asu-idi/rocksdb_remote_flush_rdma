@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cstddef>
 #include <cstring>
 #include <limits>
@@ -238,6 +239,7 @@ bool MemTable::CHECKShared() {
   return ret;
 }
 void MemTable::Pack() {
+  assert(IsSharedMemtable());
   // table_.Pack();
   // range_del_table_.Pack();
   LOG("start MemTable::VersionEdit::Pack()");

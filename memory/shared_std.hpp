@@ -25,12 +25,12 @@ class STDSharedMemoryAllocator {
   STDSharedMemoryAllocator(const STDSharedMemoryAllocator<U> &other) noexcept {}
 
   auto allocate(std::size_t n) -> T * {
-    LOG("allocate", n);
+    // LOG("allocate", n);
     return static_cast<T *>(static_cast<void *>(shm_alloc(n * sizeof(T))));
   }
 
   void deallocate(T *p, std::size_t n) noexcept {
-    LOG("deallocate", n, ' ', std::hex, p);
+    // LOG("deallocate", n, ' ', std::hex, p);
     return shm_delete(reinterpret_cast<char *>(p));
   }
 

@@ -1004,8 +1004,6 @@ void ImmutableOptions::UnPack(ColumnFamilyOptions& cf_options) {
   }
   ImmutableOptions ret(immutable_db_options, unpack_cf_options);
   *this = ret;
-  // TODO:[NOW]
-  // table_factory.reset(new mock::MockTableFactory());
 
   std::string table_factory_name;
   table_factory_name.resize(options_db_path_.begin()->second);
@@ -1016,10 +1014,12 @@ void ImmutableOptions::UnPack(ColumnFamilyOptions& cf_options) {
   } else if (table_factory_name == "PlainTableFactory") {
     table_factory.reset(NewPlainTableFactory());
   }
-  //  else if (table_factory_name == "MockTable") {
-  //   table_factory.reset(new mock::MockTableFactory());
-  // }
-  else {
+  // todo: enable this to pass flush_job_test
+  else if (table_factory_name == "MockTable") {
+    table_factory.reset(new MockTableFactory());
+  } else {
+    LOG("table_factory_name is not supported", table_factory_name);
+    assert(false);
     table_factory.reset(NewBlockBasedTableFactory());
   }
 
