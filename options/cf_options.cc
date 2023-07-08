@@ -967,6 +967,12 @@ void ImmutableOptions::Pack(ColumnFamilyOptions& cf_options) {
     LOG("ImmutableOptions is already packaged");
     return;
   }
+  std::string table_factory_name = cf_options.table_factory->Name();
+  void* table_factory_name_ptr = malloc(table_factory_name.length());
+  memcpy(table_factory_name_ptr, table_factory_name.c_str(),
+         table_factory_name.length());
+  options_db_path_.emplace_back(table_factory_name_ptr,
+                                table_factory_name.length());
   dumped_db_options_ = ImmutableDBOptions::Pack();
   dumped_cf_options_ = cf_options.Pack(fs);
   for (auto& path : cf_options.cf_paths) {
@@ -990,7 +996,7 @@ void ImmutableOptions::UnPack(ColumnFamilyOptions& cf_options) {
       *this->ImmutableDBOptions::UnPack(dumped_db_options_);
   ColumnFamilyOptions unpack_cf_options =
       *cf_options.Unpack(dumped_cf_options_);
-  for (size_t i = 0; i < options_db_path_.size(); i += 2) {
+  for (size_t i = 1; i < options_db_path_.size(); i += 2) {
     std::string name = reinterpret_cast<char*>(options_db_path_[i].first);
     auto target_size =
         *reinterpret_cast<uint64_t*>(options_db_path_[i + 1].first);
@@ -998,7 +1004,25 @@ void ImmutableOptions::UnPack(ColumnFamilyOptions& cf_options) {
   }
   ImmutableOptions ret(immutable_db_options, unpack_cf_options);
   *this = ret;
-  table_factory.reset(new mock::MockTableFactory());
+  // TODO:[NOW]
+  // table_factory.reset(new mock::MockTableFactory());
+
+  std::string table_factory_name;
+  table_factory_name.resize(options_db_path_.begin()->second);
+  memcpy(&table_factory_name[0], options_db_path_.begin()->first,
+         options_db_path_.begin()->second);
+  if (table_factory_name == "BlockBasedTableFactory") {
+    table_factory.reset(NewBlockBasedTableFactory());
+  } else if (table_factory_name == "PlainTableFactory") {
+    table_factory.reset(NewPlainTableFactory());
+  }
+  //  else if (table_factory_name == "MockTable") {
+  //   table_factory.reset(new mock::MockTableFactory());
+  // }
+  else {
+    table_factory.reset(NewBlockBasedTableFactory());
+  }
+
   options_db_path_.clear();
   dumped_cf_options_ = nullptr;
   dumped_db_options_ = nullptr;
