@@ -48,6 +48,7 @@
 #include "rocksdb/system_clock.h"
 #include "rocksdb/table.h"
 #include "rocksdb/table_properties.h"
+#include "rocksdb/types.h"
 #include "table/merging_iterator.h"
 #include "table/table_builder.h"
 #include "table/two_level_iterator.h"
@@ -160,6 +161,7 @@ void RemoteFlushJob::blockUnusedDataForTest() {
          0x0, sizeof(MutableCFOptions));
   memset(reinterpret_cast<void*>(const_cast<FileOptions*>(&file_options_)), 0x0,
          sizeof(FileOptions));
+  job_context_->blockUnusedDataForTest();
   // job_context_ = reinterpret_cast<JobContext*>(0x1000);
   // assert(job_context_ == nullptr);
   // db_directory_ = reinterpret_cast<FSDirectory*>(0x1000);
@@ -181,6 +183,7 @@ void RemoteFlushJob::unblockUnusedDataForTest() {
   // block_.clear();
   base_->unblockUnusedDataForTest();
   versions_->unblockUnusedDataForTest();
+  job_context_->unblockUnusedDataForTest();
 }
 bool RemoteFlushJob::CHECKShared() {
   bool ret = singleton<SharedContainer>::Instance().find(
@@ -239,7 +242,7 @@ void RemoteFlushJob::Pack() {
   LOG("base pack finished");
   versions_->Pack();
   LOG("versions pack finished");
-
+  job_context_->Pack();
   // void* prefetch = nullptr;
   // prefetch = malloc(sizeof(bool));
   // memcpy(prefetch, &versions_->db_options()->allow_2pc, sizeof(bool));
@@ -264,6 +267,7 @@ void RemoteFlushJob::UnPack() {
   if (base_ != nullptr) base_->UnPack();
   versions_->UnPack();
   clock_ = db_options_.clock;
+  job_context_->UnPack();
   // void* prefetch = nullptr;
   // memcpy(reinterpret_cast<void*>(
   //            const_cast<bool*>(&versions_->db_options()->allow_2pc)),
@@ -524,7 +528,9 @@ Status RemoteFlushJob::MemPurge() {
         ioptions->logger, true /* internal key corruption is not ok */,
         existing_snapshots_.empty() ? 0 : existing_snapshots_.back());
     assert(job_context_);
-    SequenceNumber job_snapshot_seq = job_context_->GetJobSnapshotSequence();
+    SequenceNumber job_snapshot_seq =
+        *(reinterpret_cast<SequenceNumber*>(job_context_->data_[0].first));
+    //  job_context_->GetJobSnapshotSequence();
     const std::atomic<bool> kManualCompactionCanceledFalse{false};
     CompactionIterator c_iter(
         // DEBUG: cfd_ : const InternalKeyComparator internal_comparator_
@@ -951,7 +957,8 @@ Status RemoteFlushJob::WriteLevel0Table() {
           db_id_, db_session_id_, 0 /* target_file_size */,
           meta_.fd.GetNumber());
       const SequenceNumber job_snapshot_seq =
-          job_context_->GetJobSnapshotSequence();
+          *(reinterpret_cast<SequenceNumber*>(job_context_->data_[0].first));
+      // job_context_->GetJobSnapshotSequence();
       s = TrimBuildTable(
           // DEBUG: cfd_ : tableCache() internal_stats()
           dbname_, versions_, db_options_, tboptions, file_options_,
