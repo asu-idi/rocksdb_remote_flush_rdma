@@ -161,7 +161,7 @@ class RemoteFlushJob {
   const ImmutableDBOptions& db_options_;
   const MutableCFOptions& mutable_cf_options_;
   const FileOptions file_options_;
-  JobContext* job_context_;             // TODO
+  JobContext* job_context_;
   FSDirectory* db_directory_;           // TODO
   FSDirectory* output_file_directory_;  // TODO
   TableProperties table_properties_;    // builtin

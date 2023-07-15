@@ -9,6 +9,9 @@
 
 #pragma once
 
+#include <cassert>
+#include <cstdlib>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -16,6 +19,7 @@
 #include "db/log_writer.h"
 #include "db/version_set.h"
 #include "memory/shared_mem_basic.h"
+#include "rocksdb/types.h"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -107,6 +111,15 @@ struct SuperVersionContext {
 };
 
 struct JobContext {
+  void Pack();
+  void UnPack();
+  void blockUnusedDataForTest();
+  void unblockUnusedDataForTest();
+  void CHECKShared();
+  bool is_packaged_ = false;
+  std::vector<std::pair<void*, size_t>> block_;
+  std::vector<std::pair<void*, size_t>> data_;
+
   inline bool HaveSomethingToDelete() const {
     return !(full_scan_candidate_files.empty() && sst_delete_files.empty() &&
              blob_delete_files.empty() && log_delete_files.empty() &&
@@ -244,5 +257,72 @@ struct JobContext {
     assert(logs_to_free.size() == 0);
   }
 };
+
+inline void JobContext::Pack() {
+  if (is_packaged_) {
+    LOG("JobContext::Pack() already packaged");
+    return;
+  }
+  // prefetch GetSnapShotSeqNum. job_id. shared memtables_to_free(retval)
+  SequenceNumber seqnum = this->GetJobSnapshotSequence();
+  void* mem = new SequenceNumber;
+  memcpy(mem, &seqnum, sizeof(SequenceNumber));
+  data_.emplace_back(mem, sizeof(SequenceNumber));
+  mem = new int(job_id);
+  data_.emplace_back(mem, sizeof(int));
+  for (auto v : memtables_to_free) {
+    mem = malloc(sizeof(MemTable*));
+    memcpy(mem, &v, sizeof(MemTable*));
+    data_.emplace_back(mem, sizeof(MemTable*));
+  }
+
+  is_packaged_ = true;
+}
+
+inline void JobContext::UnPack() {
+  if (!is_packaged_) {
+    LOG("JobContext::UnPack() not packaged");
+    return;
+  }
+  memcpy(&job_id, data_[1].first, data_[1].second);
+  assert(memtables_to_free.size() == 0);
+  memtables_to_free.resize(data_.size() - 2);
+  for (size_t i = 2; i < data_.size(); i++) {
+    memcpy(&memtables_to_free[i - 2], data_[i].first, data_[i].second);
+    free(data_[i].first);
+  }
+  is_packaged_ = false;
+}
+inline void JobContext::blockUnusedDataForTest() {
+  void* mem = malloc(sizeof(std::vector<ObsoleteBlobFileInfo>));
+  memcpy(mem, &blob_delete_files, sizeof(std::vector<ObsoleteBlobFileInfo>));
+  memset(&blob_delete_files, 0x1, sizeof(std::vector<ObsoleteBlobFileInfo>));
+  block_.push_back(
+      std::make_pair(mem, sizeof(std::vector<ObsoleteBlobFileInfo>)));
+
+  mem = malloc(sizeof(job_id));
+  memcpy(mem, &job_id, sizeof(job_id));
+  memset(&job_id, 0x1, sizeof(job_id));
+  block_.push_back(std::make_pair(mem, sizeof(job_id)));
+  mem = malloc(sizeof(logs_to_free));
+  memcpy(mem, &logs_to_free, sizeof(logs_to_free));
+  memset(&logs_to_free, 0x1, sizeof(logs_to_free));
+  block_.push_back(std::make_pair(mem, sizeof(logs_to_free)));
+}
+inline void JobContext::unblockUnusedDataForTest() {
+  if (block_.empty()) {
+    LOG("JobContext::unblockUnusedDataForTest() block empty");
+    return;
+  }
+  memcpy(&blob_delete_files, block_[0].first, block_[0].second);
+  free(block_[0].first);
+  memcpy(&job_id, block_[1].first, block_[1].second);
+  free(block_[1].first);
+  memcpy(&logs_to_free, block_[2].first, block_[2].second);
+  free(block_[2].first);
+
+  block_.clear();
+}
+inline void JobContext::CHECKShared() {}
 
 }  // namespace ROCKSDB_NAMESPACE
