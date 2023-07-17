@@ -189,6 +189,9 @@ class DBImpl : public DB {
   using DB::Resume;
   Status Resume() override;
 
+  using DB::ListenAndScheduleFlushJob;
+  Status ListenAndScheduleFlushJob() override;
+
   using DB::Put;
   Status Put(const WriteOptions& options, ColumnFamilyHandle* column_family,
              const Slice& key, const Slice& value) override;
@@ -1702,6 +1705,11 @@ class DBImpl : public DB {
 
     Env::Priority thread_pri_;
   };
+  struct RemoteFlushThreadArg {
+    DBImpl* db_;
+    Env::Priority thread_pri_;
+    int sockfd_;
+  };
 
   // Information for a manual compaction
   struct ManualCompactionState {
@@ -2041,7 +2049,7 @@ class DBImpl : public DB {
   ColumnFamilyData* GetColumnFamilyDataByName(const std::string& cf_name);
 
   void MaybeScheduleFlushOrCompaction();
-  static void RemoteFlushListener();
+  void RemoteFlushListener();
 
   struct FlushRequest {
     FlushReason flush_reason;
@@ -2069,8 +2077,11 @@ class DBImpl : public DB {
   static void BGWorkBottomCompaction(void* arg);
   static void BGWorkFlush(void* arg);
   static void BGWorkPurge(void* arg);
+  static void BGWorkRemoteFlush(void* arg);
+  static void UnscheduleRemoteFlushCallback(void* arg);
   static void UnscheduleCompactionCallback(void* arg);
   static void UnscheduleFlushCallback(void* arg);
+  void BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri);
   void BackgroundCallCompaction(PrepickedCompaction* prepicked_compaction,
                                 Env::Priority thread_pri);
   void BackgroundCallFlush(Env::Priority thread_pri);

@@ -10,10 +10,24 @@
 
 #include <stdint.h>
 
+#include <atomic>
+#include <cassert>
+#include <thread>
+
+#include "db/remote_flush_job.h"
 #include "rocksdb/configurable.h"
 #ifdef OS_SOLARIS
 #include <alloca.h>
 #endif
+
+// for socket API
+#ifdef __linux
+#include <netinet/in.h>
+#include <pthread.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif  //__linux
+
 #include <algorithm>
 #include <cinttypes>
 #include <cstdio>
@@ -153,7 +167,6 @@ void DumpSupportInfo(Logger* logger) {
 }
 }  // namespace
 
-// TODO: cf_options from DB::Open use cfs.begin().options
 DBImpl::DBImpl(const DBOptions& options, const std::string& dbname,
                const bool seq_per_batch, const bool batch_per_txn,
                bool read_only)
@@ -294,6 +307,117 @@ DBImpl::DBImpl(const DBOptions& options, const std::string& dbname,
   if (write_buffer_manager_) {
     wbm_stall_.reset(new WBMStallInterface());
   }
+}
+
+void DBImpl::BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri) {
+  TEST_SYNC_POINT("DBImpl::BackgroundCallRemoteFlush:Start");
+  int valread;
+  size_t magic = rand();
+  size_t buffer = 0;
+  char* buffer_ptr = reinterpret_cast<char*>(&buffer);
+
+  valread = read(sockfd, buffer_ptr, sizeof(size_t));
+  LOG("Received RemoteFlushJob ptr: ", std::hex,
+      reinterpret_cast<void*>(buffer), std::dec, ' ', valread,
+      " bytes in total");
+  auto* flush_job = reinterpret_cast<RemoteFlushJob*>(buffer);
+  flush_job->RunLocal();
+  send(sockfd, &magic, sizeof(size_t), 0);
+  close(sockfd);
+  LOG("Sent finish signal: ", magic, " DBImpl::BackgroundCallRemoteFlush done");
+  bg_flush_scheduled_--;
+  TEST_SYNC_POINT("DBImpl::BackgroundCallRemoteFlush:Finish");
+}
+
+void DBImpl::UnscheduleRemoteFlushCallback(void* arg) {
+  LOG("DBImpl::UnscheduleRemoteFlushCallback");
+}
+
+void DBImpl::BGWorkRemoteFlush(void* arg) {
+  RemoteFlushThreadArg fta = *(reinterpret_cast<RemoteFlushThreadArg*>(arg));
+  delete reinterpret_cast<RemoteFlushThreadArg*>(arg);
+
+  IOSTATS_SET_THREAD_POOL_ID(fta.thread_pri_);
+  TEST_SYNC_POINT("DBImpl::BGWorkRemoteFlush:Start");
+  LOG("Remote flush job started: ", fta.sockfd_);
+  static_cast_with_check<DBImpl>(fta.db_)->BackgroundCallRemoteFlush(
+      fta.sockfd_, fta.thread_pri_);
+  LOG("Remote flush job finished: ", fta.sockfd_);
+  TEST_SYNC_POINT("DBImpl::BGWorkRemoteFlush:Finish");
+}
+
+Status DBImpl::ListenAndScheduleFlushJob() {
+  mutex_.Lock();
+  if (!opened_successfully_ || bg_work_paused_ > 0 ||
+      (error_handler_.IsBGWorkStopped() &&
+       !error_handler_.IsRecoveryInProgress()) ||
+      shutting_down_.load(std::memory_order_acquire)) {
+    mutex_.Unlock();
+    return Status::Aborted("DB is not working");
+  }
+  mutex_.Unlock();
+
+  int server_fd, new_socket;
+  struct sockaddr_in address;
+  int opt = 1;
+  int addrlen = sizeof(address);
+  if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
+    LOG("socket failed");
+    return Status::IOError("socket failed");
+  }
+  if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt,
+                 sizeof(opt))) {
+    LOG("setsockopt failed");
+    return Status::IOError("setsockopt failed");
+  }
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = INADDR_ANY;
+  address.sin_port = htons(8080);
+  if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
+    LOG("bind failed");
+    return Status::IOError("bind failed");
+  }
+  if (listen(server_fd, 3) < 0) {
+    LOG("listen failed");
+    return Status::IOError("listen failed");
+  }
+  while (true) {
+    if ((new_socket = accept(server_fd, (struct sockaddr*)&address,
+                             (socklen_t*)&addrlen)) < 0) {
+      LOG("accept failed");
+      return Status::IOError("accept failed");
+    }
+    mutex_.Lock();
+    if (!opened_successfully_ || bg_work_paused_ > 0 ||
+        (error_handler_.IsBGWorkStopped() &&
+         !error_handler_.IsRecoveryInProgress()) ||
+        shutting_down_.load(std::memory_order_acquire)) {
+      mutex_.Unlock();
+      return Status::Aborted("DB is not working");
+    }
+    Status s = Status::OK();
+    auto bg_job_limits = GetBGJobLimits();
+    bool is_flush_pool_empty =
+        env_->GetBackgroundThreads(Env::Priority::HIGH) == 0;
+    if (!is_flush_pool_empty &&
+        bg_flush_scheduled_ < bg_job_limits.max_flushes) {
+      bg_flush_scheduled_++;
+      auto* fta = new RemoteFlushThreadArg();
+      fta->thread_pri_ = Env::Priority::HIGH;
+      fta->db_ = this;
+      fta->sockfd_ = new_socket;
+      env_->Schedule(&DBImpl::BGWorkRemoteFlush, fta, Env::Priority::HIGH, this,
+                     &DBImpl::UnscheduleRemoteFlushCallback);
+      LOG("Scheduled worker thread for remote flush job: ", new_socket);
+    } else {
+      LOG("worker pool is full:", is_flush_pool_empty, " ",
+          unscheduled_flushes_, " ", bg_flush_scheduled_, " ",
+          bg_job_limits.max_flushes);
+    }
+    mutex_.Unlock();
+  }
+
+  return Status::OK();
 }
 
 Status DBImpl::Resume() {
