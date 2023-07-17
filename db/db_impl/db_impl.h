@@ -38,6 +38,7 @@
 #include "db/pre_release_callback.h"
 #include "db/range_del_aggregator.h"
 #include "db/read_callback.h"
+#include "db/remote_flush_job.h"
 #include "db/seqno_to_time_mapping.h"
 #include "db/snapshot_checker.h"
 #include "db/snapshot_impl.h"

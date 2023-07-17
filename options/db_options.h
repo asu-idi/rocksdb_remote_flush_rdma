@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -113,6 +114,7 @@ struct ImmutableDBOptions {
   bool enforce_single_del_contracts;
 
   size_t worker_use_remote_flush = 0;
+  size_t server_remote_flush = 0;
 
   void* option_file_path = nullptr;
   bool is_pacakged = false;

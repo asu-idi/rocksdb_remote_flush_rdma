@@ -65,7 +65,8 @@ SpecialEnv::SpecialEnv(Env* base, bool time_elapse_only_sleep)
   non_writable_count_ = 0;
   table_write_callback_ = nullptr;
 }
-DBTestBase::DBTestBase(const std::string path, bool env_do_fsync)
+DBTestBase::DBTestBase(const std::string path, bool env_do_fsync,
+                       bool remote_enable)
     : mem_env_(nullptr), encrypted_env_(nullptr), option_config_(kDefault) {
   Env* base_env = Env::Default();
   ConfigOptions config_options;
@@ -93,8 +94,12 @@ DBTestBase::DBTestBase(const std::string path, bool env_do_fsync)
   dbname_ = test::PerThreadDBPath(env_, path);
   alternative_wal_dir_ = dbname_ + "/wal";
   alternative_db_log_dir_ = dbname_ + "/db_log_dir";
-  auto options = CurrentOptions();
-  assert(options.server_use_remote_flush == true);
+  Options options;
+  if (remote_enable) {
+    options = CurrentRemoteOptions();
+  } else {
+    options = CurrentOptions();
+  }
   options.env = env_;
   auto delete_options = options;
   delete_options.wal_dir = alternative_wal_dir_;
@@ -316,9 +321,22 @@ Options DBTestBase::CurrentOptions(
   return GetOptions(option_config_, GetDefaultOptions(), options_override);
 }
 
+Options DBTestBase::CurrentRemoteOptions(
+    const anon::OptionsOverride& options_override) const {
+  return GetOptions(option_config_, GetRemoteEnabledOptions(),
+                    options_override);
+}
+
 Options DBTestBase::CurrentOptions(
     const Options& default_options,
     const anon::OptionsOverride& options_override) const {
+  return GetOptions(option_config_, default_options, options_override);
+}
+
+Options DBTestBase::CurrentRemoteOptions(
+    const Options& default_options,
+    const anon::OptionsOverride& options_override) const {
+  assert(default_options.server_remote_flush != 0);
   return GetOptions(option_config_, default_options, options_override);
 }
 
@@ -330,6 +348,22 @@ Options DBTestBase::GetDefaultOptions() const {
   options.max_open_files = 5000;
   options.wal_recovery_mode = WALRecoveryMode::kTolerateCorruptedTailRecords;
   options.compaction_pri = CompactionPri::kByCompensatedSize;
+  options.env = env_;
+  if (!env_->skip_fsync_) {
+    options.track_and_verify_wals_in_manifest = true;
+  }
+  return options;
+}
+
+Options DBTestBase::GetRemoteEnabledOptions() const {
+  Options options;
+  options.write_buffer_size = 4090 * 4096;
+  options.target_file_size_base = 2 * 1024 * 1024;
+  options.max_bytes_for_level_base = 10 * 1024 * 1024;
+  options.max_open_files = 5000;
+  options.wal_recovery_mode = WALRecoveryMode::kTolerateCorruptedTailRecords;
+  options.compaction_pri = CompactionPri::kByCompensatedSize;
+  options.server_remote_flush = 1;
   options.server_use_remote_flush = true;
   // options.worker_use_remote_flush = true;
   options.env = env_;

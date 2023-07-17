@@ -1404,6 +1404,7 @@ struct DBOptions {
   bool enforce_single_del_contracts = true;
 
   size_t worker_use_remote_flush = 0;
+  size_t server_remote_flush = 0;
 };
 
 // Options to control the behavior of a database (passed to DB::Open)

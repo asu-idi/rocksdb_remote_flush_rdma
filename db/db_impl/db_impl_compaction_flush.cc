@@ -215,8 +215,8 @@ Status DBImpl::FlushMemTableToOutputFile(
   // picking so that no new snapshot can be taken between the two functions.
   LOG("Construct flush job");
   if (cfd->GetLatestCFOptions().server_use_remote_flush) {
-    LOG("Construct traditional flush job");
-    FlushJob flush_job(
+    LOG("Construct remote flush job");
+    RemoteFlushJob flush_job(
         dbname_, cfd, immutable_db_options_, mutable_cf_options,
         max_memtable_id, file_options_for_compaction_, versions_.get(), &mutex_,
         &shutting_down_, snapshot_seqs, earliest_write_conflict_snapshot,
@@ -380,6 +380,7 @@ Status DBImpl::FlushMemTableToOutputFile(
     return s;
 
   } else {
+    LOG("Construct traditional flush job");
     FlushJob flush_job(
         dbname_, cfd, immutable_db_options_, mutable_cf_options,
         max_memtable_id, file_options_for_compaction_, versions_.get(), &mutex_,
@@ -2830,44 +2831,44 @@ void DBImpl::MaybeScheduleFlushOrCompaction() {
 }
 
 void DBImpl::RemoteFlushListener() {
-  int shm_ptr = -1;
-  auto echo_finish = [&shm_ptr]() {
-    while (true) {
-      int fd_ret =
-          open("/tmp/shared_flush_result", O_RDWR | O_CREAT | O_EXCL, 0644);
-      if (fd_ret == -1) {
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-      } else {
-        ftruncate(fd_ret, 0);
-        lseek(fd_ret, 0, SEEK_SET);
-        write(fd_ret, &shm_ptr, sizeof(int));
-        close(fd_ret);
-        break;
-      }
-    }
-  };
+  // int shm_ptr = -1;
+  // auto echo_finish = [&shm_ptr]() {
+  //   while (true) {
+  //     int fd_ret =
+  //         open("/tmp/shared_flush_result", O_RDWR | O_CREAT | O_EXCL, 0644);
+  //     if (fd_ret == -1) {
+  //       std::this_thread::sleep_for(std::chrono::seconds(1));
+  //     } else {
+  //       ftruncate(fd_ret, 0);
+  //       lseek(fd_ret, 0, SEEK_SET);
+  //       write(fd_ret, &shm_ptr, sizeof(int));
+  //       close(fd_ret);
+  //       break;
+  //     }
+  //   }
+  // };
 
-  while (true) {
-    int fd = open("/tmp/shared_flush_task", O_RDWR | O_CREAT | O_EXCL, 0644);
-    if (fd == -1) {
-      std::this_thread::sleep_for(std::chrono::seconds(1));
-    } else {
-      ssize_t nread = read(fd, &shm_ptr, sizeof(int));
-      if (nread == -1 || nread == 0) {
-        close(fd);
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-        continue;
-      } else {
-        ftruncate(fd, 0);
-        lseek(fd, 0, SEEK_SET);
-        close(fd);
-        auto* job = reinterpret_cast<RemoteFlushJob*>(shm_ptr);
-        job->UnPack();
-        job->RunLocal();
-        echo_finish();
-      }
-    }
-  }
+  // while (true) {
+  //   int fd = open("/tmp/shared_flush_task", O_RDWR | O_CREAT | O_EXCL, 0644);
+  //   if (fd == -1) {
+  //     std::this_thread::sleep_for(std::chrono::seconds(1));
+  //   } else {
+  //     ssize_t nread = read(fd, &shm_ptr, sizeof(int));
+  //     if (nread == -1 || nread == 0) {
+  //       close(fd);
+  //       std::this_thread::sleep_for(std::chrono::seconds(1));
+  //       continue;
+  //     } else {
+  //       ftruncate(fd, 0);
+  //       lseek(fd, 0, SEEK_SET);
+  //       close(fd);
+  //       auto* job = reinterpret_cast<RemoteFlushJob*>(shm_ptr);
+  // job->UnPack();
+  // job->RunLocal();
+  //       echo_finish();
+  //     }
+  //   }
+  // }
 }
 
 DBImpl::BGJobLimits DBImpl::GetBGJobLimits() const {

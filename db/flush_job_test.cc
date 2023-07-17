@@ -42,10 +42,7 @@ class FlushJobTestBase : public testing::Test {
         table_cache_(NewLRUCache(50000, 16)),
         write_buffer_manager_(db_options_.db_write_buffer_size),
         shutting_down_(false),
-        mock_table_factory_(new mock::MockTableFactory()) {
-    options_.server_use_remote_flush = true;  // trigger remote flush
-    // db_options_.worker_use_remote_flush = true;
-  }
+        mock_table_factory_(new mock::MockTableFactory()) {}
 
   virtual ~FlushJobTestBase() {
     if (getenv("KEEP_DB")) {
@@ -118,9 +115,10 @@ class FlushJobTestBase : public testing::Test {
     db_options_.db_paths.emplace_back(dbname_,
                                       std::numeric_limits<uint64_t>::max());
     db_options_.statistics = CreateDBStatistics();
+    db_options_.server_remote_flush = 1;
 
     cf_options_.comparator = ucmp_;
-    cf_options_.server_use_remote_flush = true;
+    // cf_options_.server_use_remote_flush = true;
 
     std::vector<ColumnFamilyDescriptor> column_families;
     cf_options_.table_factory = mock_table_factory_;
