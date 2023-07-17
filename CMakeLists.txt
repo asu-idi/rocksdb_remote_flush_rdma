@@ -1340,6 +1340,7 @@ if(WITH_TESTS)
         db/db_dynamic_level_test.cc
         db/db_encryption_test.cc
         db/db_flush_test.cc
+        db/db_remote_flush_test.cc
         db/db_inplace_update_test.cc
         db/db_io_failure_test.cc
         db/db_iter_test.cc
@@ -1377,6 +1378,7 @@ if(WITH_TESTS)
         db/file_indexer_test.cc
         db/filename_test.cc
         db/flush_job_test.cc
+        db/remote_flush_job_test.cc
         db/import_column_family_test.cc
         db/listener_test.cc
         db/log_test.cc

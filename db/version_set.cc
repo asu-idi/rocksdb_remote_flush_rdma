@@ -5157,7 +5157,7 @@ VersionSet::VersionSet(const std::string& dbname,
     : column_family_set_(new ColumnFamilySet(
           dbname, _db_options, storage_options, table_cache,
           write_buffer_manager, write_controller, block_cache_tracer, io_tracer,
-          db_id, db_session_id, ColumnFamilyOptions())),
+          db_id, db_session_id)),
       table_cache_(table_cache),
       env_(_db_options->env),
       fs_(_db_options->fs, io_tracer),
@@ -5206,10 +5206,9 @@ void VersionSet::Reset() {
     // https://github.com/facebook/rocksdb/blob/v7.3.1/db/db_impl/db_impl_open.cc#L527
     // Note: we may not be able to recover db_id from MANIFEST if
     // options.write_dbid_to_manifest is false (default).
-    column_family_set_.reset(
-        new ColumnFamilySet(dbname_, db_options_, file_options_, table_cache_,
-                            wbm, wc, block_cache_tracer_, io_tracer_, db_id_,
-                            db_session_id_, ColumnFamilyOptions()));
+    column_family_set_.reset(new ColumnFamilySet(
+        dbname_, db_options_, file_options_, table_cache_, wbm, wc,
+        block_cache_tracer_, io_tracer_, db_id_, db_session_id_));
   }
   db_id_.clear();
   next_file_number_.store(2);
@@ -5262,6 +5261,7 @@ Status VersionSet::ProcessManifestWrites(
     std::deque<ManifestWriter>& writers, InstrumentedMutex* mu,
     FSDirectory* dir_contains_current_file, bool new_descriptor_log,
     const ColumnFamilyOptions* new_cf_options) {
+  LOG("ProcessManifestWrites begin");
   mu->AssertHeld();
   assert(!writers.empty());
   ManifestWriter& first_writer = writers.front();
@@ -5649,6 +5649,8 @@ Status VersionSet::ProcessManifestWrites(
       assert(batch_edits.size() == 1);
       assert(new_cf_options != nullptr);
       assert(max_last_sequence == descriptor_last_sequence_);
+      LOG("ProcessManifestWrites checkpoint 1: carry cf_option remote_flush: ",
+          new_cf_options->server_use_remote_flush ? "true" : "false");
       CreateColumnFamily(*new_cf_options, first_writer.edit_list.front());
     } else if (first_writer.edit_list.front()->is_column_family_drop_) {
       assert(batch_edits.size() == 1);
@@ -7147,7 +7149,8 @@ void VersionSet::GetObsoleteFiles(std::vector<ObsoleteFileInfo>* files,
 
 ColumnFamilyData* VersionSet::CreateColumnFamily(
     const ColumnFamilyOptions& cf_options, const VersionEdit* edit) {
-  LOG("call VersionSet::CreateColumnFamily");
+  LOG("call VersionSet::CreateColumnFamily cf_option remote_flush:",
+      cf_options.server_use_remote_flush ? "true" : "false");
   assert(edit->is_column_family_add_);
 
   MutableCFOptions dummy_cf_options;
@@ -7172,8 +7175,7 @@ ColumnFamilyData* VersionSet::CreateColumnFamily(
   // GetLatestMutableCFOptions() is safe here without mutex since the
   // cfd is not available to client
   LOG("CHECK : new_cfd: remote_flush",
-      new_cfd->GetLatestMutableCFOptions()->server_use_remote_flush ? "true"
-                                                                    : "false");
+      new_cfd->GetLatestCFOptions().server_use_remote_flush ? "true" : "false");
   new_cfd->CreateNewMemtable(*new_cfd->GetLatestMutableCFOptions(),
                              LastSequence());
   new_cfd->SetLogNumber(edit->log_number_);

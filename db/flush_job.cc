@@ -10,6 +10,7 @@
 #include "db/flush_job.h"
 
 #include <algorithm>
+#include <cassert>
 #include <cinttypes>
 #include <vector>
 
@@ -421,11 +422,10 @@ Status FlushJob::MemPurge() {
         return s;
       }
     }
-    if (cfd_->initial_cf_options().server_use_remote_flush) {
-      new_mem = MemTable::CreateSharedMemTable(
-          (cfd_->internal_comparator()), *(cfd_->ioptions()),
-          mutable_cf_options_, cfd_->write_buffer_mgr(), earliest_seqno,
-          cfd_->GetID());
+    if (cfd_->GetLatestCFOptions().server_use_remote_flush) {
+      LOG(" ColumnFamily ", cfd_->GetID(),
+          " Setup with remote_flush_trigger but use non-remote FlushJob");
+      assert(!cfd_->GetLatestCFOptions().server_use_remote_flush);
     } else {
       new_mem = new MemTable((cfd_->internal_comparator()), *(cfd_->ioptions()),
                              mutable_cf_options_, cfd_->write_buffer_mgr(),

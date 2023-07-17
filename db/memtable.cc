@@ -83,8 +83,7 @@ ImmutableMemTableOptions::ImmutableMemTableOptions(
       info_log(ioptions.logger),
       allow_data_in_errors(ioptions.allow_data_in_errors),
       protection_bytes_per_key(
-          mutable_cf_options.memtable_protection_bytes_per_key),
-      server_use_remtoe_flush(mutable_cf_options.server_use_remote_flush) {}
+          mutable_cf_options.memtable_protection_bytes_per_key) {}
 
 MemTable::MemTable(const InternalKeyComparator& cmp,
                    const ImmutableOptions& ioptions,
@@ -97,7 +96,7 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
       refs_(0),
       kArenaBlockSize(Arena::OptimizeBlockSize(moptions_.arena_block_size)),
       mem_tracker_(write_buffer_manager),
-      arena_(mutable_cf_options.server_use_remote_flush
+      arena_(is_shared
                  ? static_cast<BasicArena*>(
                        ConSharedArena::CreateSharedConSharedArena(
                            mutable_cf_options.arena_block_size,
@@ -116,16 +115,15 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
                            ? &mem_tracker_
                            : nullptr,
                        mutable_cf_options.memtable_huge_page_size))),
-      table_(mutable_cf_options.server_use_remote_flush
-                 ? ioptions.memtable_factory->CreateMemtableRepFromShm(
-                       comparator_, arena_,
-                       mutable_cf_options.prefix_extractor.get(),
-                       ioptions.logger, column_family_id)
-                 : ioptions.memtable_factory->CreateMemTableRep(
-                       comparator_, arena_,
-                       mutable_cf_options.prefix_extractor.get(),
-                       ioptions.logger, column_family_id)),
-      range_del_table_(mutable_cf_options.server_use_remote_flush
+      table_(is_shared ? ioptions.memtable_factory->CreateMemtableRepFromShm(
+                             comparator_, arena_,
+                             mutable_cf_options.prefix_extractor.get(),
+                             ioptions.logger, column_family_id)
+                       : ioptions.memtable_factory->CreateMemTableRep(
+                             comparator_, arena_,
+                             mutable_cf_options.prefix_extractor.get(),
+                             ioptions.logger, column_family_id)),
+      range_del_table_(is_shared
                            ? SkipListFactory().CreateMemtableRepFromShm(
                                  comparator_, arena_, nullptr /* transform */,
                                  ioptions.logger, column_family_id)

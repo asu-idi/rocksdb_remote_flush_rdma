@@ -191,8 +191,7 @@ struct MutableCFOptions {
             options.memtable_protection_bytes_per_key),
         sample_for_compression(
             options.sample_for_compression),  // TODO: is 0 fine here?
-        compression_per_level(options.compression_per_level),
-        server_use_remote_flush(options.server_use_remote_flush) {
+        compression_per_level(options.compression_per_level) {
     RefreshDerivedOptions(options.num_levels, options.compaction_style);
   }
 
@@ -240,8 +239,7 @@ struct MutableCFOptions {
         bottommost_compression(kDisableCompressionOption),
         last_level_temperature(Temperature::kUnknown),
         memtable_protection_bytes_per_key(0),
-        sample_for_compression(0),
-        server_use_remote_flush(false) {}
+        sample_for_compression(0) {}
 
   explicit MutableCFOptions(const Options& options);
 
@@ -338,7 +336,6 @@ struct MutableCFOptions {
   // Derived options
   // Per-level target file size.
   std::vector<uint64_t> max_file_size;
-  bool server_use_remote_flush;
 };
 
 uint64_t MultiplyCheckOverflow(uint64_t op1, double op2);

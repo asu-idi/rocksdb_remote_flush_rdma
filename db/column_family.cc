@@ -377,6 +377,9 @@ ColumnFamilyOptions SanitizeOptions(const ImmutableDBOptions& db_options,
   if (result.cf_paths.empty()) {
     result.cf_paths = db_options.db_paths;
   }
+  if (db_options.server_remote_flush != 0) {
+    result.server_use_remote_flush = true;
+  }
 
   if (result.level_compaction_dynamic_level_bytes) {
     if (result.compaction_style != kCompactionStyleLevel) {
@@ -561,7 +564,7 @@ ColumnFamilyData::ColumnFamilyData(
     const FileOptions* file_options, ColumnFamilySet* column_family_set,
     BlockCacheTracer* const block_cache_tracer,
     const std::shared_ptr<IOTracer>& io_tracer, const std::string& db_id,
-    const std::string& db_session_id, bool is_shared)
+    const std::string& db_session_id)
     : id_(id),
       name_(name),
       dummy_versions_(_dummy_versions),
@@ -596,9 +599,7 @@ ColumnFamilyData::ColumnFamilyData(
       db_paths_registered_(false),
       mempurge_used_(false),
       next_epoch_number_(1) {
-  LOG("CHECK : dummy_cf_options",
-      cf_options.server_use_remote_flush == true ? "true" : "false", ' ',
-      "initial_cf_options_:",
+  LOG("CHECK : ", "initial_cf_options_:",
       initial_cf_options_.server_use_remote_flush == true ? "true" : "false");
   if (id_ != kDummyColumnFamilyDataId) {
     // TODO(cc): RegisterDbPaths can be expensive, considering moving it
@@ -699,11 +700,12 @@ ColumnFamilyData* ColumnFamilyData::CreateSharedColumnFamilyData(
     BlockCacheTracer* const block_cache_tracer,
     const std::shared_ptr<IOTracer>& io_tracer, const std::string& db_id,
     const std::string& db_session_id) {
+  assert(db_options.server_remote_flush);
   void* mem = shm_alloc(sizeof(ColumnFamilyData));
   auto* ret = new (mem) ColumnFamilyData(
       id, name, dummy_versions, table_cache, write_buffer_manager, options,
       db_options, file_options, column_family_set, block_cache_tracer,
-      io_tracer, db_id, db_session_id, true);
+      io_tracer, db_id, db_session_id);
   return ret;
 }
 
@@ -1385,18 +1387,18 @@ uint64_t ColumnFamilyData::GetLiveSstFilesSize() const {
 MemTable* ColumnFamilyData::ConstructNewMemtable(
     const MutableCFOptions& mutable_cf_options, SequenceNumber earliest_seq) {
   MemTable* memtable_ = nullptr;
-  if (mutable_cf_options.server_use_remote_flush == false) {
+  if (initial_cf_options_.server_use_remote_flush == false) {
     memtable_ =
         new MemTable(internal_comparator_, ioptions_, mutable_cf_options,
                      write_buffer_manager_, earliest_seq, id_);
     LOG("alloc memtable in local_mem", ' ', std::hex,
         reinterpret_cast<void*>(memtable_), std::dec);
   } else {
-    void* mem = shm_alloc(sizeof(MemTable));
-    LOG("alloc memtable in shared_mem", ' ', std::hex, mem, std::dec);
-    memtable_ =
-        new (mem) MemTable(internal_comparator_, ioptions_, mutable_cf_options,
-                           write_buffer_manager_, earliest_seq, id_);
+    memtable_ = MemTable::CreateSharedMemTable(
+        internal_comparator_, ioptions_, mutable_cf_options,
+        write_buffer_manager_, earliest_seq, id_);
+    LOG("alloc memtable in shared_mem", ' ', std::hex,
+        reinterpret_cast<void*>(memtable_), std::dec);
   }
   LOG("ColumnFamilyData::ConstructNewMemtable Alloc memtable finish: "
       "ptr =",
@@ -1407,9 +1409,8 @@ MemTable* ColumnFamilyData::ConstructNewMemtable(
 void ColumnFamilyData::CreateNewMemtable(
     const MutableCFOptions& mutable_cf_options, SequenceNumber earliest_seq) {
   if (mem_ != nullptr) {
-    // TODO(iaIm14): a shared cfd can obtain non-shared Memtable*
-    if (this->initial_cf_options().server_use_remote_flush == true &&
-        mem_->IsSharedMemtable()) {
+    if (initial_cf_options().server_use_remote_flush) {
+      assert(mem_->IsSharedMemtable());
       MemTable* ret = mem_->Unref();
       if (ret) shm_delete(reinterpret_cast<char*>(ret));
     } else {
@@ -1832,28 +1833,31 @@ void ColumnFamilyData::RecoverEpochNumbers() {
   vstorage->RecoverEpochNumbers(this);
 }
 
-ColumnFamilySet::ColumnFamilySet(
-    const std::string& dbname, const ImmutableDBOptions* db_options,
-    const FileOptions& file_options, Cache* table_cache,
-    WriteBufferManager* _write_buffer_manager,
-    WriteController* _write_controller,
-    BlockCacheTracer* const block_cache_tracer,
-    const std::shared_ptr<IOTracer>& io_tracer, const std::string& db_id,
-    const std::string& db_session_id, const ColumnFamilyOptions& cf_options,
-    bool is_shared)
+ColumnFamilySet::ColumnFamilySet(const std::string& dbname,
+                                 const ImmutableDBOptions* db_options,
+                                 const FileOptions& file_options,
+                                 Cache* table_cache,
+                                 WriteBufferManager* _write_buffer_manager,
+                                 WriteController* _write_controller,
+                                 BlockCacheTracer* const block_cache_tracer,
+                                 const std::shared_ptr<IOTracer>& io_tracer,
+                                 const std::string& db_id,
+                                 const std::string& db_session_id)
     : max_column_family_(0),
       file_options_(file_options),
-      dummy_cfd_(is_shared
+      dummy_cfd_(db_options->server_remote_flush
                      ? ColumnFamilyData::CreateSharedColumnFamilyData(
                            ColumnFamilyData::kDummyColumnFamilyDataId, "",
-                           nullptr, nullptr, nullptr, cf_options, *db_options,
-                           &file_options_, nullptr, block_cache_tracer,
-                           io_tracer, db_id, db_session_id)
+                           nullptr, nullptr, nullptr,
+                           SanitizeOptions(*db_options, ColumnFamilyOptions()),
+                           *db_options, &file_options_, nullptr,
+                           block_cache_tracer, io_tracer, db_id, db_session_id)
                      : new ColumnFamilyData(
                            ColumnFamilyData::kDummyColumnFamilyDataId, "",
-                           nullptr, nullptr, nullptr, cf_options, *db_options,
-                           &file_options_, nullptr, block_cache_tracer,
-                           io_tracer, db_id, db_session_id)),
+                           nullptr, nullptr, nullptr, ColumnFamilyOptions(),
+                           *db_options, &file_options_, nullptr,
+                           block_cache_tracer, io_tracer, db_id,
+                           db_session_id)),
       default_cfd_cache_(nullptr),
       db_name_(dbname),
       db_options_(db_options),
@@ -1865,6 +1869,13 @@ ColumnFamilySet::ColumnFamilySet(
       db_id_(db_id),
       db_session_id_(db_session_id) {
   // initialize linked list
+  if (db_options->server_remote_flush != 0) {
+    LOG("ColumnFamilySet: check dummy_cfd_ remote flush: true");
+    assert(dummy_cfd_->initial_cf_options().server_use_remote_flush == true);
+  } else {
+    LOG("ColumnFamilySet: check dummy_cfd_ remote flush: false");
+    assert(dummy_cfd_->initial_cf_options().server_use_remote_flush == false);
+  }
   dummy_cfd_->prev_ = dummy_cfd_;
   dummy_cfd_->next_ = dummy_cfd_;
 }
@@ -1930,11 +1941,11 @@ ColumnFamilyData* ColumnFamilySet::CreateColumnFamily(
     const std::string& name, uint32_t id, Version* dummy_versions,
     const ColumnFamilyOptions& options) {
   assert(column_families_.find(name) == column_families_.end());
-  LOG("CreateColumnFamily: new cfd,check remote flush:",
-      options.server_use_remote_flush ? "true" : "false");
+  LOG("CreateColumnFamily: new cfd,check db_options: remote flush:",
+      db_options_->server_remote_flush ? "true" : "false");
 
   ColumnFamilyData* new_cfd = nullptr;
-  if (options.server_use_remote_flush) {
+  if (db_options_->server_remote_flush) {
     new_cfd = ColumnFamilyData::CreateSharedColumnFamilyData(
         id, name, dummy_versions, table_cache_, write_buffer_manager_, options,
         *db_options_, &file_options_, this, block_cache_tracer_, io_tracer_,

@@ -8,7 +8,6 @@
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
 #include <atomic>
-#include <cassert>
 #include <limits>
 
 #include "db/db_impl/db_impl.h"
@@ -110,7 +109,7 @@ TEST_F(DBFlushTest, SyncFail) {
 
 TEST_F(DBFlushTest, SyncSkip) {
   Options options = CurrentOptions();
-  assert(options.server_use_remote_flush == true);
+
   SyncPoint::GetInstance()->LoadDependency(
       {{"DBFlushTest::SyncSkip:1", "DBImpl::SyncClosedLogs:Skip"},
        {"DBImpl::SyncClosedLogs:Skip", "DBFlushTest::SyncSkip:2"}});

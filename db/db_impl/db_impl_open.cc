@@ -13,6 +13,7 @@
 #include <thread>
 
 #include "db/builder.h"
+#include "db/column_family.h"
 #include "db/db_impl/db_impl.h"
 #include "db/error_handler.h"
 #include "db/periodic_task_scheduler.h"
@@ -1719,9 +1720,13 @@ Status DBImpl::WriteLevel0TableForRecovery(int job_id, ColumnFamilyData* cfd,
 Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
   DBOptions db_options(options);
   ColumnFamilyOptions cf_options(options);
-  // note: server_use_remote_flush bind to cf_options
-  LOG("DB::Open server remote_flush:",
+  if (db_options.server_remote_flush) {
+    cf_options.server_use_remote_flush = true;
+  }
+  LOG("DB::Open server cf_option remote_flush:",
       cf_options.server_use_remote_flush ? "true" : "false");
+  LOG("DB::Open server db_option remote_flush:",
+      db_options.server_remote_flush ? "true" : "false");
   std::vector<ColumnFamilyDescriptor> column_families;
   column_families.push_back(
       ColumnFamilyDescriptor(kDefaultColumnFamilyName, cf_options));
@@ -1892,7 +1897,6 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
         std::max(max_write_buffer_size, cf.options.write_buffer_size);
   }
   LOG("BEGIN IMPL CONSTRUCT");
-  // TODO(iaIm14): cf->first->option
   DBImpl* impl = new DBImpl(db_options, dbname, seq_per_batch, batch_per_txn);
   LOG("FINISH IMPL CONSTRUCT");
   if (!impl->immutable_db_options_.info_log) {
