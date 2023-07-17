@@ -154,9 +154,9 @@ void DumpSupportInfo(Logger* logger) {
 }  // namespace
 
 // TODO: cf_options from DB::Open use cfs.begin().options
-DBImpl::DBImpl(const ColumnFamilyOptions& cf_options, const DBOptions& options,
-               const std::string& dbname, const bool seq_per_batch,
-               const bool batch_per_txn, bool read_only)
+DBImpl::DBImpl(const DBOptions& options, const std::string& dbname,
+               const bool seq_per_batch, const bool batch_per_txn,
+               bool read_only)
     : dbname_(dbname),
       own_info_log_(options.info_log == nullptr),
       init_logger_creation_s_(),
@@ -275,10 +275,10 @@ DBImpl::DBImpl(const ColumnFamilyOptions& cf_options, const DBOptions& options,
       PeriodicTaskType::kRecordSeqnoTime,
       [this]() { this->RecordSeqnoToTimeMapping(); });
 
-  versions_.reset(new VersionSet(
-      cf_options, dbname_, &immutable_db_options_, file_options_,
-      table_cache_.get(), write_buffer_manager_, &write_controller_,
-      &block_cache_tracer_, io_tracer_, db_id_, db_session_id_));
+  versions_.reset(new VersionSet(dbname_, &immutable_db_options_, file_options_,
+                                 table_cache_.get(), write_buffer_manager_,
+                                 &write_controller_, &block_cache_tracer_,
+                                 io_tracer_, db_id_, db_session_id_));
   LOG("Open ColumnFamilyMemTablesImpl");
   column_family_memtables_.reset(
       new ColumnFamilyMemTablesImpl(versions_->GetColumnFamilySet()));
@@ -606,6 +606,7 @@ Status DBImpl::CloseHelper() {
     auto cfd = PopFirstFromCompactionQueue();
     cfd->UnrefAndTryDelete();
   }
+
   if (default_cf_handle_ != nullptr || persist_stats_cf_handle_ != nullptr) {
     // we need to delete handle outside of lock because it does its own locking
     mutex_.Unlock();
@@ -683,14 +684,13 @@ Status DBImpl::CloseHelper() {
   // we can guarantee that after versions_.reset(), table cache is empty
   // so the cache can be safely destroyed.
   table_cache_->EraseUnRefEntries();
+
   for (auto& txn_entry : recovered_transactions_) {
     delete txn_entry.second;
   }
   LOG("DB close checkpoint 4");
   // versions need to be destroyed before table_cache since it can hold
   // references to table_cache.
-  LOG(versions_->is_shared(), ' ',
-      versions_->column_family_set_->NumberOfColumnFamilies());
   versions_.reset();
   LOG("DB close checkpoint 5");
   mutex_.Unlock();
@@ -698,6 +698,7 @@ Status DBImpl::CloseHelper() {
     // TODO: Check for unlock error
     env_->UnlockFile(db_lock_).PermitUncheckedError();
   }
+
   ROCKS_LOG_INFO(immutable_db_options_.info_log, "Shutdown complete");
   LogFlush(immutable_db_options_.info_log);
 
@@ -709,6 +710,7 @@ Status DBImpl::CloseHelper() {
         immutable_db_options_.sst_file_manager.get());
     sfm->Close();
   }
+
   if (immutable_db_options_.info_log && own_info_log_) {
     Status s = immutable_db_options_.info_log->Close();
     if (!s.ok() && !s.IsNotSupported() && ret.ok()) {
@@ -739,6 +741,7 @@ Status DBImpl::CloseImpl() { return CloseHelper(); }
 DBImpl::~DBImpl() {
   // TODO: remove this.
   init_logger_creation_s_.PermitUncheckedError();
+
   InstrumentedMutexLock closing_lock_guard(&closing_mutex_);
   if (closed_) {
     return;
@@ -2182,6 +2185,7 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
         get_impl_options.get_value);
     RecordTick(stats_, MEMTABLE_MISS);
   }
+
   {
     PERF_TIMER_GUARD(get_post_process_time);
 
@@ -2262,7 +2266,9 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
       RecordTick(stats_, BYTES_READ, size);
       PERF_COUNTER_ADD(get_read_bytes, size);
     }
+
     ReturnAndCleanupSuperVersion(cfd, sv);
+
     RecordInHistogram(stats_, BYTES_PER_READ, size);
   }
   return s;
@@ -5816,9 +5822,6 @@ void DBImpl::NotifyOnExternalFileIngested(
 
 Status DBImpl::StartTrace(const TraceOptions& trace_options,
                           std::unique_ptr<TraceWriter>&& trace_writer) {
-  using std::cout;
-  using std::endl;
-  cout << "Info: call DBImpl StartTrace" << endl;
   InstrumentedMutexLock lock(&trace_mutex_);
   tracer_.reset(new Tracer(immutable_db_options_.clock, trace_options,
                            std::move(trace_writer)));

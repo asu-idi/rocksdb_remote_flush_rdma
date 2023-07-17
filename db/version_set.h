@@ -1126,8 +1126,7 @@ class AtomicGroupReadBuffer {
 // column families via ColumnFamilySet, i.e. set of the column families.
 class VersionSet {
  public:
-  VersionSet(const ColumnFamilyOptions& dummy_cf_options,
-             const std::string& dbname, const ImmutableDBOptions* db_options,
+  VersionSet(const std::string& dbname, const ImmutableDBOptions* db_options,
              const FileOptions& file_options, Cache* table_cache,
              WriteBufferManager* write_buffer_manager,
              WriteController* write_controller,
@@ -1553,7 +1552,6 @@ class VersionSet {
 
   // Protected by DB mutex.
   WalSet wals_;
-  const ColumnFamilyOptions dummy_cf_options_;
   std::unique_ptr<ColumnFamilySet> column_family_set_;  // TODO
   Cache* table_cache_;
   Env* const env_;

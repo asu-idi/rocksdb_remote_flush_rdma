@@ -11,7 +11,6 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#include <iostream>
 #include <map>
 #include <memory>
 #include <string>
@@ -177,15 +176,6 @@ class DB {
                      const std::vector<ColumnFamilyDescriptor>& column_families,
                      std::vector<ColumnFamilyHandle*>* handles, DB** dbptr);
 
-  static Status OpenForFlushOnly(const Options& options,
-                                 const std::string& name, DB** bptr,
-                                 bool err_if_wal_file_exist = false);
-
-  static Status OpenForFlushOnly(
-      const DBOptions& db_options, const std::string& name,
-      const std::vector<ColumnFamilyDescriptor>& column_families,
-      std::vector<ColumnFamilyHandle*>* handles, DB** dbptr,
-      bool error_if_wal_file_exists = false);
   // OpenForReadOnly() creates a Read-only instance that supports reads
   // alone.
   //
@@ -1824,9 +1814,6 @@ class DB {
   // Trace DB operations. Use EndTrace() to stop tracing.
   virtual Status StartTrace(const TraceOptions& /*options*/,
                             std::unique_ptr<TraceWriter>&& /*trace_writer*/) {
-    using std::cout;
-    using std::endl;
-    cout << "ERROR: call Default virtual StartTrace" << endl;
     return Status::NotSupported("StartTrace() is not implemented.");
   }
 

@@ -12,7 +12,6 @@
 #include "memory/concurrent_shared_arena.h"
 #include "memory/shared_mem_basic.h"
 #include "memtable/inlineskiplist.h"
-#include "memtable/readonly_skiplisrep.h"
 #include "rocksdb/memtablerep.h"
 #include "rocksdb/slice_transform.h"
 #include "rocksdb/utilities/options_type.h"
@@ -175,8 +174,6 @@ class SkipListRep : public MemTableRep {
     }
   }
 
-  MemTableRep* CloneReadOnlyMemtableRep(
-      Allocator* allocator = new ConSharedArena) override;
   ~SkipListRep() override {}
 
   // Iteration over the contents of a skip list
@@ -354,13 +351,6 @@ class SkipListRep : public MemTableRep {
     }
   }
 };
-MemTableRep* SkipListRep::CloneReadOnlyMemtableRep(Allocator* allocator) {
-  LOG("Clone from memtableRep");
-  void* mem = allocator->AllocateAligned(sizeof(ReadOnlySkipListRep));
-  MemTableRep* ret =
-      new (mem) ReadOnlySkipListRep(cmp_, allocator_, this->skip_list_.Clone());
-  return ret;
-}
 
 // TODO: ptr: compare transform
 SkipListRep* SkipListRep::CreateSharedSkipListRep(
@@ -419,7 +409,7 @@ MemTableRep* SkipListFactory::CreateMemTableRep(
 MemTableRep* SkipListFactory::CreateMemtableRepFromShm(
     const MemTableRep::KeyComparator& compare, Allocator* allocator,
     const SliceTransform* transform, Logger* logger) {
-  LOG("allocator->name() ", allocator->name());
+  LOG("SkipListFactory::CreateMemtableRepFromShm ", allocator->name());
   assert(strcmp(allocator->name(), "ConcurrentSharedArena") == 0);
   auto* ret = SkipListRep::CreateSharedSkipListRep(compare, allocator,
                                                    transform, lookahead_);

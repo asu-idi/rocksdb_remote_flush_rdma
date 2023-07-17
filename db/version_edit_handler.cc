@@ -27,6 +27,7 @@ void VersionEditHandlerBase::Iterate(log::Reader& reader,
   std::string scratch;
   assert(log_read_status);
   assert(log_read_status->ok());
+
   [[maybe_unused]] size_t recovered_edits = 0;
   Status s = Initialize();
   while (reader.LastRecordEnd() < max_manifest_read_size_ && s.ok() &&
@@ -36,6 +37,7 @@ void VersionEditHandlerBase::Iterate(log::Reader& reader,
     if (!s.ok()) {
       break;
     }
+
     s = read_buffer_.AddEdit(&edit);
     if (!s.ok()) {
       break;
@@ -65,7 +67,9 @@ void VersionEditHandlerBase::Iterate(log::Reader& reader,
   if (!log_read_status->ok()) {
     s = *log_read_status;
   }
+
   CheckIterationResult(reader, &s);
+
   if (!s.ok()) {
     if (s.IsCorruption()) {
       // when we find a Corruption error, something is
@@ -168,28 +172,32 @@ VersionEditHandler::VersionEditHandler(
 
 Status VersionEditHandler::Initialize() {
   LOG("call VersionEditHandler::Initialize,CHECK remote_flush:");
-  for (auto& cf : this->column_families_) {
+  for (auto& cf : column_families_) {
     LOG("remote_flush:", cf.options.server_use_remote_flush ? "true" : "false");
   }
+  LOG("VersionEditHandler::Initialize");
   Status s;
   if (!initialized_) {
+    LOG("VersionEditHandler::Initialize,not initialized");
     for (const auto& cf_desc : column_families_) {
       name_to_options_.emplace(cf_desc.name, cf_desc.options);
     }
+    LOG("VersionEditHandler::Initialize,check default cf");
     auto default_cf_iter = name_to_options_.find(kDefaultColumnFamilyName);
     if (default_cf_iter == name_to_options_.end()) {
       s = Status::InvalidArgument("Default column family not specified");
+    } else {
+      LOG("CHECK default cf remote_flush:",
+          default_cf_iter->second.server_use_remote_flush ? "true" : "false");
     }
-    LOG("CHECK default cf remote_flush:",
-        default_cf_iter->second.server_use_remote_flush ? "true" : "false");
     if (s.ok()) {
       VersionEdit default_cf_edit;
       default_cf_edit.AddColumnFamily(kDefaultColumnFamilyName);
       default_cf_edit.SetColumnFamily(0);
-      auto& options_cf = default_cf_iter->second;
-      LOG("CHECK Init cf options: ", options_cf.server_use_remote_flush
-                                         ? "remote_flush triggered on"
-                                         : "remote flush not set");
+      LOG("CHECK Init cf options: ",
+          default_cf_iter->second.server_use_remote_flush
+              ? "remote_flush triggered on"
+              : "remote flush not set");
       ColumnFamilyData* cfd =
           CreateCfAndInit(default_cf_iter->second, default_cf_edit);
       assert(cfd != nullptr);
@@ -226,7 +234,7 @@ Status VersionEditHandler::ApplyVersionEdit(VersionEdit& edit,
 
 Status VersionEditHandler::OnColumnFamilyAdd(VersionEdit& edit,
                                              ColumnFamilyData** cfd) {
-  LOG("call OnColumnFamilyAdd ");
+  LOG("OnColumnFamilyAdd");
   bool cf_in_not_found = false;
   bool cf_in_builders = false;
   CheckColumnFamilyId(edit, &cf_in_not_found, &cf_in_builders);

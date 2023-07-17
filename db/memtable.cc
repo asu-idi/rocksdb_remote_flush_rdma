@@ -43,6 +43,7 @@
 #include "rocksdb/env.h"
 #include "rocksdb/iterator.h"
 #include "rocksdb/listener.h"
+#include "rocksdb/memtablerep.h"
 #include "rocksdb/merge_operator.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/slice_transform.h"
@@ -100,19 +101,21 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
                  ? static_cast<BasicArena*>(
                        ConSharedArena::CreateSharedConSharedArena(
                            mutable_cf_options.arena_block_size,
-                           //  (write_buffer_manager != nullptr &&
-                           // (write_buffer_manager->enabled() ||
-                           //  write_buffer_manager->cost_to_cache()))
-                           //    ? &mem_tracker_:
-                           nullptr, mutable_cf_options.memtable_huge_page_size))
+                           //  TODO(iaIm14): enable this and pass all tests.
+                           (write_buffer_manager != nullptr &&
+                            (write_buffer_manager->enabled() ||
+                             write_buffer_manager->cost_to_cache()))
+                               ? &mem_tracker_
+                               : nullptr,
+                           mutable_cf_options.memtable_huge_page_size))
                  : static_cast<BasicArena*>(new ConcurrentArena(
                        moptions_.arena_block_size,
-                       //  (write_buffer_manager != nullptr &&
-                       //   (write_buffer_manager->enabled() ||
-                       //    write_buffer_manager->cost_to_cache()))
-                       //      ? &mem_tracker_:
-                       nullptr, mutable_cf_options.memtable_huge_page_size))),
-      // TODO: fix ConSharedArena
+                       (write_buffer_manager != nullptr &&
+                        (write_buffer_manager->enabled() ||
+                         write_buffer_manager->cost_to_cache()))
+                           ? &mem_tracker_
+                           : nullptr,
+                       mutable_cf_options.memtable_huge_page_size))),
       table_(mutable_cf_options.server_use_remote_flush
                  ? ioptions.memtable_factory->CreateMemtableRepFromShm(
                        comparator_, arena_,
@@ -122,14 +125,13 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
                        comparator_, arena_,
                        mutable_cf_options.prefix_extractor.get(),
                        ioptions.logger, column_family_id)),
-      range_del_table_(
-          mutable_cf_options.server_use_remote_flush
-              ? ioptions.memtable_factory->CreateMemtableRepFromShm(
-                    comparator_, arena_, nullptr /* transform */,
-                    ioptions.logger, column_family_id)
-              : SkipListFactory().CreateMemTableRep(
-                    comparator_, arena_, nullptr /* transform */,
-                    ioptions.logger, column_family_id)),
+      range_del_table_(mutable_cf_options.server_use_remote_flush
+                           ? SkipListFactory().CreateMemtableRepFromShm(
+                                 comparator_, arena_, nullptr /* transform */,
+                                 ioptions.logger, column_family_id)
+                           : SkipListFactory().CreateMemTableRep(
+                                 comparator_, arena_, nullptr /* transform */,
+                                 ioptions.logger, column_family_id)),
       is_range_del_table_empty_(true),
       data_size_(0),
       num_entries_(0),
@@ -155,7 +157,6 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
       atomic_flush_seqno_(kMaxSequenceNumber),
       approximate_memory_usage_(0),
       is_shared_(is_shared) {
-  LOG("");
   UpdateFlushState();
   // something went wrong if we need to flush before inserting anything
   assert(!ShouldScheduleFlush());
@@ -184,7 +185,8 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
                                                            new_cache.get()),
         std::memory_order_relaxed);
   }
-  LOG("");
+  LOG("Memtable ", GetID(), "constructed, ptr=", std::hex,
+      reinterpret_cast<void*>(table_), std::dec);
 }
 
 MemTable* MemTable::CreateSharedMemTable(
@@ -193,7 +195,7 @@ MemTable* MemTable::CreateSharedMemTable(
     WriteBufferManager* write_buffer_manager, SequenceNumber earliest_seq,
     uint32_t column_family_id) {
   void* mem = shm_alloc(sizeof(MemTable));
-  LOG("CreateSharedMemTable ", mem);
+  LOG("CreateSharedMemTable ", std::hex, mem, std::dec);
   auto* ret = new (mem)
       MemTable(comparator, ioptions, mutable_cf_options, write_buffer_manager,
                earliest_seq, column_family_id, true);
@@ -261,10 +263,34 @@ void MemTable::UnPack() {
 }
 
 MemTable::~MemTable() {
-  LOG("Memtable ", this->GetID(),
-      "destruct, ptr=", reinterpret_cast<void*>(this->table_));
+  if (IsSharedMemtable()) {
+    LOG("Memtable ", this->GetID(),
+        "shared destruct, ptr=", reinterpret_cast<void*>(table_));
+    LOG("Memtable ", this->GetID(),
+        "shared destruct, ptr=", reinterpret_cast<void*>(range_del_table_));
+    assert(singleton<SharedContainer>::Instance().find(
+        reinterpret_cast<char*>(table_), sizeof(MemTableRep)));
+    assert(singleton<SharedContainer>::Instance().find(
+        reinterpret_cast<char*>(range_del_table_), sizeof(MemTableRep)));
+    // TODO(iaIm14): free without calling destructor, as MemtableRep is derived
+    // table_->~MemTableRep();
+    // range_del_table_->~MemTableRep();
+    shm_delete(reinterpret_cast<char*>(table_));
+    shm_delete(reinterpret_cast<char*>(range_del_table_));
+  } else {
+    LOG("Memtable ", this->GetID(),
+        "local destruct, ptr=", reinterpret_cast<void*>(table_));
+    LOG("Memtable ", this->GetID(),
+        "local destruct, ptr=", reinterpret_cast<void*>(range_del_table_));
+    assert(!singleton<SharedContainer>::Instance().find(
+        reinterpret_cast<char*>(table_), sizeof(MemTableRep)));
+    assert(!singleton<SharedContainer>::Instance().find(
+        reinterpret_cast<char*>(range_del_table_), sizeof(MemTableRep)));
+    delete table_;
+    delete range_del_table_;
+  }
   mem_tracker_.FreeMem();
-  LOG("finish ");
+  LOG("Memtable ", this->GetID(), "destructed");
   assert(refs_ == 0);
 }
 
@@ -845,7 +871,7 @@ Status MemTable::Add(SequenceNumber s, ValueType type,
                                internal_key_size + VarintLength(val_size) +
                                val_size + moptions_.protection_bytes_per_key;
   char* buf = nullptr;
-  MemTableRep* table = type == kTypeRangeDeletion ? range_del_table_ : table_;
+  MemTableRep*& table = type == kTypeRangeDeletion ? range_del_table_ : table_;
   KeyHandle handle = table->Allocate(encoded_len, &buf);
 
   char* p = EncodeVarint32(buf, internal_key_size);

@@ -744,7 +744,6 @@ class ColumnFamilySet {
   WriteBufferManager* write_buffer_manager() { return write_buffer_manager_; }
 
   WriteController* write_controller() { return write_controller_; }
-  FileOptions GetFileOptions() { return file_options_; }
 
  private:
   friend class ColumnFamilyData;

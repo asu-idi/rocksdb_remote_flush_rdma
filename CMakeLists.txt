@@ -786,14 +786,12 @@ set(SOURCES
         memory/concurrent_shared_arena.cc
         memory/jemalloc_nodump_allocator.cc
         memory/memkind_kmem_allocator.cc
-        memory/shared_memory_allocator.cc
         memory/memory_allocator.cc
         memory/shared_package.cc
         memtable/alloc_tracker.cc
         memtable/hash_linklist_rep.cc
         memtable/hash_skiplist_rep.cc
         memtable/skiplistrep.cc
-        memtable/readonly_skiplistrep.cc
         memtable/vectorrep.cc
         memtable/write_buffer_manager.cc
         monitoring/histogram.cc
@@ -868,7 +866,6 @@ set(SOURCES
         table/table_properties.cc
         table/two_level_iterator.cc
         table/unique_id.cc
-        table/mock_table.cc
         test_util/sync_point.cc
         test_util/sync_point_impl.cc
         test_util/testutil.cc
@@ -876,16 +873,12 @@ set(SOURCES
         tools/block_cache_analyzer/block_cache_trace_analyzer.cc
         tools/dump/db_dump_tool.cc
         tools/io_tracer_parser_tool.cc
-        # tools/memtable_tracer_parser_tool.cc
         tools/ldb_cmd.cc
         tools/ldb_tool.cc
         tools/sst_dump_tool.cc
         tools/trace_analyzer_tool.cc
-        # tools/db_bench_tool.cc
-        # tools/db_bench.cc
         trace_replay/block_cache_tracer.cc
         trace_replay/io_tracer.cc
-        # trace_replay/memtable_tracer.cc
         trace_replay/trace_record_handler.cc
         trace_replay/trace_record_result.cc
         trace_replay/trace_record.cc
@@ -1368,7 +1361,6 @@ if(WITH_TESTS)
         db/db_tailing_iter_test.cc
         db/db_test.cc
         db/db_test2.cc
-        db/db_test3.cc
         db/db_logical_block_size_cache_test.cc
         db/db_universal_compaction_test.cc
         db/db_wal_test.cc
@@ -1456,7 +1448,6 @@ if(WITH_TESTS)
         tools/reduce_levels_test.cc
         tools/sst_dump_test.cc
         tools/trace_analyzer_test.cc
-        tools/db_bench_tool_test.cc
         util/autovector_test.cc
         util/bloom_test.cc
         util/coding_test.cc
@@ -1516,6 +1507,7 @@ if(WITH_TESTS)
       db/db_test_util.cc
       db/db_with_timestamp_test_util.cc
       monitoring/thread_status_updater_debug.cc
+      table/mock_table.cc
       utilities/agg_merge/test_agg_merge.cc
       utilities/cassandra/test_utils.cc
   )
@@ -1535,12 +1527,7 @@ if(WITH_TESTS)
 
   foreach(sourcefile ${TESTS})
       get_filename_component(exename ${sourcefile} NAME_WE)
-      if(${exename} STREQUAL "db_bench_tool_test")
-        message(STATUS "add Test: db Bench tool test")
-        add_executable(${exename}${ARTIFACT_SUFFIX} ${sourcefile} tools/simulated_hybrid_file_system.cc tools/db_bench_tool.cc)
-      else()
-        add_executable(${exename}${ARTIFACT_SUFFIX} ${sourcefile})
-      endif()
+      add_executable(${exename}${ARTIFACT_SUFFIX} ${sourcefile})
       set_target_properties(${exename}${ARTIFACT_SUFFIX}
         PROPERTIES EXCLUDE_FROM_DEFAULT_BUILD_RELEASE 1
         EXCLUDE_FROM_DEFAULT_BUILD_MINRELEASE 1
@@ -1576,15 +1563,15 @@ endif()
 set(WITH_DEV true)
 if(WITH_DEV)
   set(DEVELOP 
-  dev/trace_query_test.cpp
-  dev/trace_io_test.cpp
-  dev/trace_block_cache_test.cpp
+  # dev/trace_query_test.cpp
+  # dev/trace_io_test.cpp
+  # dev/trace_block_cache_test.cpp
   # dev/trace_memtable_test.cpp
-  dev/memtable_refactor_test.cpp
-  dev/db_test4.cpp
-  dev/shared_memory_writter_test.cpp
-  dev/shared_memory_reader_test.cpp
-  dev/open_secondary_test.cpp
+  # dev/memtable_refactor_test.cpp
+  # dev/db_test4.cpp
+  # dev/shared_memory_writter_test.cpp
+  # dev/shared_memory_reader_test.cpp
+  # dev/open_secondary_test.cpp
   )
   foreach(sourcefile ${DEVELOP})
     message(STATUS "CHECK DEV: ${sourcefile}")
@@ -1600,7 +1587,7 @@ if(WITH_DEV)
   endforeach(sourcefile ${DEVELOP})
 endif()
 
-set(WITH_BENCHMARK_TOOLS false)
+set(WITH_BENCHMARK_TOOLS true)
 if(WITH_BENCHMARK_TOOLS)
   message(STATUS "built benchmark tools: db_bench${ARTIFACT_SUFFIX}")
   add_executable(db_bench${ARTIFACT_SUFFIX}
@@ -1654,14 +1641,7 @@ if(WITH_TRACE_TOOLS)
     tools/trace_analyzer.cc)
   target_link_libraries(trace_analyzer${ARTIFACT_SUFFIX}
     ${ROCKSDB_LIB} ${GFLAGS_LIB} ${FOLLY_LIBS})
-  
-  add_executable(io_tracer_parser${ARTIFACT_SUFFIX} tools/io_tracer_parser.cc)
-  target_link_libraries(io_tracer_parser${ARTIFACT_SUFFIX}
-  ${ROCKSDB_LIB} ${GFLAGS_LIB} ${FOLLY_LIBS})
 
-  # add_executable(memtable_tracer_parser${ARTIFACT_SUFFIX} tools/memtable_tracer_parser.cc)
-  # target_link_libraries(memtable_tracer_parser${ARTIFACT_SUFFIX}
-  # ${ROCKSDB_LIB} ${GFLAGS_LIB} ${FOLLY_LIBS})
 endif()
 
 if(WITH_CORE_TOOLS OR WITH_TOOLS)

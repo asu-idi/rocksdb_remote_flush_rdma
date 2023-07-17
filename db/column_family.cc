@@ -465,9 +465,16 @@ SuperVersion::~SuperVersion() {
   LOG("SuperVersion::~SuperVersion()");
   for (auto td : to_delete) {
     if (td->IsSharedMemtable()) {
-      td->~MemTable();
-      shm_delete(reinterpret_cast<char*>(td));
+      LOG("SuperVersion::~SuperVersion() shared_memtable ", std::hex,
+          reinterpret_cast<void*>(td), std::dec, ' ', td->GetID());
+      if (singleton<SharedContainer>::Instance().find(
+              reinterpret_cast<char*>(td), sizeof(MemTable))) {
+        td->~MemTable();
+        shm_delete(reinterpret_cast<char*>(td));
+      }
     } else {
+      LOG("SuperVersion::~SuperVersion() local_memtable ", std::hex,
+          reinterpret_cast<void*>(td), std::dec);
       delete td;
     }
   }
@@ -497,6 +504,8 @@ void SuperVersion::Cleanup() {
     auto* memory_usage = current->cfd()->imm()->current_memory_usage();
     assert(*memory_usage >= m->ApproximateMemoryUsage());
     *memory_usage -= m->ApproximateMemoryUsage();
+    LOG("MemTableListVersion::UnrefMemTable to_delete Add M: ", m->GetID(), ' ',
+        std::hex, reinterpret_cast<void*>(m), std::dec);
     to_delete.push_back(m);
   }
   current->Unref();
@@ -700,6 +709,7 @@ ColumnFamilyData* ColumnFamilyData::CreateSharedColumnFamilyData(
 
 // DB mutex held
 ColumnFamilyData::~ColumnFamilyData() {
+  LOG("checkpoint 1 ", this->GetID());
   assert(refs_.load(std::memory_order_relaxed) == 0);
   // remove from linked list
   auto prev = prev_;
@@ -713,15 +723,17 @@ ColumnFamilyData::~ColumnFamilyData() {
     // ColumnFamilySet
     column_family_set_->RemoveColumnFamily(this);
   }
+
   if (current_ != nullptr) {
     current_->Unref();
   }
+
   // It would be wrong if this ColumnFamilyData is in flush_queue_ or
   // compaction_queue_ and we destroyed it
   assert(!queued_for_flush_);
   assert(!queued_for_compaction_);
   assert(super_version_ == nullptr);
-
+  LOG("checkpoint 1");
   if (dummy_versions_ != nullptr) {
     // List must be empty
     assert(dummy_versions_->Next() == dummy_versions_);
@@ -729,14 +741,40 @@ ColumnFamilyData::~ColumnFamilyData() {
     deleted = dummy_versions_->Unref();
     assert(deleted);
   }
+  LOG("checkpoint 1");
   if (mem_ != nullptr) {
-    if (this->initial_cf_options().server_use_remote_flush == true) {
-      // TODO: check memtable free!
-      mem_->Unref();
+    if (initial_cf_options().server_use_remote_flush == true) {
+      void* ret = mem_->Unref();
+      if (ret != nullptr) {
+        assert(mem_->IsSharedMemtable());
+        shm_delete(reinterpret_cast<char*>(ret));
+      }
     } else {
+      assert(!mem_->IsSharedMemtable());
       delete mem_->Unref();
     }
+    LOG("checkpoint 1");
   }
+  autovector<MemTable*> to_delete;
+  imm_->current()->Unref(&to_delete);
+  for (MemTable* m : to_delete) {
+    if (m->IsSharedMemtable()) {
+      LOG("checkpoint 1");
+      assert(m->IsSharedMemtable());
+      if (singleton<SharedContainer>::Instance().find(
+              reinterpret_cast<char*>(m), sizeof(MemTable))) {
+        m->~MemTable();
+        shm_delete(reinterpret_cast<char*>(m));
+      }
+    } else {
+      LOG("checkpoint 1");
+      assert(!mem_->IsSharedMemtable());
+      delete m;
+    }
+  }
+  LOG("checkpoint 1");
+  imm_->~MemTableList();
+  shm_delete(reinterpret_cast<char*>(imm_));
   if (db_paths_registered_) {
     // TODO(cc): considering using ioptions_.fs, currently some tests rely on
     // EnvWrapper, that's the main reason why we use env here.
@@ -748,18 +786,6 @@ ColumnFamilyData::~ColumnFamilyData() {
           id_, name_.c_str());
     }
   }
-  autovector<MemTable*> to_delete;
-  imm_->current()->Unref(&to_delete);
-  for (MemTable* m : to_delete) {
-    if (m->IsSharedMemtable()) {
-      m->~MemTable();
-      shm_delete(reinterpret_cast<char*>(m));
-    } else {
-      delete m;
-    }
-  }
-  imm_->~MemTableList();
-  shm_delete(reinterpret_cast<char*>(imm_));
 }
 
 bool ColumnFamilyData::CHECKShared() {
@@ -962,6 +988,7 @@ void ColumnFamilyData::UnPack() {
 bool ColumnFamilyData::UnrefAndTryDelete() {
   int old_refs = refs_.fetch_sub(1);
   assert(old_refs > 0);
+
   if (old_refs == 1) {
     assert(super_version_ == nullptr);
     if (is_shared()) {
@@ -977,8 +1004,10 @@ bool ColumnFamilyData::UnrefAndTryDelete() {
     // Only the super_version_ holds me
     SuperVersion* sv = super_version_;
     super_version_ = nullptr;
+
     // Release SuperVersion references kept in ThreadLocalPtr.
     local_sv_.reset();
+
     if (sv->Unref()) {
       // Note: sv will delete this ColumnFamilyData during Cleanup()
       assert(sv->cfd == this);
@@ -1360,9 +1389,11 @@ MemTable* ColumnFamilyData::ConstructNewMemtable(
     memtable_ =
         new MemTable(internal_comparator_, ioptions_, mutable_cf_options,
                      write_buffer_manager_, earliest_seq, id_);
+    LOG("alloc memtable in local_mem", ' ', std::hex,
+        reinterpret_cast<void*>(memtable_), std::dec);
   } else {
-    LOG("alloc memtable in shared_mem");
     void* mem = shm_alloc(sizeof(MemTable));
+    LOG("alloc memtable in shared_mem", ' ', std::hex, mem, std::dec);
     memtable_ =
         new (mem) MemTable(internal_comparator_, ioptions_, mutable_cf_options,
                            write_buffer_manager_, earliest_seq, id_);
@@ -1376,10 +1407,11 @@ MemTable* ColumnFamilyData::ConstructNewMemtable(
 void ColumnFamilyData::CreateNewMemtable(
     const MutableCFOptions& mutable_cf_options, SequenceNumber earliest_seq) {
   if (mem_ != nullptr) {
-    if (this->initial_cf_options().server_use_remote_flush == true) {
-      // TODO: check memtable free!
-      LOG("mem_->Unref called");
-      mem_->Unref();
+    // TODO(iaIm14): a shared cfd can obtain non-shared Memtable*
+    if (this->initial_cf_options().server_use_remote_flush == true &&
+        mem_->IsSharedMemtable()) {
+      MemTable* ret = mem_->Unref();
+      if (ret) shm_delete(reinterpret_cast<char*>(ret));
     } else {
       delete mem_->Unref();
     }

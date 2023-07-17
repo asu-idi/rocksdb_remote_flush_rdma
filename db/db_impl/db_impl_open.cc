@@ -1493,7 +1493,7 @@ Status DBImpl::RecoverLogFiles(const std::vector<uint64_t>& wal_numbers,
 
   event_logger_.Log() << "job" << job_id << "event"
                       << "recovery_finished";
-  LOG("");
+
   return status;
 }
 
@@ -1892,8 +1892,8 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
         std::max(max_write_buffer_size, cf.options.write_buffer_size);
   }
   LOG("BEGIN IMPL CONSTRUCT");
-  DBImpl* impl = new DBImpl(column_families.begin()->options, db_options,
-                            dbname, seq_per_batch, batch_per_txn);
+  // TODO(iaIm14): cf->first->option
+  DBImpl* impl = new DBImpl(db_options, dbname, seq_per_batch, batch_per_txn);
   LOG("FINISH IMPL CONSTRUCT");
   if (!impl->immutable_db_options_.info_log) {
     s = impl->init_logger_creation_s_;
@@ -2211,12 +2211,12 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
     *dbptr = nullptr;
   }
 
-  if (db_options.worker_use_remote_flush) {
-    for (size_t thn = 0; thn < db_options.worker_use_remote_flush; ++thn) {
-      std::function<void()> func = &DBImpl::RemoteFlushListener;
-      std::thread(func).detach();
-    }
-  }
+  // if (db_options.worker_use_remote_flush) {
+  //   for (size_t thn = 0; thn < db_options.worker_use_remote_flush; ++thn) {
+  //     std::function<void()> func = &DBImpl::RemoteFlushListener;
+  //     std::thread(func).detach();
+  //   }
+  // }
 
   return s;
 }

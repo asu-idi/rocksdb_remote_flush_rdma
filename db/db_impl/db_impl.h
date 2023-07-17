@@ -174,9 +174,9 @@ class Directories {
 // divided in several db_impl_*.cc files, besides db_impl.cc.
 class DBImpl : public DB {
  public:
-  DBImpl(const ColumnFamilyOptions& cf_options, const DBOptions& options,
-         const std::string& dbname, const bool seq_per_batch = false,
-         const bool batch_per_txn = true, bool read_only = false);
+  DBImpl(const DBOptions& options, const std::string& dbname,
+         const bool seq_per_batch = false, const bool batch_per_txn = true,
+         bool read_only = false);
   // No copying allowed
   DBImpl(const DBImpl&) = delete;
   void operator=(const DBImpl&) = delete;

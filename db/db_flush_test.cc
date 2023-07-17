@@ -8,6 +8,7 @@
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
 #include <atomic>
+#include <cassert>
 #include <limits>
 
 #include "db/db_impl/db_impl.h"
@@ -49,8 +50,7 @@ class DBAtomicFlushTest : public DBFlushTest,
 
 // We had issue when two background threads trying to flush at the same time,
 // only one of them get committed. The test verifies the issue is fixed.
-// done
-TEST_F(DBFlushTest, DISABLED_FlushWhileWritingManifest) {
+TEST_F(DBFlushTest, FlushWhileWritingManifest) {
   Options options;
   options.disable_auto_compactions = true;
   options.max_background_flushes = 2;
@@ -79,8 +79,7 @@ TEST_F(DBFlushTest, DISABLED_FlushWhileWritingManifest) {
 
 // Disable this test temporarily on Travis as it fails intermittently.
 // Github issue: #4151
-// done
-TEST_F(DBFlushTest, DISABLED_SyncFail) {
+TEST_F(DBFlushTest, SyncFail) {
   std::unique_ptr<FaultInjectionTestEnv> fault_injection_env(
       new FaultInjectionTestEnv(env_));
   Options options;
@@ -109,9 +108,9 @@ TEST_F(DBFlushTest, DISABLED_SyncFail) {
   Destroy(options);
 }
 
-TEST_F(DBFlushTest, DISABLED_SyncSkip) {
+TEST_F(DBFlushTest, SyncSkip) {
   Options options = CurrentOptions();
-
+  assert(options.server_use_remote_flush == true);
   SyncPoint::GetInstance()->LoadDependency(
       {{"DBFlushTest::SyncSkip:1", "DBImpl::SyncClosedLogs:Skip"},
        {"DBImpl::SyncClosedLogs:Skip", "DBFlushTest::SyncSkip:2"}});
@@ -133,8 +132,7 @@ TEST_F(DBFlushTest, DISABLED_SyncSkip) {
   Destroy(options);
 }
 
-// note: test::memtable_factory cannot share
-TEST_F(DBFlushTest, DISABLED_FlushInLowPriThreadPool) {
+TEST_F(DBFlushTest, FlushInLowPriThreadPool) {
   // Verify setting an empty high-pri (flush) thread pool causes flushes to be
   // scheduled in the low-pri (compaction) thread pool.
   Options options = CurrentOptions();
@@ -173,7 +171,7 @@ TEST_F(DBFlushTest, DISABLED_FlushInLowPriThreadPool) {
 
 // Test when flush job is submitted to low priority thread pool and when DB is
 // closed in the meanwhile, CloseHelper doesn't hang.
-TEST_F(DBFlushTest, DISABLED_CloseDBWhenFlushInLowPri) {
+TEST_F(DBFlushTest, CloseDBWhenFlushInLowPri) {
   Options options = CurrentOptions();
   options.max_background_flushes = 1;
   options.max_total_wal_size = 8192;
@@ -231,7 +229,7 @@ TEST_F(DBFlushTest, DISABLED_CloseDBWhenFlushInLowPri) {
   ASSERT_EQ(1, num_flushes);
 }
 
-TEST_F(DBFlushTest, DISABLED_ManualFlushWithMinWriteBufferNumberToMerge) {
+TEST_F(DBFlushTest, ManualFlushWithMinWriteBufferNumberToMerge) {
   Options options = CurrentOptions();
   options.write_buffer_size = 100;
   options.max_write_buffer_number = 4;
@@ -266,7 +264,7 @@ TEST_F(DBFlushTest, DISABLED_ManualFlushWithMinWriteBufferNumberToMerge) {
   t.join();
 }
 
-TEST_F(DBFlushTest, DISABLED_ScheduleOnlyOneBgThread) {
+TEST_F(DBFlushTest, ScheduleOnlyOneBgThread) {
   Options options = CurrentOptions();
   Reopen(options);
   SyncPoint::GetInstance()->DisableProcessing();
@@ -312,8 +310,7 @@ TEST_F(DBFlushTest, DISABLED_ScheduleOnlyOneBgThread) {
 // memtable. Compression is another factor to make SST file smaller than
 // corresponding memtable, since data in memtable is uncompressed.
 
-// todo: cuurently statistics is not shared
-TEST_F(DBFlushTest, DISABLED_StatisticsGarbageBasic) {
+TEST_F(DBFlushTest, StatisticsGarbageBasic) {
   Options options = CurrentOptions();
 
   // The following options are used to enforce several values that
@@ -465,7 +462,7 @@ TEST_F(DBFlushTest, DISABLED_StatisticsGarbageBasic) {
   Close();
 }
 
-TEST_F(DBFlushTest, DISABLED_StatisticsGarbageInsertAndDeletes) {
+TEST_F(DBFlushTest, StatisticsGarbageInsertAndDeletes) {
   Options options = CurrentOptions();
   options.statistics = CreateDBStatistics();
   options.statistics->set_stats_level(StatsLevel::kAll);
@@ -556,7 +553,7 @@ TEST_F(DBFlushTest, DISABLED_StatisticsGarbageInsertAndDeletes) {
   Close();
 }
 
-TEST_F(DBFlushTest, DISABLED_StatisticsGarbageRangeDeletes) {
+TEST_F(DBFlushTest, StatisticsGarbageRangeDeletes) {
   Options options = CurrentOptions();
   options.statistics = CreateDBStatistics();
   options.statistics->set_stats_level(StatsLevel::kAll);
@@ -746,7 +743,7 @@ class TestFlushListener : public EventListener {
 
 TEST_F(
     DBFlushTest,
-    DISABLED_FixUnrecoverableWriteDuringAtomicFlushWaitUntilFlushWouldNotStallWrites) {
+    FixUnrecoverableWriteDuringAtomicFlushWaitUntilFlushWouldNotStallWrites) {
   Options options = CurrentOptions();
   options.atomic_flush = true;
 
@@ -835,7 +832,7 @@ TEST_F(
   ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->DisableProcessing();
 }
 
-TEST_F(DBFlushTest, DISABLED_FixFlushReasonRaceFromConcurrentFlushes) {
+TEST_F(DBFlushTest, FixFlushReasonRaceFromConcurrentFlushes) {
   Options options = CurrentOptions();
   options.atomic_flush = true;
   options.disable_auto_compactions = true;
@@ -889,8 +886,8 @@ TEST_F(DBFlushTest, DISABLED_FixFlushReasonRaceFromConcurrentFlushes) {
   ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->ClearAllCallBacks();
   ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->DisableProcessing();
 }
-// todo: bug
-TEST_F(DBFlushTest, DISABLED_MemPurgeBasic) {
+
+TEST_F(DBFlushTest, MemPurgeBasic) {
   Options options = CurrentOptions();
 
   // The following options are used to enforce several values that
@@ -1063,19 +1060,17 @@ TEST_F(DBFlushTest, DISABLED_MemPurgeBasic) {
 }
 
 // RocksDB lite does not support dynamic options
-// todo: bug
-TEST_F(DBFlushTest, DISABLED_MemPurgeBasicToggle) {
-  LOG("Before Options options = CurrentOptions();");
+TEST_F(DBFlushTest, MemPurgeBasicToggle) {
   Options options = CurrentOptions();
-  LOG("Before options.statistics = CreateDBStatistics();");
+
   // The following options are used to enforce several values that
   // may already exist as default values to make this test resilient
   // to default value updates in the future.
-  // options.statistics = CreateDBStatistics();
-  LOG("Before options.statistics = CreateDBStatistics(); done.");
+  options.statistics = CreateDBStatistics();
+
   // Record all statistics.
-  // options.statistics->set_stats_level(StatsLevel::kAll);
-  LOG("Before options.create_if_missing = true;");
+  options.statistics->set_stats_level(StatsLevel::kAll);
+
   // create the DB if it's not already present
   options.create_if_missing = true;
 
@@ -1099,17 +1094,15 @@ TEST_F(DBFlushTest, DISABLED_MemPurgeBasicToggle) {
   // Initially deactivate the MemPurge prototype.
   // (negative values are equivalent to 0.0).
   options.experimental_mempurge_threshold = -25.3;
-  // TestFlushListener* listener = new TestFlushListener(options.env, this);
-  // options.listeners.emplace_back(listener);
-  LOG("Before TryReopen(options);");
+  TestFlushListener* listener = new TestFlushListener(options.env, this);
+  options.listeners.emplace_back(listener);
+
   ASSERT_OK(TryReopen(options));
-  LOG("Before TryReopen(options); done.");
   // Dynamically activate the MemPurge prototype without restarting the DB.
   ColumnFamilyHandle* cfh = db_->DefaultColumnFamily();
   // Values greater than 1.0 are equivalent to 1.0
   ASSERT_OK(
       db_->SetOptions(cfh, {{"experimental_mempurge_threshold", "3.7898"}}));
-  LOG("Before TryReopen(options); done.");
   std::atomic<uint32_t> mempurge_count{0};
   std::atomic<uint32_t> sst_count{0};
   ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->SetCallBack(
@@ -1126,7 +1119,7 @@ TEST_F(DBFlushTest, DISABLED_MemPurgeBasicToggle) {
 
   std::vector<std::string> RNDVALS(KVSIZE);
   const std::string NOT_FOUND = "NOT_FOUND";
-  LOG("Before first round of overwrites.");
+
   // Heavy overwrite workload,
   // more than would fit in maximum allowed memtables.
   Random rnd(719);
@@ -1144,22 +1137,19 @@ TEST_F(DBFlushTest, DISABLED_MemPurgeBasicToggle) {
       ASSERT_EQ(Get(KEYS[j]), RNDVALS[j]);
     }
   }
-  LOG("Finished first round of overwrites.");
+
   // Check that there was at least one mempurge
   const uint32_t EXPECTED_MIN_MEMPURGE_COUNT = 1;
   // Check that there was no SST files created during flush.
   const uint32_t EXPECTED_SST_COUNT = 0;
 
-  LOG("Before first round of mempurges.");
   EXPECT_GE(mempurge_count.exchange(0), EXPECTED_MIN_MEMPURGE_COUNT);
-  LOG("Before first round of mempurges.");
   EXPECT_EQ(sst_count.exchange(0), EXPECTED_SST_COUNT);
-  LOG("Finished first round of mempurges.");
+
   // Dynamically deactivate MemPurge.
   ASSERT_OK(
       db_->SetOptions(cfh, {{"experimental_mempurge_threshold", "-1023.0"}}));
 
-  LOG("Finished first round of mempurges.");
   // Insertion of of K-V pairs, multiple times (overwrites).
   for (size_t i = 0; i < NUM_REPEAT; i++) {
     for (size_t j = 0; j < KEYS.size(); j++) {
@@ -1172,7 +1162,6 @@ TEST_F(DBFlushTest, DISABLED_MemPurgeBasicToggle) {
     }
   }
 
-  LOG("Finished second round of overwrites.");
   // Check that there was at least one mempurge
   const uint32_t ZERO = 0;
   // Assert that at least one flush to storage has been performed
@@ -1194,16 +1183,16 @@ TEST_F(DBFlushTest, DISABLED_MemPurgeBasicToggle) {
 // be consistent, therefore a CF could hypothetically
 // trigger a MemPurge while another CF would trigger
 // a regular Flush.
-TEST_F(DBFlushTest, DISABLED_MemPurgeWithAtomicFlush) {
+TEST_F(DBFlushTest, MemPurgeWithAtomicFlush) {
   Options options = CurrentOptions();
 
   // The following options are used to enforce several values that
   // may already exist as default values to make this test resilient
   // to default value updates in the future.
-  // options.statistics = CreateDBStatistics();
+  options.statistics = CreateDBStatistics();
 
   // Record all statistics.
-  // options.statistics->set_stats_level(StatsLevel::kAll);
+  options.statistics->set_stats_level(StatsLevel::kAll);
 
   // create the DB if it's not already present
   options.create_if_missing = true;
@@ -1295,11 +1284,11 @@ TEST_F(DBFlushTest, DISABLED_MemPurgeWithAtomicFlush) {
   Close();
 }
 
-TEST_F(DBFlushTest, DISABLED_MemPurgeDeleteAndDeleteRange) {
+TEST_F(DBFlushTest, MemPurgeDeleteAndDeleteRange) {
   Options options = CurrentOptions();
 
-  // options.statistics = CreateDBStatistics();
-  // options.statistics->set_stats_level(StatsLevel::kAll);
+  options.statistics = CreateDBStatistics();
+  options.statistics->set_stats_level(StatsLevel::kAll);
   options.create_if_missing = true;
   options.compression = kNoCompression;
   options.inplace_update_support = false;
@@ -1483,8 +1472,7 @@ class ConditionalUpdateFilterFactory : public CompactionFilterFactory {
   std::string filtered_key_;
 };
 
-// todo: option: compaction_filter_factory not enabled
-TEST_F(DBFlushTest, DISABLED_MemPurgeAndCompactionFilter) {
+TEST_F(DBFlushTest, MemPurgeAndCompactionFilter) {
   Options options = CurrentOptions();
 
   std::string KEY1 = "ThisIsKey1";
@@ -1498,14 +1486,14 @@ TEST_F(DBFlushTest, DISABLED_MemPurgeAndCompactionFilter) {
   std::string KEY9 = "ThisIsKey9";
   const std::string NOT_FOUND = "NOT_FOUND";
 
-  // options.statistics = CreateDBStatistics();
-  // options.statistics->set_stats_level(StatsLevel::kAll);
+  options.statistics = CreateDBStatistics();
+  options.statistics->set_stats_level(StatsLevel::kAll);
   options.create_if_missing = true;
   options.compression = kNoCompression;
   options.inplace_update_support = false;
   options.allow_concurrent_memtable_write = true;
-  // TestFlushListener* listener = new TestFlushListener(options.env, this);
-  // options.listeners.emplace_back(listener);
+  TestFlushListener* listener = new TestFlushListener(options.env, this);
+  options.listeners.emplace_back(listener);
   // Create a ConditionalUpdate compaction filter
   // that will update all the values of the KV pairs
   // where the keys are "lower" than KEY4.
@@ -1578,37 +1566,32 @@ TEST_F(DBFlushTest, DISABLED_MemPurgeAndCompactionFilter) {
   ASSERT_EQ(Get(KEY5), p_v5);
 }
 
-// todo
 TEST_F(DBFlushTest, DISABLED_MemPurgeWALSupport) {
   Options options = CurrentOptions();
 
-  // options.statistics = CreateDBStatistics();
-  // options.statistics->set_stats_level(StatsLevel::kAll);
+  options.statistics = CreateDBStatistics();
+  options.statistics->set_stats_level(StatsLevel::kAll);
   options.create_if_missing = true;
   options.compression = kNoCompression;
   options.inplace_update_support = false;
   options.allow_concurrent_memtable_write = true;
 
   // Enforce size of a single MemTable to 128KB.
-  options.write_buffer_size = 128 << 10;  // debug
+  options.write_buffer_size = 128 << 10;
   // Activate the MemPurge prototype
   // (values >1.0 are equivalent to 1.0).
   options.experimental_mempurge_threshold = 2.5;
-  LOG("Before TryReopen(options);");
+
   ASSERT_OK(TryReopen(options));
-  LOG("Before TryReopen(options); done.");
 
   const size_t KVSIZE = 10;
 
   do {
-    LOG("Before first round of overwrites.");
     CreateAndReopenWithCF({"pikachu"}, options);
-    LOG("CreateAndReopenWithCF done.");
     ASSERT_OK(Put(1, "foo", "v1"));
     ASSERT_OK(Put(1, "baz", "v5"));
-    LOG("ReopenWithColumnFamilies.");
+
     ReopenWithColumnFamilies({"default", "pikachu"}, options);
-    LOG("ReopenWithColumnFamilies done.");
     ASSERT_EQ("v1", Get(1, "foo"));
 
     ASSERT_EQ("v1", Get(1, "foo"));
@@ -1618,14 +1601,13 @@ TEST_F(DBFlushTest, DISABLED_MemPurgeWALSupport) {
     ASSERT_OK(Put(1, "foo", "v3"));
     std::atomic<uint32_t> mempurge_count{0};
     std::atomic<uint32_t> sst_count{0};
-    LOG("SetCallBack.");
     ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->SetCallBack(
         "DBImpl::FlushJob:MemPurgeSuccessful",
         [&](void* /*arg*/) { mempurge_count++; });
     ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->SetCallBack(
         "DBImpl::FlushJob:SSTFileCreated", [&](void* /*arg*/) { sst_count++; });
     ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->EnableProcessing();
-    LOG("SetCallBack done.");
+
     std::vector<std::string> keys;
     for (size_t k = 0; k < KVSIZE; k++) {
       keys.push_back("IamKey" + std::to_string(k));
@@ -1648,20 +1630,20 @@ TEST_F(DBFlushTest, DISABLED_MemPurgeWALSupport) {
       values_default[k] = rnd.RandomString(RAND_VALUES_LENGTH);
       values_pikachu[k] = rnd.RandomString(RAND_VALUES_LENGTH);
     }
-    LOG("Before first round of overwrites.");
+
     // Insert keys[0:KVSIZE/2] to
     // both 'default' and 'pikachu' CFs.
     for (size_t k = 0; k < KVSIZE / 2; k++) {
       ASSERT_OK(Put(0, keys[k], values_default[k]));
       ASSERT_OK(Put(1, keys[k], values_pikachu[k]));
     }
-    LOG("Before first round of overwrites.");
+
     // Check that the insertion was seamless.
     for (size_t k = 0; k < KVSIZE / 2; k++) {
       ASSERT_EQ(Get(0, keys[k]), values_default[k]);
       ASSERT_EQ(Get(1, keys[k]), values_pikachu[k]);
     }
-    LOG("Before first round of overwrites.");
+
     // Insertion of of K-V pairs, multiple times (overwrites)
     // into 'default' CF. Will trigger mempurge.
     for (size_t j = 0; j < NUM_REPEAT; j++) {
@@ -1669,12 +1651,12 @@ TEST_F(DBFlushTest, DISABLED_MemPurgeWALSupport) {
       for (size_t k = KVSIZE / 2; k < KVSIZE; k++) {
         values_default[k] = rnd.RandomString(RAND_VALUES_LENGTH);
       }
-      LOG("insert");
+
       // Insert K-V into default CF.
       for (size_t k = KVSIZE / 2; k < KVSIZE; k++) {
         ASSERT_OK(Put(0, keys[k], values_default[k]));
       }
-      LOG("insert done");
+
       // Check key validity, for all keys, both in
       // default and pikachu CFs.
       for (size_t k = 0; k < KVSIZE; k++) {
@@ -1685,10 +1667,8 @@ TEST_F(DBFlushTest, DISABLED_MemPurgeWALSupport) {
       for (size_t k = 0; k < KVSIZE / 2; k++) {
         ASSERT_EQ(Get(1, keys[k]), values_pikachu[k]);
       }
-      LOG("get done");
     }
 
-    LOG("Before first round of overwrites.");
     // Insertion of of K-V pairs, multiple times (overwrites)
     // into 'pikachu' CF. Will trigger mempurge.
     // Check that we keep the older logs for 'default' imm().
@@ -1699,11 +1679,9 @@ TEST_F(DBFlushTest, DISABLED_MemPurgeWALSupport) {
       }
 
       // Insert K-V into pikachu CF.
-      LOG("insert");
       for (size_t k = KVSIZE / 2; k < KVSIZE; k++) {
         ASSERT_OK(Put(1, keys[k], values_pikachu[k]));
       }
-      LOG("insert done.");
 
       // Check key validity, for all keys,
       // both in default and pikachu.
@@ -1711,7 +1689,6 @@ TEST_F(DBFlushTest, DISABLED_MemPurgeWALSupport) {
         ASSERT_EQ(Get(0, keys[k]), values_default[k]);
         ASSERT_EQ(Get(1, keys[k]), values_pikachu[k]);
       }
-      LOG("get done");
     }
 
     // Check that there was at least one mempurge
@@ -1724,6 +1701,7 @@ TEST_F(DBFlushTest, DISABLED_MemPurgeWALSupport) {
         std::numeric_limits<double>::max()) {
       EXPECT_EQ(sst_count.exchange(0), EXPECTED_SST_COUNT);
     }
+
     ReopenWithColumnFamilies({"default", "pikachu"}, options);
     // Check that there was no data corruption anywhere,
     // not in 'default' nor in 'Pikachu' CFs.
@@ -1739,7 +1717,6 @@ TEST_F(DBFlushTest, DISABLED_MemPurgeWALSupport) {
       ASSERT_EQ(Get(0, keys[k]), values_default[k]);
       ASSERT_EQ(Get(1, keys[k]), values_pikachu[k]);
     }
-    LOG("Before first round of overwrites.");
     // Insertion of random K-V pairs to trigger
     // a flush in the Pikachu CF.
     for (size_t j = 0; j < NUM_REPEAT; j++) {
@@ -1747,12 +1724,9 @@ TEST_F(DBFlushTest, DISABLED_MemPurgeWALSupport) {
       RNDVALUE = rnd.RandomString(RAND_VALUES_LENGTH);
       ASSERT_OK(Put(1, RNDKEY, RNDVALUE));
     }
-    LOG("Before first round of overwrites.");
     // ASsert than there was at least one flush to storage.
-    // EXPECT_GT(sst_count.exchange(0), EXPECTED_SST_COUNT);
-    LOG("Before first round of overwrites.");
+    EXPECT_GT(sst_count.exchange(0), EXPECTED_SST_COUNT);
     ReopenWithColumnFamilies({"default", "pikachu"}, options);
-    LOG("Before first round of overwrites.");
     ASSERT_EQ("v4", Get(1, "foo"));
     ASSERT_EQ("v2", Get(1, "bar"));
     ASSERT_EQ("v5", Get(1, "baz"));
@@ -1764,11 +1738,10 @@ TEST_F(DBFlushTest, DISABLED_MemPurgeWALSupport) {
       ASSERT_EQ(Get(1, keys[k]), values_pikachu[k]);
     }
     ASSERT_EQ(Get(1, RNDKEY), RNDVALUE);
-    LOG("Before first round of overwrites.");
   } while (ChangeWalOptions());
 }
-// todo: mempurge
-TEST_F(DBFlushTest, DISABLED_MemPurgeCorrectLogNumberAndSSTFileCreation) {
+
+TEST_F(DBFlushTest, MemPurgeCorrectLogNumberAndSSTFileCreation) {
   // Before our bug fix, we noticed that when 2 memtables were
   // being flushed (with one memtable being the output of a
   // previous MemPurge and one memtable being a newly-sealed memtable),
@@ -1902,7 +1875,7 @@ TEST_F(DBFlushTest, DISABLED_MemPurgeCorrectLogNumberAndSSTFileCreation) {
   Close();
 }
 
-TEST_P(DBFlushDirectIOTest, DISABLED_DirectIO) {
+TEST_P(DBFlushDirectIOTest, DirectIO) {
   Options options;
   options.create_if_missing = true;
   options.disable_auto_compactions = true;
@@ -1926,7 +1899,7 @@ TEST_P(DBFlushDirectIOTest, DISABLED_DirectIO) {
   delete options.env;
 }
 
-TEST_F(DBFlushTest, DISABLED_FlushError) {
+TEST_F(DBFlushTest, FlushError) {
   Options options;
   std::unique_ptr<FaultInjectionTestEnv> fault_injection_env(
       new FaultInjectionTestEnv(env_));
@@ -1946,7 +1919,7 @@ TEST_F(DBFlushTest, DISABLED_FlushError) {
   ASSERT_NE(s, Status::OK());
 }
 
-TEST_F(DBFlushTest, DISABLED_ManualFlushFailsInReadOnlyMode) {
+TEST_F(DBFlushTest, ManualFlushFailsInReadOnlyMode) {
   // Regression test for bug where manual flush hangs forever when the DB
   // is in read-only mode. Verify it now at least returns, despite failing.
   Options options;
@@ -1985,7 +1958,7 @@ TEST_F(DBFlushTest, DISABLED_ManualFlushFailsInReadOnlyMode) {
   Close();
 }
 
-TEST_F(DBFlushTest, DISABLED_CFDropRaceWithWaitForFlushMemTables) {
+TEST_F(DBFlushTest, CFDropRaceWithWaitForFlushMemTables) {
   Options options = CurrentOptions();
   options.create_if_missing = true;
   CreateAndReopenWithCF({"pikachu"}, options);
@@ -2018,7 +1991,7 @@ TEST_F(DBFlushTest, DISABLED_CFDropRaceWithWaitForFlushMemTables) {
   SyncPoint::GetInstance()->DisableProcessing();
 }
 
-TEST_F(DBFlushTest, DISABLED_FireOnFlushCompletedAfterCommittedResult) {
+TEST_F(DBFlushTest, FireOnFlushCompletedAfterCommittedResult) {
   class TestListener : public EventListener {
    public:
     void OnFlushCompleted(DB* db, const FlushJobInfo& info) override {
@@ -2109,8 +2082,7 @@ TEST_F(DBFlushTest, DISABLED_FireOnFlushCompletedAfterCommittedResult) {
   SyncPoint::GetInstance()->ClearAllCallBacks();
 }
 
-// todo
-TEST_F(DBFlushTest, DISABLED_FlushWithBlob) {
+TEST_F(DBFlushTest, FlushWithBlob) {
   constexpr uint64_t min_blob_size = 10;
 
   Options options;
@@ -2187,8 +2159,7 @@ TEST_F(DBFlushTest, DISABLED_FlushWithBlob) {
                 compaction_stats[0].bytes_written_blob);
 }
 
-// todo: checksum failure
-TEST_F(DBFlushTest, DISABLED_FlushWithChecksumHandoff1) {
+TEST_F(DBFlushTest, FlushWithChecksumHandoff1) {
   if (mem_env_ || encrypted_env_) {
     ROCKSDB_GTEST_SKIP("Test requires non-mem or non-encrypted environment");
     return;
@@ -2252,7 +2223,7 @@ TEST_F(DBFlushTest, DISABLED_FlushWithChecksumHandoff1) {
   Destroy(options);
 }
 
-TEST_F(DBFlushTest, DISABLED_FlushWithChecksumHandoff2) {
+TEST_F(DBFlushTest, FlushWithChecksumHandoff2) {
   if (mem_env_ || encrypted_env_) {
     ROCKSDB_GTEST_SKIP("Test requires non-mem or non-encrypted environment");
     return;
@@ -2306,7 +2277,7 @@ TEST_F(DBFlushTest, DISABLED_FlushWithChecksumHandoff2) {
   Destroy(options);
 }
 
-TEST_F(DBFlushTest, DISABLED_FlushWithChecksumHandoffManifest1) {
+TEST_F(DBFlushTest, FlushWithChecksumHandoffManifest1) {
   if (mem_env_ || encrypted_env_) {
     ROCKSDB_GTEST_SKIP("Test requires non-mem or non-encrypted environment");
     return;
@@ -2346,7 +2317,7 @@ TEST_F(DBFlushTest, DISABLED_FlushWithChecksumHandoffManifest1) {
   Destroy(options);
 }
 
-TEST_F(DBFlushTest, DISABLED_FlushWithChecksumHandoffManifest2) {
+TEST_F(DBFlushTest, FlushWithChecksumHandoffManifest2) {
   if (mem_env_ || encrypted_env_) {
     ROCKSDB_GTEST_SKIP("Test requires non-mem or non-encrypted environment");
     return;
@@ -2386,29 +2357,23 @@ TEST_F(DBFlushTest, DISABLED_FlushWithChecksumHandoffManifest2) {
   Destroy(options);
 }
 
-// todo: urgent
-TEST_F(DBFlushTest, DISABLED_PickRightMemtables) {
+TEST_F(DBFlushTest, PickRightMemtables) {
   Options options = CurrentOptions();
-  LOG("Destroying and reopening DB with max_write_buffer_number = 128 ");
   DestroyAndReopen(options);
-  LOG("Putting 100 keys");
   options.create_if_missing = true;
 
   const std::string test_cf_name = "test_cf";
   options.max_write_buffer_number = 128;
-  LOG("Creating column family " + test_cf_name);
   CreateColumnFamilies({test_cf_name}, options);
-  LOG("Putting 100 keys");
+
   Close();
-  LOG("Reopening DB with max_write_buffer_number = 128 ");
 
   ReopenWithColumnFamilies({kDefaultColumnFamilyName, test_cf_name}, options);
-  LOG("Putting 100 keys");
 
   ASSERT_OK(db_->Put(WriteOptions(), "key", "value"));
 
   ASSERT_OK(db_->Put(WriteOptions(), handles_[1], "key", "value"));
-  LOG("Flushing");
+
   SyncPoint::GetInstance()->DisableProcessing();
   SyncPoint::GetInstance()->ClearAllCallBacks();
   SyncPoint::GetInstance()->SetCallBack(
@@ -2429,9 +2394,9 @@ TEST_F(DBFlushTest, DISABLED_PickRightMemtables) {
         ASSERT_EQ(1, mems[0]->GetID());
       });
   SyncPoint::GetInstance()->EnableProcessing();
-  LOG("Flushing");
+
   ASSERT_OK(db_->Flush(FlushOptions(), handles_[1]));
-  LOG("Flushing done");
+
   SyncPoint::GetInstance()->DisableProcessing();
   SyncPoint::GetInstance()->ClearAllCallBacks();
 }
@@ -2449,7 +2414,7 @@ INSTANTIATE_TEST_CASE_P(DBFlushTestBlobError, DBFlushTestBlobError,
                             "BlobFileBuilder::WriteBlobToFile:AddRecord",
                             "BlobFileBuilder::WriteBlobToFile:AppendFooter"}));
 
-TEST_P(DBFlushTestBlobError, DISABLED_FlushError) {
+TEST_P(DBFlushTestBlobError, FlushError) {
   Options options;
   options.enable_blob_files = true;
   options.disable_auto_compactions = true;
@@ -2530,7 +2495,7 @@ TEST_P(DBFlushTestBlobError, DISABLED_FlushError) {
                 compaction_stats[0].bytes_written_blob);
 }
 
-TEST_F(DBFlushTest, DISABLED_TombstoneVisibleInSnapshot) {
+TEST_F(DBFlushTest, TombstoneVisibleInSnapshot) {
   class SimpleTestFlushListener : public EventListener {
    public:
     explicit SimpleTestFlushListener(DBFlushTest* _test) : test_(_test) {}
@@ -2585,7 +2550,7 @@ TEST_F(DBFlushTest, DISABLED_TombstoneVisibleInSnapshot) {
   db_->ReleaseSnapshot(snapshot);
 }
 
-TEST_P(DBAtomicFlushTest, DISABLED_ManualFlushUnder2PC) {
+TEST_P(DBAtomicFlushTest, ManualFlushUnder2PC) {
   Options options = CurrentOptions();
   options.create_if_missing = true;
   options.allow_2pc = true;
@@ -2674,7 +2639,7 @@ TEST_P(DBAtomicFlushTest, DISABLED_ManualFlushUnder2PC) {
   ASSERT_NE(db_impl->MinLogNumberToKeep(), 0);
 }
 
-TEST_P(DBAtomicFlushTest, DISABLED_ManualAtomicFlush) {
+TEST_P(DBAtomicFlushTest, ManualAtomicFlush) {
   Options options = CurrentOptions();
   options.create_if_missing = true;
   options.atomic_flush = GetParam();
@@ -2711,7 +2676,7 @@ TEST_P(DBAtomicFlushTest, DISABLED_ManualAtomicFlush) {
   }
 }
 
-TEST_P(DBAtomicFlushTest, DISABLED_PrecomputeMinLogNumberToKeepNon2PC) {
+TEST_P(DBAtomicFlushTest, PrecomputeMinLogNumberToKeepNon2PC) {
   Options options = CurrentOptions();
   options.create_if_missing = true;
   options.atomic_flush = GetParam();
@@ -2768,7 +2733,7 @@ TEST_P(DBAtomicFlushTest, DISABLED_PrecomputeMinLogNumberToKeepNon2PC) {
   }
 }
 
-TEST_P(DBAtomicFlushTest, DISABLED_AtomicFlushTriggeredByMemTableFull) {
+TEST_P(DBAtomicFlushTest, AtomicFlushTriggeredByMemTableFull) {
   Options options = CurrentOptions();
   options.create_if_missing = true;
   options.atomic_flush = GetParam();
@@ -2813,7 +2778,7 @@ TEST_P(DBAtomicFlushTest, DISABLED_AtomicFlushTriggeredByMemTableFull) {
   SyncPoint::GetInstance()->DisableProcessing();
 }
 
-TEST_P(DBAtomicFlushTest, DISABLED_AtomicFlushRollbackSomeJobs) {
+TEST_P(DBAtomicFlushTest, AtomicFlushRollbackSomeJobs) {
   bool atomic_flush = GetParam();
   if (!atomic_flush) {
     return;
@@ -2860,8 +2825,7 @@ TEST_P(DBAtomicFlushTest, DISABLED_AtomicFlushRollbackSomeJobs) {
   Destroy(options);
 }
 
-TEST_P(DBAtomicFlushTest,
-       DISABLED_FlushMultipleCFs_DropSomeBeforeRequestFlush) {
+TEST_P(DBAtomicFlushTest, FlushMultipleCFs_DropSomeBeforeRequestFlush) {
   bool atomic_flush = GetParam();
   if (!atomic_flush) {
     return;
@@ -2890,7 +2854,7 @@ TEST_P(DBAtomicFlushTest,
 }
 
 TEST_P(DBAtomicFlushTest,
-       DISABLED_FlushMultipleCFs_DropSomeAfterScheduleFlushBeforeFlushJobRun) {
+       FlushMultipleCFs_DropSomeAfterScheduleFlushBeforeFlushJobRun) {
   bool atomic_flush = GetParam();
   if (!atomic_flush) {
     return;
@@ -2942,7 +2906,7 @@ TEST_P(DBAtomicFlushTest,
   Destroy(options);
 }
 
-TEST_P(DBAtomicFlushTest, DISABLED_TriggerFlushAndClose) {
+TEST_P(DBAtomicFlushTest, TriggerFlushAndClose) {
   bool atomic_flush = GetParam();
   if (!atomic_flush) {
     return;
@@ -2968,7 +2932,7 @@ TEST_P(DBAtomicFlushTest, DISABLED_TriggerFlushAndClose) {
   ASSERT_EQ("value", Get(0, "key"));
 }
 
-TEST_P(DBAtomicFlushTest, DISABLED_PickMemtablesRaceWithBackgroundFlush) {
+TEST_P(DBAtomicFlushTest, PickMemtablesRaceWithBackgroundFlush) {
   bool atomic_flush = GetParam();
   Options options = CurrentOptions();
   options.create_if_missing = true;
@@ -2999,7 +2963,7 @@ TEST_P(DBAtomicFlushTest, DISABLED_PickMemtablesRaceWithBackgroundFlush) {
   handles_.clear();
 }
 
-TEST_P(DBAtomicFlushTest, DISABLED_CFDropRaceWithWaitForFlushMemTables) {
+TEST_P(DBAtomicFlushTest, CFDropRaceWithWaitForFlushMemTables) {
   bool atomic_flush = GetParam();
   if (!atomic_flush) {
     return;
@@ -3042,7 +3006,7 @@ TEST_P(DBAtomicFlushTest, DISABLED_CFDropRaceWithWaitForFlushMemTables) {
   SyncPoint::GetInstance()->DisableProcessing();
 }
 
-TEST_P(DBAtomicFlushTest, DISABLED_RollbackAfterFailToInstallResults) {
+TEST_P(DBAtomicFlushTest, RollbackAfterFailToInstallResults) {
   bool atomic_flush = GetParam();
   if (!atomic_flush) {
     return;
@@ -3090,7 +3054,7 @@ TEST_P(DBAtomicFlushTest, DISABLED_RollbackAfterFailToInstallResults) {
 //  |   IO error
 //  |                                     detect IO error and stop waiting
 //  V
-TEST_P(DBAtomicFlushTest, DISABLED_BgThreadNoWaitAfterManifestError) {
+TEST_P(DBAtomicFlushTest, BgThreadNoWaitAfterManifestError) {
   bool atomic_flush = GetParam();
   if (!atomic_flush) {
     return;
@@ -3187,7 +3151,7 @@ TEST_P(DBAtomicFlushTest, DISABLED_BgThreadNoWaitAfterManifestError) {
   SyncPoint::GetInstance()->ClearAllCallBacks();
 }
 
-TEST_P(DBAtomicFlushTest, DISABLED_NoWaitWhenWritesStopped) {
+TEST_P(DBAtomicFlushTest, NoWaitWhenWritesStopped) {
   Options options = GetDefaultOptions();
   options.create_if_missing = true;
   options.atomic_flush = GetParam();

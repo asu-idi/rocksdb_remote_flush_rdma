@@ -59,7 +59,7 @@ chown -R $(whoami) ../
 # #   -print_top_k_access=3 \
 # #   -output_prefix=test \
 # #   -trace_path=/data/rocksdb/dev/trace
-
+sysctl -w kernel.shmmni=32768
 val=$(ipcs | tail -5 | awk 'NR==1{print $2}')
 val2=$(ipcs | wc -l)
 echo $val
