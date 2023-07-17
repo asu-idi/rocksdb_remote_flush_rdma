@@ -192,6 +192,9 @@ class DBImpl : public DB {
   using DB::ListenAndScheduleFlushJob;
   Status ListenAndScheduleFlushJob() override;
 
+  using DB::TEST_RemoteFlushListener;
+  void TEST_RemoteFlushListener() override;
+
   using DB::Put;
   Status Put(const WriteOptions& options, ColumnFamilyHandle* column_family,
              const Slice& key, const Slice& value) override;
@@ -2049,7 +2052,6 @@ class DBImpl : public DB {
   ColumnFamilyData* GetColumnFamilyDataByName(const std::string& cf_name);
 
   void MaybeScheduleFlushOrCompaction();
-  void RemoteFlushListener();
 
   struct FlushRequest {
     FlushReason flush_reason;
@@ -2078,6 +2080,7 @@ class DBImpl : public DB {
   static void BGWorkFlush(void* arg);
   static void BGWorkPurge(void* arg);
   static void BGWorkRemoteFlush(void* arg);
+  static void TEST_BGWorkRemoteFlush(void* arg);
   static void UnscheduleRemoteFlushCallback(void* arg);
   static void UnscheduleCompactionCallback(void* arg);
   static void UnscheduleFlushCallback(void* arg);

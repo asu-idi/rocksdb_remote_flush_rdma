@@ -394,6 +394,9 @@ class DB {
     LOG("ListenAndScheduleFlushJob not supported");
     return Status::NotSupported();
   }
+  virtual void TEST_RemoteFlushListener() {
+    LOG("RemoteFlushListener not supported");
+  }
 
   // Set the database entry for "key" to "value".
   // If "key" already exists, it will be overwritten.
