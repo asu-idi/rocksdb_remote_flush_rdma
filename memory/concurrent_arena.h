@@ -91,7 +91,7 @@ class ConcurrentArena : public BasicArena {
   size_t BlockSize() const override { return arena_.BlockSize(); }
   bool IsInInlineBlock() const override {
     LOG("should not use this function");
-    return false;
+    assert(false);
   }
 
  private:

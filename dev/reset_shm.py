@@ -15,4 +15,4 @@ for k in range(val-val2+11, val+1):
         subprocess.run(["ipcrm", "-m", str(k)], check=True)
     except subprocess.CalledProcessError:
         print(f"Command 'ipcrm -m {k}' failed, exiting loop.")
-        break
+        # break

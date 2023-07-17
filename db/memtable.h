@@ -540,6 +540,8 @@ class MemTable {
   static Status VerifyEntryChecksum(const char* entry,
                                     size_t protection_bytes_per_key,
                                     bool allow_data_in_errors = false);
+  // TODO(iaIm14): remove is_shared(), dup with IsSharedMemtable() and may cause
+  // delete problem.
   bool IsSharedMemtable() {
     if (strcmp(arena_->name(), "ConcurrentSharedArena") == 0) {
       return true;

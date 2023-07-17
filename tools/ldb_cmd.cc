@@ -1323,8 +1323,7 @@ void DumpManifestFile(Options options, std::string file, bool verbose, bool hex,
   WriteController wc(options.delayed_write_rate);
   WriteBufferManager wb(options.db_write_buffer_size);
   ImmutableDBOptions immutable_db_options(options);
-  VersionSet versions(ColumnFamilyOptions(), dbname, &immutable_db_options,
-                      sopt, tc.get(), &wb, &wc,
+  VersionSet versions(dbname, &immutable_db_options, sopt, tc.get(), &wb, &wc,
                       /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
                       /*db_id*/ "", /*db_session_id*/ "");
   Status s = versions.DumpManifest(options, file, verbose, hex, json);
@@ -1465,8 +1464,7 @@ Status GetLiveFilesChecksumInfoFromVersionSet(Options options,
   WriteController wc(options.delayed_write_rate);
   WriteBufferManager wb(options.db_write_buffer_size);
   ImmutableDBOptions immutable_db_options(options);
-  VersionSet versions(ColumnFamilyOptions(), dbname, &immutable_db_options,
-                      sopt, tc.get(), &wb, &wc,
+  VersionSet versions(dbname, &immutable_db_options, sopt, tc.get(), &wb, &wc,
                       /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
                       /*db_id*/ "", /*db_session_id*/ "");
   std::vector<std::string> cf_name_list;
@@ -2268,8 +2266,7 @@ Status ReduceDBLevelsCommand::GetOldNumOfLevels(Options& opt, int* levels) {
   const InternalKeyComparator cmp(opt.comparator);
   WriteController wc(opt.delayed_write_rate);
   WriteBufferManager wb(opt.db_write_buffer_size);
-  VersionSet versions(ColumnFamilyOptions(), db_path_, &db_options, soptions,
-                      tc.get(), &wb, &wc,
+  VersionSet versions(db_path_, &db_options, soptions, tc.get(), &wb, &wc,
                       /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
                       /*db_id*/ "", /*db_session_id*/ "");
   std::vector<ColumnFamilyDescriptor> dummy;

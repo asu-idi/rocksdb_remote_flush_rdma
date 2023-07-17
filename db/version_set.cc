@@ -4992,13 +4992,13 @@ void VersionSet::blockUnusedDataForTest() {
   block_.emplace_back(mem, sizeof(WalSet));
 
   mem = malloc(sizeof(ColumnFamilyOptions));
-  memcpy(mem,
-         reinterpret_cast<void*>(
-             const_cast<ColumnFamilyOptions*>(&dummy_cf_options_)),
-         sizeof(ColumnFamilyOptions));
-  memset(reinterpret_cast<void*>(
-             const_cast<ColumnFamilyOptions*>(&dummy_cf_options_)),
-         0x1, sizeof(ColumnFamilyOptions));
+  // memcpy(mem,
+  //        reinterpret_cast<void*>(
+  //            const_cast<ColumnFamilyOptions*>(&dummy_cf_options_)),
+  //        sizeof(ColumnFamilyOptions));
+  // memset(reinterpret_cast<void*>(
+  //            const_cast<ColumnFamilyOptions*>(&dummy_cf_options_)),
+  //        0x1, sizeof(ColumnFamilyOptions));
   block_.emplace_back(mem, sizeof(ColumnFamilyOptions));
   mem = malloc(sizeof(Cache*));
   memcpy(mem, reinterpret_cast<void*>(&table_cache_), sizeof(Cache*));
@@ -5094,10 +5094,10 @@ void VersionSet::unblockUnusedDataForTest() {
   if (block_.empty()) return;
   memcpy(reinterpret_cast<void*>(&wals_), block_[0].first, block_[0].second);
   free(block_[0].first);
-  memcpy(reinterpret_cast<void*>(
-             const_cast<ColumnFamilyOptions*>(&dummy_cf_options_)),
-         block_[1].first, block_[1].second);
-  free(block_[1].first);
+  // memcpy(reinterpret_cast<void*>(
+  //            const_cast<ColumnFamilyOptions*>(&dummy_cf_options_)),
+  //        block_[1].first, block_[1].second);
+  // free(block_[1].first);
   memcpy(reinterpret_cast<void*>(&table_cache_), block_[2].first,
          block_[2].second);
   free(block_[2].first);
@@ -5145,8 +5145,7 @@ void VersionSet::unblockUnusedDataForTest() {
 }
 void VersionSet::CHECKShared() {}
 bool VersionSet::is_shared() { return true; }
-VersionSet::VersionSet(const ColumnFamilyOptions& dummy_cf_options,
-                       const std::string& dbname,
+VersionSet::VersionSet(const std::string& dbname,
                        const ImmutableDBOptions* _db_options,
                        const FileOptions& storage_options, Cache* table_cache,
                        WriteBufferManager* write_buffer_manager,
@@ -5155,11 +5154,10 @@ VersionSet::VersionSet(const ColumnFamilyOptions& dummy_cf_options,
                        const std::shared_ptr<IOTracer>& io_tracer,
                        const std::string& db_id,
                        const std::string& db_session_id)
-    : dummy_cf_options_(dummy_cf_options),
-      column_family_set_(new ColumnFamilySet(
+    : column_family_set_(new ColumnFamilySet(
           dbname, _db_options, storage_options, table_cache,
           write_buffer_manager, write_controller, block_cache_tracer, io_tracer,
-          db_id, db_session_id, dummy_cf_options_)),
+          db_id, db_session_id, ColumnFamilyOptions())),
       table_cache_(table_cache),
       env_(_db_options->env),
       fs_(_db_options->fs, io_tracer),
@@ -5211,7 +5209,7 @@ void VersionSet::Reset() {
     column_family_set_.reset(
         new ColumnFamilySet(dbname_, db_options_, file_options_, table_cache_,
                             wbm, wc, block_cache_tracer_, io_tracer_, db_id_,
-                            db_session_id_, dummy_cf_options_));
+                            db_session_id_, ColumnFamilyOptions()));
   }
   db_id_.clear();
   next_file_number_.store(2);
@@ -6284,9 +6282,8 @@ Status VersionSet::ReduceNumberOfLevels(const std::string& dbname,
   WriteController wc(options->delayed_write_rate);
   WriteBufferManager wb(options->db_write_buffer_size);
   // TODO: check if need to use non-default dummy_cf_options
-  VersionSet versions(ColumnFamilyOptions(), dbname, &db_options, file_options,
-                      tc.get(), &wb, &wc, nullptr /*BlockCacheTracer*/,
-                      nullptr /*IOTracer*/,
+  VersionSet versions(dbname, &db_options, file_options, tc.get(), &wb, &wc,
+                      nullptr /*BlockCacheTracer*/, nullptr /*IOTracer*/,
                       /*db_id*/ "",
                       /*db_session_id*/ "");
   Status status;
@@ -7287,9 +7284,8 @@ ReactiveVersionSet::ReactiveVersionSet(
     const FileOptions& _file_options, Cache* table_cache,
     WriteBufferManager* write_buffer_manager, WriteController* write_controller,
     const std::shared_ptr<IOTracer>& io_tracer)
-    // TODO: currently use default dummy_cf_options
-    : VersionSet(ColumnFamilyOptions(), dbname, _db_options, _file_options,
-                 table_cache, write_buffer_manager, write_controller,
+    : VersionSet(dbname, _db_options, _file_options, table_cache,
+                 write_buffer_manager, write_controller,
                  /*block_cache_tracer=*/nullptr, io_tracer, /*db_id*/ "",
                  /*db_session_id*/ "") {}
 

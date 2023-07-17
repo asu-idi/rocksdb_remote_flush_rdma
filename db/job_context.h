@@ -234,10 +234,18 @@ struct JobContext {
     // free pending memtables
     for (auto m : memtables_to_free) {
       if (m->IsSharedMemtable()) {
-        LOG("JobContext::Clean() shm_delete");
-        shm_delete(reinterpret_cast<char*>(m));
+        LOG("JobContext::Clean() shm_delete ", std::hex,
+            reinterpret_cast<void*>(m), std::dec);
+        if (singleton<SharedContainer>::Instance().find(
+                reinterpret_cast<char*>(m), sizeof(MemTable))) {
+          m->~MemTable();
+          shm_delete(reinterpret_cast<char*>(m));
+        }
       } else {
-        LOG("JobContext::Clean() delete");
+        LOG("JobContext::Clean() delete ", std::hex, reinterpret_cast<void*>(m),
+            std::dec);
+        assert(!singleton<SharedContainer>::Instance().find(
+            reinterpret_cast<char*>(m), sizeof(MemTable)));
         delete m;
       }
     }

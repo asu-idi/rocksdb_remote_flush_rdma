@@ -220,13 +220,6 @@ class MemTableRep {
   // that was allocated through the allocator.  Safe to call from any thread.
   virtual size_t ApproximateMemoryUsage() = 0;
 
-  virtual MemTableRep* CloneReadOnlyMemtableRep(
-      Allocator* allocator = ConSharedArena::CreateSharedConSharedArena()) {
-    LOG("[ERROR] default Clone Api.");
-    //  TODO: make this pure virtual
-    return nullptr;
-  }
-
   virtual ~MemTableRep() {}
 
   // Iteration over the contents of a skip collection

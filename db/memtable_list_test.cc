@@ -101,8 +101,8 @@ class MemTableListTest : public testing::Test {
     WriteBufferManager write_buffer_manager(db_options.db_write_buffer_size);
     WriteController write_controller(10000000u);
 
-    VersionSet versions(ColumnFamilyOptions(), dbname, &immutable_db_options,
-                        env_options, table_cache.get(), &write_buffer_manager,
+    VersionSet versions(dbname, &immutable_db_options, env_options,
+                        table_cache.get(), &write_buffer_manager,
                         &write_controller, /*block_cache_tracer=*/nullptr,
                         /*io_tracer=*/nullptr, /*db_id*/ "",
                         /*db_session_id*/ "");
@@ -152,8 +152,8 @@ class MemTableListTest : public testing::Test {
     WriteBufferManager write_buffer_manager(db_options.db_write_buffer_size);
     WriteController write_controller(10000000u);
 
-    VersionSet versions(ColumnFamilyOptions(), dbname, &immutable_db_options,
-                        env_options, table_cache.get(), &write_buffer_manager,
+    VersionSet versions(dbname, &immutable_db_options, env_options,
+                        table_cache.get(), &write_buffer_manager,
                         &write_controller, /*block_cache_tracer=*/nullptr,
                         /*io_tracer=*/nullptr, /*db_id*/ "",
                         /*db_session_id*/ "");
@@ -203,7 +203,7 @@ class MemTableListTest : public testing::Test {
   }
 };
 
-TEST_F(MemTableListTest, DISABLED_Empty) {
+TEST_F(MemTableListTest, Empty) {
   // Create an empty MemTableList and validate basic functions.
   MemTableList list(1, 0, 0);
 
@@ -221,7 +221,7 @@ TEST_F(MemTableListTest, DISABLED_Empty) {
   ASSERT_EQ(0, to_delete.size());
 }
 
-TEST_F(MemTableListTest, DISABLED_GetTest) {
+TEST_F(MemTableListTest, GetTest) {
   // Create MemTableList
   int min_write_buffer_number_to_merge = 2;
   int max_write_buffer_number_to_maintain = 0;
@@ -356,7 +356,7 @@ TEST_F(MemTableListTest, DISABLED_GetTest) {
   }
 }
 
-TEST_F(MemTableListTest, DISABLED_GetFromHistoryTest) {
+TEST_F(MemTableListTest, GetFromHistoryTest) {
   // Create MemTableList
   int min_write_buffer_number_to_merge = 2;
   int max_write_buffer_number_to_maintain = 2;
@@ -582,7 +582,7 @@ TEST_F(MemTableListTest, DISABLED_GetFromHistoryTest) {
   }
 }
 
-TEST_F(MemTableListTest, DISABLED_FlushPendingTest) {
+TEST_F(MemTableListTest, FlushPendingTest) {
   const int num_tables = 6;
   SequenceNumber seq = 1;
   Status s;
@@ -869,7 +869,7 @@ TEST_F(MemTableListTest, DISABLED_FlushPendingTest) {
   to_delete.clear();
 }
 
-TEST_F(MemTableListTest, DISABLED_EmptyAtomicFlusTest) {
+TEST_F(MemTableListTest, EmptyAtomicFlusTest) {
   autovector<MemTableList*> lists;
   autovector<uint32_t> cf_ids;
   autovector<const MutableCFOptions*> options_list;
@@ -911,7 +911,7 @@ TEST_F(MemTableListTest, DISABLED_SharedMemListVersion) {
   }
 }
 
-TEST_F(MemTableListTest, DISABLED_AtomicFlusTest) {
+TEST_F(MemTableListTest, AtomicFlusTest) {
   const int num_cfs = 3;
   const int num_tables_per_cf = 2;
   SequenceNumber seq = 1;

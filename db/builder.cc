@@ -246,8 +246,6 @@ Status BuildTable(
         auto tombstone = range_del_it->Tombstone();
         auto kv = tombstone.Serialize();
         builder->Add(kv.first.Encode(), kv.second);
-        LOG("[Trace] filesize=", builder->FileSize(),
-            " kv=", kv.first.Encode().data(), ' ', kv.second.data());
         InternalKey tombstone_end = tombstone.SerializeEndKey();
         meta->UpdateBoundariesForRange(kv.first, tombstone_end, tombstone.seq_,
                                        tboptions.internal_comparator);
@@ -285,9 +283,7 @@ Status BuildTable(
           ioptions.compaction_style == CompactionStyle::kCompactionStyleFIFO
               ? meta->file_creation_time
               : meta->oldest_ancester_time);
-      LOG("[Trace] filesize=", builder->FileSize());
       s = builder->Finish();
-      LOG("[Trace] filesize=", builder->FileSize());
     }
     if (io_status->ok()) {
       *io_status = builder->io_status();
@@ -295,8 +291,6 @@ Status BuildTable(
 
     if (s.ok() && !empty) {
       uint64_t file_size = builder->FileSize();
-      LOG("[Trace] filesize=", builder->FileSize());
-
       meta->fd.file_size = file_size;
       meta->marked_for_compaction = builder->NeedCompact();
       assert(meta->fd.GetFileSize() > 0);

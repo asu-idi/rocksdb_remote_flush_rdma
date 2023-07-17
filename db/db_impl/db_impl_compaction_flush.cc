@@ -214,16 +214,20 @@ Status DBImpl::FlushMemTableToOutputFile(
   // To address this, we make sure NotifyOnFlushBegin() executes after memtable
   // picking so that no new snapshot can be taken between the two functions.
   LOG("Construct flush job");
-  if (cfd->GetLatestCFOptions().server_use_remote_flush && true /**/) {
-    RemoteFlushJob* remote_flush_job = RemoteFlushJob::CreateRemoteFlushJob(
+  if (cfd->GetLatestCFOptions().server_use_remote_flush) {
+    LOG("Construct traditional flush job");
+    FlushJob flush_job(
         dbname_, cfd, immutable_db_options_, mutable_cf_options,
         max_memtable_id, file_options_for_compaction_, versions_.get(), &mutex_,
         &shutting_down_, snapshot_seqs, earliest_write_conflict_snapshot,
-        job_context, flush_reason, directories_.GetDbDir(), GetDataDir(cfd, 0U),
-        GetCompressionFlush(*cfd->ioptions(), mutable_cf_options),
-        mutable_cf_options.report_bg_io_stats, true, true, thread_pri,
-        seqno_time_mapping_);
-    auto* file_meta = new FileMetaData();  // todo: delete
+        snapshot_checker, job_context, flush_reason, log_buffer,
+        directories_.GetDbDir(), GetDataDir(cfd, 0U),
+        GetCompressionFlush(*cfd->ioptions(), mutable_cf_options), stats_,
+        &event_logger_, mutable_cf_options.report_bg_io_stats,
+        true /* sync_output_directory */, true /* write_manifest */, thread_pri,
+        io_tracer_, seqno_time_mapping_, db_id_, db_session_id_,
+        cfd->GetFullHistoryTsLow(), &blob_callback_);
+    FileMetaData file_meta;
 
     Status s;
     bool need_cancel = false;
@@ -254,28 +258,19 @@ Status DBImpl::FlushMemTableToOutputFile(
     // num_flush_not_started_ needs to be rollback.
     TEST_SYNC_POINT("DBImpl::FlushMemTableToOutputFile:BeforePickMemtables");
     if (s.ok()) {
-      remote_flush_job->PickMemTable();
+      flush_job.PickMemTable();
       need_cancel = true;
     }
-    if (remote_flush_job->GetMemTables().empty()) {
-      // todo
-      TEST_SYNC_POINT("DBImpl::FlushMemTableToOutputFile:Finish");
-      remote_flush_job->~RemoteFlushJob();
-      shm_delete(reinterpret_cast<char*>(remote_flush_job));
-      LOG("return");
-      return Status::Aborted("No memtable to flush");
-    }
     TEST_SYNC_POINT_CALLBACK(
-        "DBImpl::FlushMemTableToOutputFile:AfterPickMemtables",
-        &remote_flush_job);
+        "DBImpl::FlushMemTableToOutputFile:AfterPickMemtables", &flush_job);
     LOG("flush job pick all Memtable finish");
-    for (auto* memtable : remote_flush_job->GetMemTables()) {
+    for (auto* memtable : flush_job.GetMemTables()) {
       LOG("FlushJob pick memtable:", memtable->GetID(),
           " size=", memtable->get_data_size(),
           " file-number=", memtable->GetFileNumber());
     }
     // may temporarily unlock and lock the mutex.
-    NotifyOnFlushBegin(cfd, file_meta, mutable_cf_options, job_context->job_id,
+    NotifyOnFlushBegin(cfd, &file_meta, mutable_cf_options, job_context->job_id,
                        flush_reason);
 
     bool switched_to_mempurge = false;
@@ -286,22 +281,16 @@ Status DBImpl::FlushMemTableToOutputFile(
     // and EventListener callback will be called when the db_mutex
     // is unlocked by the current thread.
     if (s.ok()) {
-      // TODO:
-      remote_flush_job->Pack();
-      s = remote_flush_job->RunRemote(&logs_with_prep_tracker_, file_meta,
-                                      &switched_to_mempurge);
-      remote_flush_job->UnPack();
-      s = remote_flush_job->RunLocal(&logs_with_prep_tracker_, file_meta,
-                                     &switched_to_mempurge);
-      LOG("ret");
+      s = flush_job.Run(&logs_with_prep_tracker_, &file_meta,
+                        &switched_to_mempurge);
       need_cancel = false;
     }
 
     if (!s.ok() && need_cancel) {
-      remote_flush_job->Cancel();
+      flush_job.Cancel();
     }
+
     if (s.ok()) {
-      LOG("InstallSuperVersionAndScheduleWork");
       InstallSuperVersionAndScheduleWork(cfd, superversion_context,
                                          mutable_cf_options);
       if (made_progress) {
@@ -312,7 +301,7 @@ Status DBImpl::FlushMemTableToOutputFile(
 
       Version* const current = cfd->current();
       assert(current);
-      LOG("versionstorageinfo");
+
       const VersionStorageInfo* const storage_info = current->storage_info();
       assert(storage_info);
 
@@ -333,7 +322,7 @@ Status DBImpl::FlushMemTableToOutputFile(
             blob_files.back()->GetBlobFileNumber());
       }
     }
-    LOG("FlushJob finish");
+
     if (!s.ok() && !s.IsShutdownInProgress() && !s.IsColumnFamilyDropped()) {
       if (log_io_s.ok()) {
         // Error while writing to MANIFEST.
@@ -362,43 +351,34 @@ Status DBImpl::FlushMemTableToOutputFile(
     }
     // If flush ran smoothly and no mempurge happened
     // install new SST file path.
-    LOG("switched_to_mempurge:", switched_to_mempurge);
     if (s.ok() && (!switched_to_mempurge)) {
       // may temporarily unlock and lock the mutex.
-      LOG("NotifyOnFlushCompleted");
-      NotifyOnFlushCompleted(
-          cfd, mutable_cf_options,
-          remote_flush_job->GetCommittedRemoteFlushJobsInfo());
-      LOG("NotifyOnFlushCompleted finish");
+      NotifyOnFlushCompleted(cfd, mutable_cf_options,
+                             flush_job.GetCommittedFlushJobsInfo());
       auto sfm = static_cast<SstFileManagerImpl*>(
           immutable_db_options_.sst_file_manager.get());
       if (sfm) {
         // Notify sst_file_manager that a new file was added
         std::string file_path = MakeTableFileName(
-            cfd->ioptions()->cf_paths[0].path, file_meta->fd.GetNumber());
+            cfd->ioptions()->cf_paths[0].path, file_meta.fd.GetNumber());
         // TODO (PR7798).  We should only add the file to the FileManager if it
         // exists. Otherwise, some tests may fail.  Ignore the error in the
         // interim.
-        LOG("OnAddFile");
         sfm->OnAddFile(file_path).PermitUncheckedError();
-        LOG("OnAddFile finish");
         if (sfm->IsMaxAllowedSpaceReached()) {
           Status new_bg_error =
               Status::SpaceLimit("Max allowed space was reached");
           TEST_SYNC_POINT_CALLBACK(
               "DBImpl::FlushMemTableToOutputFile:MaxAllowedSpaceReached",
               &new_bg_error);
-          LOG("SetBGError");
           error_handler_.SetBGError(new_bg_error,
                                     BackgroundErrorReason::kFlush);
         }
       }
     }
     TEST_SYNC_POINT("DBImpl::FlushMemTableToOutputFile:Finish");
-    remote_flush_job->~RemoteFlushJob();
-    shm_delete(reinterpret_cast<char*>(remote_flush_job));
-    LOG("return");
     return s;
+
   } else {
     FlushJob flush_job(
         dbname_, cfd, immutable_db_options_, mutable_cf_options,
@@ -3171,12 +3151,15 @@ Status DBImpl::BackgroundFlush(bool* made_progress, JobContext* job_context,
     auto bg_job_limits = GetBGJobLimits();
     for (const auto& arg : bg_flush_args) {
       ColumnFamilyData* cfd = arg.cfd_;
-      LOG("Calling FlushMemTableToOutputFile with column "
-          "family [",
-          cfd->GetName().c_str(), "], flush slots available ",
-          bg_job_limits.max_flushes, ", compaction slots available ",
-          bg_job_limits.max_compactions, ", flush slots scheduled ",
-          bg_flush_scheduled_, ", compaction slots scheduled",
+      // TODO(iaIm14):remove this
+      ROCKS_LOG_BUFFER(
+          log_buffer,
+          "Calling FlushMemTableToOutputFile with column "
+          "family [%s], flush slots available %d, compaction slots available "
+          "%d, "
+          "flush slots scheduled %d, compaction slots scheduled %d",
+          cfd->GetName().c_str(), bg_job_limits.max_flushes,
+          bg_job_limits.max_compactions, bg_flush_scheduled_,
           bg_compaction_scheduled_);
     }
     LOG("FlushMemTablesToOutputFiles");
@@ -3289,7 +3272,6 @@ void DBImpl::BackgroundCallFlush(Env::Priority thread_pri) {
     // that case, all DB variables will be dealloacated and referencing them
     // will cause trouble.
   }
-  LOG("END");
 }
 
 void DBImpl::BackgroundCallCompaction(PrepickedCompaction* prepicked_compaction,

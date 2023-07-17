@@ -45,7 +45,6 @@
 #include "table/two_level_iterator.h"
 #include "test_util/sync_point.h"
 #include "util/coding.h"
-#include "util/logger.hpp"
 #include "util/mutexlock.h"
 #include "util/stop_watch.h"
 
@@ -251,6 +250,7 @@ Status FlushJob::Run(LogsWithPrepTracker* prep_tracker, FileMetaData* file_meta,
     // This will release and re-acquire the mutex.
     LOG("Run job: write l0table");
     s = WriteLevel0Table();
+    LOG("Run job: write l0table done");
   }
 
   if (s.ok() && cfd_->IsDropped()) {
@@ -421,10 +421,16 @@ Status FlushJob::MemPurge() {
         return s;
       }
     }
-
-    new_mem = new MemTable((cfd_->internal_comparator()), *(cfd_->ioptions()),
-                           mutable_cf_options_, cfd_->write_buffer_mgr(),
-                           earliest_seqno, cfd_->GetID());
+    if (cfd_->initial_cf_options().server_use_remote_flush) {
+      new_mem = MemTable::CreateSharedMemTable(
+          (cfd_->internal_comparator()), *(cfd_->ioptions()),
+          mutable_cf_options_, cfd_->write_buffer_mgr(), earliest_seqno,
+          cfd_->GetID());
+    } else {
+      new_mem = new MemTable((cfd_->internal_comparator()), *(cfd_->ioptions()),
+                             mutable_cf_options_, cfd_->write_buffer_mgr(),
+                             earliest_seqno, cfd_->GetID());
+    }
     assert(new_mem != nullptr);
 
     Env* env = db_options_.env;
@@ -900,7 +906,7 @@ Status FlushJob::WriteLevel0Table() {
           meta_.fd.GetNumber());
       const SequenceNumber job_snapshot_seq =
           job_context_->GetJobSnapshotSequence();
-      LOG("Call build table: dbname=", dbname_, " version=", versions_);
+      LOG("FlushJob::WriteLevel0Table: BuildTable");
       s = BuildTable(
           dbname_, versions_, db_options_, tboptions, file_options_,
           cfd_->table_cache(), iter.get(), std::move(range_del_iters), &meta_,

@@ -1015,9 +1015,10 @@ void ImmutableOptions::UnPack(ColumnFamilyOptions& cf_options) {
     table_factory.reset(NewPlainTableFactory());
   }
   // todo: enable this to pass flush_job_test
-  else if (table_factory_name == "MockTable") {
-    table_factory.reset(new MockTableFactory());
-  } else {
+  // else if (table_factory_name == "MockTable") {
+  //   table_factory.reset(new MockTableFactory());
+  // }
+  else {
     LOG("table_factory_name is not supported", table_factory_name);
     assert(false);
     table_factory.reset(NewBlockBasedTableFactory());
