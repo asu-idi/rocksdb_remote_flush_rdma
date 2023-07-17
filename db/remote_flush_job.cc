@@ -9,6 +9,7 @@
 
 #include "db/remote_flush_job.h"
 
+#include <cassert>
 #include <cstddef>
 #include <iterator>
 #include <thread>
@@ -306,7 +307,18 @@ Status RemoteFlushJob::RunRemote(LogsWithPrepTracker* prep_tracker,
   } else {
     // This will release and re-acquire the mutex.
     LOG("Run job: write l0table");
-    s = WriteLevel0Table();
+    // s = WriteLevel0Table();
+    // RunLocal(prep_tracker, file_meta, switched_to_mempurge);
+    Status ret = MatchRemoteWorker();
+    if (ret.IsIOError()) {
+      LOG("WriteLevel0Table Remote Worker offline");
+      assert(!ret.IsIOError());
+    } else if (ret.IsAborted()) {
+      LOG("WriteLevel0Table return Non-OK");
+      s = Status::Corruption("WriteLevel0Table return Non-OK");
+    } else {
+      LOG("WriteLevel0Table return OK");
+    }
     LOG("Run job: write l0table done");
   }
 
@@ -377,11 +389,7 @@ Status RemoteFlushJob::RunRemote(LogsWithPrepTracker* prep_tracker,
     stream << "file_cpu_read_nanos"
            << (IOSTATS(cpu_read_nanos) - prev_cpu_read_nanos);
   }
-  // RunLocal(prep_tracker, file_meta, switched_to_mempurge);
-  Status ret = MatchRemoteWorker();
-  if (!ret.ok()) {
-    LOG("Remote Worker offline");
-  }
+
   return s;
 }
 
@@ -413,7 +421,8 @@ Status RemoteFlushJob::MatchRemoteWorker() {
   LOG("Message received: ", std::hex, buffer, std::dec, ' ', buffer, ' ',
       valread);
   close(sock);
-  return Status::OK();
+  return buffer == 1234 ? Status::OK()
+                        : Status::Aborted("WriteLevel0Data error");
 }
 
 Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
@@ -423,7 +432,8 @@ Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
       " RemoteFlushJob ptr: ", std::hex, reinterpret_cast<void*>(this),
       std::dec);
   // std::this_thread::sleep_for(std::chrono::seconds(4));
-  return Status::OK();
+  Status s = WriteLevel0Table();
+  return s;
 }
 
 void RemoteFlushJob::Cancel() {

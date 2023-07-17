@@ -38,7 +38,9 @@ class DBRemoteFlushTest : public DBTestBase {
  public:
   DBRemoteFlushTest()
       : DBTestBase("db_remote_flush_test", /*env_do_fsync=*/true,
-                   /*remote*/ true) {}
+                   /*remote*/ true) {
+    // db_->TEST_RemoteFlushListener();
+  }
 };
 
 class DBFlushDirectIOTest : public DBRemoteFlushTest,
@@ -733,8 +735,8 @@ class TestFlushListener : public EventListener {
       ASSERT_NE(it, files_by_level[0].end());
       ASSERT_EQ(info.oldest_blob_file_number, it->oldest_blob_file_number);
     }
-
-    ASSERT_EQ(db->GetEnv()->GetThreadID(), info.thread_id);
+    // flush memtables in worker thread/process.
+    ASSERT_NE(db->GetEnv()->GetThreadID(), info.thread_id);
     ASSERT_GT(info.thread_id, 0U);
   }
 
