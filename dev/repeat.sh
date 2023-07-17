@@ -1,6 +1,6 @@
 #!/usr/bin/zsh
 
-for i in {1..10}; do
+for i in {1..100}; do
     ../build/db_bench -key_size=8 -value_size=20 -num=100000 \
         -db=/tmp/rdb_benchmark -bloom_bits=10 -write_buffer_size=10000 \
         -target_file_size_base=100000 -target_file_size_multiplier=2 \

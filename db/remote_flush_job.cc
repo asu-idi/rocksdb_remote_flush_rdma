@@ -9,8 +9,23 @@
 
 #include "db/remote_flush_job.h"
 
+#include <cstddef>
+#include <iterator>
+#include <thread>
+
+// for socket API
+#ifdef __linux
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <pthread.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif  //__linux
+
 #include <algorithm>
 #include <cinttypes>
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "db/builder.h"
@@ -31,6 +46,7 @@
 #include "logging/event_logger.h"
 #include "logging/log_buffer.h"
 #include "logging/logging.h"
+#include "memory/shared_mem_basic.h"
 #include "monitoring/iostats_context_imp.h"
 #include "monitoring/perf_context_imp.h"
 #include "monitoring/thread_status_util.h"
@@ -106,6 +122,44 @@ RemoteFlushJob::RemoteFlushJob(
   TEST_SYNC_POINT("RemoteFlushJob::RemoteFlushJob()");
 }
 
+std::shared_ptr<RemoteFlushJob> RemoteFlushJob::CreateRemoteFlushJob(
+    const std::string& dbname, ColumnFamilyData* cfd,
+    const ImmutableDBOptions& db_options,
+    const MutableCFOptions& mutable_cf_options, uint64_t max_memtable_id,
+    const FileOptions& file_options, VersionSet* versions,
+    InstrumentedMutex* db_mutex, std::atomic<bool>* shutting_down,
+    std::vector<SequenceNumber> existing_snapshots,
+    SequenceNumber earliest_write_conflict_snapshot,
+    SnapshotChecker* snapshot_checker, JobContext* job_context,
+    FlushReason flush_reason, LogBuffer* log_buffer, FSDirectory* db_directory,
+    FSDirectory* output_file_directory, CompressionType output_compression,
+    Statistics* stats, EventLogger* event_logger, bool measure_io_stats,
+    const bool sync_output_directory, const bool write_manifest,
+    Env::Priority thread_pri, const std::shared_ptr<IOTracer>& io_tracer,
+    const SeqnoToTimeMapping& seqno_time_mapping, const std::string& db_id,
+    const std::string& db_session_id, std::string full_history_ts_low,
+    BlobFileCompletionCallback* blob_callback) {
+  void* mem = shm_alloc(sizeof(RemoteFlushJob));
+  // auto* flush_job = new (mem) RemoteFlushJob(
+  //     dbname, cfd, db_options, mutable_cf_options, max_memtable_id,
+  //     file_options, versions, db_mutex, shutting_down,
+  //     std::move(existing_snapshots), earliest_write_conflict_snapshot,
+  //     snapshot_checker, job_context, flush_reason, log_buffer, db_directory,
+  //     output_file_directory, output_compression, stats, event_logger,
+  //     measure_io_stats, sync_output_directory, write_manifest, thread_pri,
+  //     io_tracer, seqno_time_mapping, db_id, db_session_id,
+  //     std::move(full_history_ts_low), blob_callback);
+  return {new (mem) RemoteFlushJob(
+              dbname, cfd, db_options, mutable_cf_options, max_memtable_id,
+              file_options, versions, db_mutex, shutting_down,
+              existing_snapshots, earliest_write_conflict_snapshot,
+              snapshot_checker, job_context, flush_reason, log_buffer,
+              db_directory, output_file_directory, output_compression, stats,
+              event_logger, measure_io_stats, sync_output_directory,
+              write_manifest, thread_pri, io_tracer, seqno_time_mapping, db_id,
+              db_session_id, full_history_ts_low, blob_callback),
+          [](RemoteFlushJob* p) { shm_delete(reinterpret_cast<char*>(p)); }};
+}
 RemoteFlushJob::~RemoteFlushJob() { ThreadStatusUtil::ResetThreadStatus(); }
 
 void RemoteFlushJob::ReportStartedFlush() {
@@ -139,12 +193,13 @@ void RemoteFlushJob::PickMemTable() {
 
   // Maximum "NextLogNumber" of the memtables to flush.
   // When mempurge feature is turned off, this variable is useless
-  // because the memtables are implicitly sorted by increasing order of creation
-  // time. Therefore mems_->back()->GetNextLogNumber() is already equal to
-  // max_next_log_number. However when Mempurge is on, the memtables are no
-  // longer sorted by increasing order of creation time. Therefore this variable
-  // becomes necessary because mems_->back()->GetNextLogNumber() is no longer
-  // necessarily equal to max_next_log_number.
+  // because the memtables are implicitly sorted by increasing order of
+  // creation time. Therefore mems_->back()->GetNextLogNumber() is already
+  // equal to max_next_log_number. However when Mempurge is on, the
+  // memtables are no longer sorted by increasing order of creation time.
+  // Therefore this variable becomes necessary because
+  // mems_->back()->GetNextLogNumber() is no longer necessarily equal to
+  // max_next_log_number.
   uint64_t max_next_log_number = 0;
 
   // Save the contents of the earliest memtable as a new Table
@@ -156,9 +211,9 @@ void RemoteFlushJob::PickMemTable() {
 
   ReportFlushInputSize(mems_);
 
-  // entries mems are (implicitly) sorted in ascending order by their created
-  // time. We will use the first memtable's `edit` to keep the meta info for
-  // this flush.
+  // entries mems are (implicitly) sorted in ascending order by their
+  // created time. We will use the first memtable's `edit` to keep the meta
+  // info for this flush.
   MemTable* m = mems_[0];
   edit_ = m->GetEdits();
   edit_->SetPrevLogNumber(0);
@@ -175,9 +230,9 @@ void RemoteFlushJob::PickMemTable() {
   base_->Ref();  // it is likely that we do not need this reference
 }
 
-Status RemoteFlushJob::Run(LogsWithPrepTracker* prep_tracker,
-                           FileMetaData* file_meta,
-                           bool* switched_to_mempurge) {
+Status RemoteFlushJob::RunRemote(LogsWithPrepTracker* prep_tracker,
+                                 FileMetaData* file_meta,
+                                 bool* switched_to_mempurge) {
   TEST_SYNC_POINT("RemoteFlushJob::Start");
   db_mutex_->AssertHeld();
   assert(pick_memtable_called);
@@ -322,8 +377,53 @@ Status RemoteFlushJob::Run(LogsWithPrepTracker* prep_tracker,
     stream << "file_cpu_read_nanos"
            << (IOSTATS(cpu_read_nanos) - prev_cpu_read_nanos);
   }
-
+  // RunLocal(prep_tracker, file_meta, switched_to_mempurge);
+  Status ret = MatchRemoteWorker();
+  if (!ret.ok()) {
+    LOG("Remote Worker offline");
+  }
   return s;
+}
+
+Status RemoteFlushJob::MatchRemoteWorker() {
+  int sock = 0;
+  struct sockaddr_in serv_addr;
+  size_t buffer = 0;
+  int valread = 0;
+  if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+    LOG("Socket creation error");
+    return Status::IOError("Socket creation error");
+  }
+  memset(&serv_addr, 0, sizeof(serv_addr));
+  serv_addr.sin_family = AF_INET;
+  serv_addr.sin_port = htons(8080);
+  if (inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) {
+    LOG("Invalid address / Address not supported");
+    return Status::IOError("Invalid address / Address not supported");
+  }
+  if (connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+    LOG("Connection Failed");
+    return Status::IOError("Connection Failed");
+  }
+  auto data = (size_t)this;
+  send(sock, &data, sizeof(size_t), 0);
+  LOG("Message sent: ", std::hex, data, std::dec, ' ', data);
+
+  valread = read(sock, &buffer, sizeof(size_t));
+  LOG("Message received: ", std::hex, buffer, std::dec, ' ', buffer, ' ',
+      valread);
+  close(sock);
+  return Status::OK();
+}
+
+Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
+                                FileMetaData* file_meta,
+                                bool* switched_to_mempurge) {
+  LOG("RemoteFlushJob::RunLocal thread_id:", std::this_thread::get_id(),
+      " RemoteFlushJob ptr: ", std::hex, reinterpret_cast<void*>(this),
+      std::dec);
+  // std::this_thread::sleep_for(std::chrono::seconds(4));
+  return Status::OK();
 }
 
 void RemoteFlushJob::Cancel() {
@@ -750,9 +850,10 @@ bool RemoteFlushJob::MemPurgeDecider(double threshold) {
         for (auto next_mem_iter = mem_iter + 1;
              next_mem_iter != std::end(mems_); next_mem_iter++) {
           if ((*next_mem_iter)
-                  ->Get(lkey, &vget, /*columns=*/nullptr, /*timestamp=*/nullptr,
-                        &mget_s, &merge_context, &max_covering_tombstone_seq,
-                        &sqno, ro, true /* immutable_memtable */)) {
+                  ->Get(lkey, &vget, /*columns=*/nullptr,
+                        /*timestamp=*/nullptr, &mget_s, &merge_context,
+                        &max_covering_tombstone_seq, &sqno, ro,
+                        true /* immutable_memtable */)) {
             not_in_next_mems = false;
             break;
           }
@@ -797,8 +898,8 @@ Status RemoteFlushJob::WriteLevel0Table() {
 
   SequenceNumber smallest_seqno = mems_.front()->GetEarliestSequenceNumber();
   if (!db_impl_seqno_time_mapping_.Empty()) {
-    // make a local copy, as the seqno_time_mapping from db_impl is not thread
-    // safe, which will be used while not holding the db_mutex.
+    // make a local copy, as the seqno_time_mapping from db_impl is not
+    // thread safe, which will be used while not holding the db_mutex.
     seqno_to_time_mapping_ = db_impl_seqno_time_mapping_.Copy(smallest_seqno);
   }
 
@@ -872,11 +973,11 @@ Status RemoteFlushJob::WriteLevel0Table() {
       auto status = clock_->GetCurrentTime(&_current_time);
       // Safe to proceed even if GetCurrentTime fails. So, log and proceed.
       if (!status.ok()) {
-        ROCKS_LOG_WARN(
-            db_options_.info_log,
-            "Failed to get current time to populate creation_time property. "
-            "Status: %s",
-            status.ToString().c_str());
+        ROCKS_LOG_WARN(db_options_.info_log,
+                       "Failed to get current time to populate "
+                       "creation_time property. "
+                       "Status: %s",
+                       status.ToString().c_str());
       }
       const uint64_t current_time = static_cast<uint64_t>(_current_time);
 

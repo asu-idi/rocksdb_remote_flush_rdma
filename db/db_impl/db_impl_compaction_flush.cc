@@ -216,17 +216,19 @@ Status DBImpl::FlushMemTableToOutputFile(
   LOG("Construct flush job");
   if (cfd->GetLatestCFOptions().server_use_remote_flush) {
     LOG("Construct remote flush job");
-    RemoteFlushJob flush_job(
-        dbname_, cfd, immutable_db_options_, mutable_cf_options,
-        max_memtable_id, file_options_for_compaction_, versions_.get(), &mutex_,
-        &shutting_down_, snapshot_seqs, earliest_write_conflict_snapshot,
-        snapshot_checker, job_context, flush_reason, log_buffer,
-        directories_.GetDbDir(), GetDataDir(cfd, 0U),
-        GetCompressionFlush(*cfd->ioptions(), mutable_cf_options), stats_,
-        &event_logger_, mutable_cf_options.report_bg_io_stats,
-        true /* sync_output_directory */, true /* write_manifest */, thread_pri,
-        io_tracer_, seqno_time_mapping_, db_id_, db_session_id_,
-        cfd->GetFullHistoryTsLow(), &blob_callback_);
+    std::shared_ptr<RemoteFlushJob> flush_job =
+        RemoteFlushJob::CreateRemoteFlushJob(
+            dbname_, cfd, immutable_db_options_, mutable_cf_options,
+            max_memtable_id, file_options_for_compaction_, versions_.get(),
+            &mutex_, &shutting_down_, snapshot_seqs,
+            earliest_write_conflict_snapshot, snapshot_checker, job_context,
+            flush_reason, log_buffer, directories_.GetDbDir(),
+            GetDataDir(cfd, 0U),
+            GetCompressionFlush(*cfd->ioptions(), mutable_cf_options), stats_,
+            &event_logger_, mutable_cf_options.report_bg_io_stats,
+            true /* sync_output_directory */, true /* write_manifest */,
+            thread_pri, io_tracer_, seqno_time_mapping_, db_id_, db_session_id_,
+            cfd->GetFullHistoryTsLow(), &blob_callback_);
     FileMetaData file_meta;
 
     Status s;
@@ -258,13 +260,13 @@ Status DBImpl::FlushMemTableToOutputFile(
     // num_flush_not_started_ needs to be rollback.
     TEST_SYNC_POINT("DBImpl::FlushMemTableToOutputFile:BeforePickMemtables");
     if (s.ok()) {
-      flush_job.PickMemTable();
+      flush_job->PickMemTable();
       need_cancel = true;
     }
     TEST_SYNC_POINT_CALLBACK(
         "DBImpl::FlushMemTableToOutputFile:AfterPickMemtables", &flush_job);
     LOG("flush job pick all Memtable finish");
-    for (auto* memtable : flush_job.GetMemTables()) {
+    for (auto* memtable : flush_job->GetMemTables()) {
       LOG("FlushJob pick memtable:", memtable->GetID(),
           " size=", memtable->get_data_size(),
           " file-number=", memtable->GetFileNumber());
@@ -281,13 +283,16 @@ Status DBImpl::FlushMemTableToOutputFile(
     // and EventListener callback will be called when the db_mutex
     // is unlocked by the current thread.
     if (s.ok()) {
-      s = flush_job.Run(&logs_with_prep_tracker_, &file_meta,
-                        &switched_to_mempurge);
+      // TODO(iaIm14)
+      s = flush_job->RunRemote(&logs_with_prep_tracker_, &file_meta,
+                               &switched_to_mempurge);
+      // s = flush_job->RunLocal(&logs_with_prep_tracker_, &file_meta,
+      //                         &switched_to_mempurge);
       need_cancel = false;
     }
 
     if (!s.ok() && need_cancel) {
-      flush_job.Cancel();
+      flush_job->Cancel();
     }
 
     if (s.ok()) {
@@ -354,7 +359,7 @@ Status DBImpl::FlushMemTableToOutputFile(
     if (s.ok() && (!switched_to_mempurge)) {
       // may temporarily unlock and lock the mutex.
       NotifyOnFlushCompleted(cfd, mutable_cf_options,
-                             flush_job.GetCommittedFlushJobsInfo());
+                             flush_job->GetCommittedFlushJobsInfo());
       auto sfm = static_cast<SstFileManagerImpl*>(
           immutable_db_options_.sst_file_manager.get());
       if (sfm) {

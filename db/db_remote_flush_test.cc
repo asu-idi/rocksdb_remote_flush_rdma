@@ -10,9 +10,11 @@
 #include <atomic>
 #include <cassert>
 #include <limits>
+#include <memory>
 
 #include "db/db_impl/db_impl.h"
 #include "db/db_test_util.h"
+#include "db/remote_flush_job.h"
 #include "env/mock_env.h"
 #include "file/filename.h"
 #include "port/port.h"
@@ -2410,9 +2412,9 @@ TEST_F(DBRemoteFlushTest, PickRightMemtables) {
       });
   SyncPoint::GetInstance()->SetCallBack(
       "DBImpl::FlushMemTableToOutputFile:AfterPickMemtables", [&](void* arg) {
-        auto* job = reinterpret_cast<RemoteFlushJob*>(arg);
+        auto* job = reinterpret_cast<std::shared_ptr<RemoteFlushJob>*>(arg);
         assert(job);
-        const auto& mems = job->GetMemTables();
+        const auto& mems = job->get()->GetMemTables();
         assert(mems.size() == 1);
         assert(mems[0]);
         ASSERT_EQ(1, mems[0]->GetID());

@@ -390,6 +390,11 @@ class DB {
   // a DB.
   virtual Status DestroyColumnFamilyHandle(ColumnFamilyHandle* column_family);
 
+  virtual Status ListenAndScheduleFlushJob() {
+    LOG("ListenAndScheduleFlushJob not supported");
+    return Status::NotSupported();
+  }
+
   // Set the database entry for "key" to "value".
   // If "key" already exists, it will be overwritten.
   // Returns OK on success, and a non-OK status on error.

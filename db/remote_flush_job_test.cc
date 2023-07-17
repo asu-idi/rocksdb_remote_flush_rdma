@@ -3,9 +3,12 @@
 //  COPYING file in the root directory) and Apache 2.0 License
 //  (found in the LICENSE.Apache file in the root directory).
 
+#include "db/remote_flush_job.h"
+
 #include <algorithm>
 #include <array>
 #include <map>
+#include <memory>
 #include <string>
 
 #include "db/blob/blob_index.h"
@@ -170,19 +173,21 @@ TEST_F(FlushJobTest, Empty) {
   auto cfd = versions_->GetColumnFamilySet()->GetDefault();
   EventLogger event_logger(db_options_.info_log.get());
   SnapshotChecker* snapshot_checker = nullptr;  // not relavant
-  FlushJob flush_job(
-      dbname_, versions_->GetColumnFamilySet()->GetDefault(), db_options_,
-      *cfd->GetLatestMutableCFOptions(),
-      std::numeric_limits<uint64_t>::max() /* memtable_id */, env_options_,
-      versions_.get(), &mutex_, &shutting_down_, {}, kMaxSequenceNumber,
-      snapshot_checker, &job_context, FlushReason::kTest, nullptr, nullptr,
-      nullptr, kNoCompression, nullptr, &event_logger, false,
-      true /* sync_output_directory */, true /* write_manifest */,
-      Env::Priority::USER, nullptr /*IOTracer*/, empty_seqno_to_time_mapping_);
+  std::shared_ptr<RemoteFlushJob> flush_job =
+      RemoteFlushJob::CreateRemoteFlushJob(
+          dbname_, versions_->GetColumnFamilySet()->GetDefault(), db_options_,
+          *cfd->GetLatestMutableCFOptions(),
+          std::numeric_limits<uint64_t>::max() /* memtable_id */, env_options_,
+          versions_.get(), &mutex_, &shutting_down_, {}, kMaxSequenceNumber,
+          snapshot_checker, &job_context, FlushReason::kTest, nullptr, nullptr,
+          nullptr, kNoCompression, nullptr, &event_logger, false,
+          true /* sync_output_directory */, true /* write_manifest */,
+          Env::Priority::USER, nullptr /*IOTracer*/,
+          empty_seqno_to_time_mapping_);
   {
     InstrumentedMutexLock l(&mutex_);
-    flush_job.PickMemTable();
-    ASSERT_OK(flush_job.Run());
+    flush_job->PickMemTable();
+    ASSERT_OK(flush_job->RunRemote());
   }
   job_context.Clean();
 }
@@ -256,21 +261,23 @@ TEST_F(FlushJobTest, NonEmpty) {
 
   EventLogger event_logger(db_options_.info_log.get());
   SnapshotChecker* snapshot_checker = nullptr;  // not relavant
-  FlushJob flush_job(
-      dbname_, versions_->GetColumnFamilySet()->GetDefault(), db_options_,
-      *cfd->GetLatestMutableCFOptions(),
-      std::numeric_limits<uint64_t>::max() /* memtable_id */, env_options_,
-      versions_.get(), &mutex_, &shutting_down_, {}, kMaxSequenceNumber,
-      snapshot_checker, &job_context, FlushReason::kTest, nullptr, nullptr,
-      nullptr, kNoCompression, db_options_.statistics.get(), &event_logger,
-      true, true /* sync_output_directory */, true /* write_manifest */,
-      Env::Priority::USER, nullptr /*IOTracer*/, empty_seqno_to_time_mapping_);
+  std::shared_ptr<RemoteFlushJob> flush_job =
+      RemoteFlushJob::CreateRemoteFlushJob(
+          dbname_, versions_->GetColumnFamilySet()->GetDefault(), db_options_,
+          *cfd->GetLatestMutableCFOptions(),
+          std::numeric_limits<uint64_t>::max() /* memtable_id */, env_options_,
+          versions_.get(), &mutex_, &shutting_down_, {}, kMaxSequenceNumber,
+          snapshot_checker, &job_context, FlushReason::kTest, nullptr, nullptr,
+          nullptr, kNoCompression, db_options_.statistics.get(), &event_logger,
+          true, true /* sync_output_directory */, true /* write_manifest */,
+          Env::Priority::USER, nullptr /*IOTracer*/,
+          empty_seqno_to_time_mapping_);
 
   HistogramData hist;
   FileMetaData file_meta;
   mutex_.Lock();
-  flush_job.PickMemTable();
-  ASSERT_OK(flush_job.Run(nullptr, &file_meta));
+  flush_job->PickMemTable();
+  ASSERT_OK(flush_job->RunRemote(nullptr, &file_meta));
   mutex_.Unlock();
   db_options_.statistics->histogramData(FLUSH_TIME, &hist);
   ASSERT_GT(hist.average, 0.0);
@@ -320,19 +327,21 @@ TEST_F(FlushJobTest, FlushMemTablesSingleColumnFamily) {
   assert(memtable_ids.size() == num_mems);
   uint64_t smallest_memtable_id = memtable_ids.front();
   uint64_t flush_memtable_id = smallest_memtable_id + num_mems_to_flush - 1;
-  FlushJob flush_job(
-      dbname_, versions_->GetColumnFamilySet()->GetDefault(), db_options_,
-      *cfd->GetLatestMutableCFOptions(), flush_memtable_id, env_options_,
-      versions_.get(), &mutex_, &shutting_down_, {}, kMaxSequenceNumber,
-      snapshot_checker, &job_context, FlushReason::kTest, nullptr, nullptr,
-      nullptr, kNoCompression, db_options_.statistics.get(), &event_logger,
-      true, true /* sync_output_directory */, true /* write_manifest */,
-      Env::Priority::USER, nullptr /*IOTracer*/, empty_seqno_to_time_mapping_);
+  std::shared_ptr<RemoteFlushJob> flush_job =
+      RemoteFlushJob::CreateRemoteFlushJob(
+          dbname_, versions_->GetColumnFamilySet()->GetDefault(), db_options_,
+          *cfd->GetLatestMutableCFOptions(), flush_memtable_id, env_options_,
+          versions_.get(), &mutex_, &shutting_down_, {}, kMaxSequenceNumber,
+          snapshot_checker, &job_context, FlushReason::kTest, nullptr, nullptr,
+          nullptr, kNoCompression, db_options_.statistics.get(), &event_logger,
+          true, true /* sync_output_directory */, true /* write_manifest */,
+          Env::Priority::USER, nullptr /*IOTracer*/,
+          empty_seqno_to_time_mapping_);
   HistogramData hist;
   FileMetaData file_meta;
   mutex_.Lock();
-  flush_job.PickMemTable();
-  ASSERT_OK(flush_job.Run(nullptr /* prep_tracker */, &file_meta));
+  flush_job->PickMemTable();
+  ASSERT_OK(flush_job->RunRemote(nullptr /* prep_tracker */, &file_meta));
   mutex_.Unlock();
   db_options_.statistics->histogramData(FLUSH_TIME, &hist);
   ASSERT_GT(hist.average, 0.0);
@@ -389,11 +398,11 @@ TEST_F(FlushJobTest, FlushMemtablesMultipleColumnFamilies) {
 
   EventLogger event_logger(db_options_.info_log.get());
   SnapshotChecker* snapshot_checker = nullptr;  // not relevant
-  std::vector<std::unique_ptr<FlushJob>> flush_jobs;
+  std::vector<std::shared_ptr<RemoteFlushJob>> flush_jobs;
   k = 0;
   for (auto cfd : all_cfds) {
     std::vector<SequenceNumber> snapshot_seqs;
-    flush_jobs.emplace_back(new FlushJob(
+    flush_jobs.emplace_back(RemoteFlushJob::CreateRemoteFlushJob(
         dbname_, cfd, db_options_, *cfd->GetLatestMutableCFOptions(),
         memtable_ids[k], env_options_, versions_.get(), &mutex_,
         &shutting_down_, snapshot_seqs, kMaxSequenceNumber, snapshot_checker,
@@ -415,7 +424,7 @@ TEST_F(FlushJobTest, FlushMemtablesMultipleColumnFamilies) {
   for (auto& job : flush_jobs) {
     FileMetaData meta;
     // Run will release and re-acquire  mutex
-    ASSERT_OK(job->Run(nullptr /**/, &meta));
+    ASSERT_OK(job->RunRemote(nullptr /**/, &meta));
     file_metas.emplace_back(meta);
   }
   autovector<FileMetaData*> file_meta_ptrs;
@@ -519,18 +528,21 @@ TEST_F(FlushJobTest, Snapshots) {
 
   EventLogger event_logger(db_options_.info_log.get());
   SnapshotChecker* snapshot_checker = nullptr;  // not relavant
-  FlushJob flush_job(
-      dbname_, versions_->GetColumnFamilySet()->GetDefault(), db_options_,
-      *cfd->GetLatestMutableCFOptions(),
-      std::numeric_limits<uint64_t>::max() /* memtable_id */, env_options_,
-      versions_.get(), &mutex_, &shutting_down_, snapshots, kMaxSequenceNumber,
-      snapshot_checker, &job_context, FlushReason::kTest, nullptr, nullptr,
-      nullptr, kNoCompression, db_options_.statistics.get(), &event_logger,
-      true, true /* sync_output_directory */, true /* write_manifest */,
-      Env::Priority::USER, nullptr /*IOTracer*/, empty_seqno_to_time_mapping_);
+  std::shared_ptr<RemoteFlushJob> flush_job =
+      RemoteFlushJob::CreateRemoteFlushJob(
+          dbname_, versions_->GetColumnFamilySet()->GetDefault(), db_options_,
+          *cfd->GetLatestMutableCFOptions(),
+          std::numeric_limits<uint64_t>::max() /* memtable_id */, env_options_,
+          versions_.get(), &mutex_, &shutting_down_, snapshots,
+          kMaxSequenceNumber, snapshot_checker, &job_context,
+          FlushReason::kTest, nullptr, nullptr, nullptr, kNoCompression,
+          db_options_.statistics.get(), &event_logger, true,
+          true /* sync_output_directory */, true /* write_manifest */,
+          Env::Priority::USER, nullptr /*IOTracer*/,
+          empty_seqno_to_time_mapping_);
   mutex_.Lock();
-  flush_job.PickMemTable();
-  ASSERT_OK(flush_job.Run());
+  flush_job->PickMemTable();
+  ASSERT_OK(flush_job->RunRemote());
   mutex_.Unlock();
   mock_table_factory_->AssertSingleFile(inserted_keys);
   HistogramData hist;
@@ -576,33 +588,35 @@ TEST_F(FlushJobTest, GetRateLimiterPriorityForWrite) {
   assert(memtable_ids.size() == num_mems);
   uint64_t smallest_memtable_id = memtable_ids.front();
   uint64_t flush_memtable_id = smallest_memtable_id + num_mems_to_flush - 1;
-  FlushJob flush_job(
-      dbname_, versions_->GetColumnFamilySet()->GetDefault(), db_options_,
-      *cfd->GetLatestMutableCFOptions(), flush_memtable_id, env_options_,
-      versions_.get(), &mutex_, &shutting_down_, {}, kMaxSequenceNumber,
-      snapshot_checker, &job_context, FlushReason::kTest, nullptr, nullptr,
-      nullptr, kNoCompression, db_options_.statistics.get(), &event_logger,
-      true, true /* sync_output_directory */, true /* write_manifest */,
-      Env::Priority::USER, nullptr /*IOTracer*/, empty_seqno_to_time_mapping_);
+  std::shared_ptr<RemoteFlushJob> flush_job =
+      RemoteFlushJob::CreateRemoteFlushJob(
+          dbname_, versions_->GetColumnFamilySet()->GetDefault(), db_options_,
+          *cfd->GetLatestMutableCFOptions(), flush_memtable_id, env_options_,
+          versions_.get(), &mutex_, &shutting_down_, {}, kMaxSequenceNumber,
+          snapshot_checker, &job_context, FlushReason::kTest, nullptr, nullptr,
+          nullptr, kNoCompression, db_options_.statistics.get(), &event_logger,
+          true, true /* sync_output_directory */, true /* write_manifest */,
+          Env::Priority::USER, nullptr /*IOTracer*/,
+          empty_seqno_to_time_mapping_);
 
   // When the state from WriteController is normal.
-  ASSERT_EQ(flush_job.GetRateLimiterPriorityForWrite(), Env::IO_HIGH);
+  ASSERT_EQ(flush_job->GetRateLimiterPriorityForWrite(), Env::IO_HIGH);
 
   WriteController* write_controller =
-      flush_job.versions_->GetColumnFamilySet()->write_controller();
+      flush_job->versions_->GetColumnFamilySet()->write_controller();
 
   {
     // When the state from WriteController is Delayed.
     std::unique_ptr<WriteControllerToken> delay_token =
         write_controller->GetDelayToken(1000000);
-    ASSERT_EQ(flush_job.GetRateLimiterPriorityForWrite(), Env::IO_USER);
+    ASSERT_EQ(flush_job->GetRateLimiterPriorityForWrite(), Env::IO_USER);
   }
 
   {
     // When the state from WriteController is Stopped.
     std::unique_ptr<WriteControllerToken> stop_token =
         write_controller->GetStopToken();
-    ASSERT_EQ(flush_job.GetRateLimiterPriorityForWrite(), Env::IO_USER);
+    ASSERT_EQ(flush_job->GetRateLimiterPriorityForWrite(), Env::IO_USER);
   }
 }
 
@@ -656,21 +670,24 @@ TEST_F(FlushJobTimestampTest, AllKeysExpired) {
   EventLogger event_logger(db_options_.info_log.get());
   std::string full_history_ts_low;
   PutFixed64(&full_history_ts_low, std::numeric_limits<uint64_t>::max());
-  FlushJob flush_job(
-      dbname_, cfd, db_options_, *cfd->GetLatestMutableCFOptions(),
-      std::numeric_limits<uint64_t>::max() /* memtable_id */, env_options_,
-      versions_.get(), &mutex_, &shutting_down_, snapshots, kMaxSequenceNumber,
-      snapshot_checker, &job_context, FlushReason::kTest, nullptr, nullptr,
-      nullptr, kNoCompression, db_options_.statistics.get(), &event_logger,
-      true, true /* sync_output_directory */, true /* write_manifest */,
-      Env::Priority::USER, nullptr /*IOTracer*/, empty_seqno_to_time_mapping_,
-      /*db_id=*/"",
-      /*db_session_id=*/"", full_history_ts_low);
+  std::shared_ptr<RemoteFlushJob> flush_job =
+      RemoteFlushJob::CreateRemoteFlushJob(
+          dbname_, cfd, db_options_, *cfd->GetLatestMutableCFOptions(),
+          std::numeric_limits<uint64_t>::max() /* memtable_id */, env_options_,
+          versions_.get(), &mutex_, &shutting_down_, snapshots,
+          kMaxSequenceNumber, snapshot_checker, &job_context,
+          FlushReason::kTest, nullptr, nullptr, nullptr, kNoCompression,
+          db_options_.statistics.get(), &event_logger, true,
+          true /* sync_output_directory */, true /* write_manifest */,
+          Env::Priority::USER, nullptr /*IOTracer*/,
+          empty_seqno_to_time_mapping_,
+          /*db_id=*/"",
+          /*db_session_id=*/"", full_history_ts_low);
 
   FileMetaData fmeta;
   mutex_.Lock();
-  flush_job.PickMemTable();
-  ASSERT_OK(flush_job.Run(/*prep_tracker=*/nullptr, &fmeta));
+  flush_job->PickMemTable();
+  ASSERT_OK(flush_job->RunRemote(/*prep_tracker=*/nullptr, &fmeta));
   mutex_.Unlock();
 
   {
@@ -709,21 +726,24 @@ TEST_F(FlushJobTimestampTest, NoKeyExpired) {
   EventLogger event_logger(db_options_.info_log.get());
   std::string full_history_ts_low;
   PutFixed64(&full_history_ts_low, 0);
-  FlushJob flush_job(
-      dbname_, cfd, db_options_, *cfd->GetLatestMutableCFOptions(),
-      std::numeric_limits<uint64_t>::max() /* memtable_id */, env_options_,
-      versions_.get(), &mutex_, &shutting_down_, snapshots, kMaxSequenceNumber,
-      snapshot_checker, &job_context, FlushReason::kTest, nullptr, nullptr,
-      nullptr, kNoCompression, db_options_.statistics.get(), &event_logger,
-      true, true /* sync_output_directory */, true /* write_manifest */,
-      Env::Priority::USER, nullptr /*IOTracer*/, empty_seqno_to_time_mapping_,
-      /*db_id=*/"",
-      /*db_session_id=*/"", full_history_ts_low);
+  std::shared_ptr<RemoteFlushJob> flush_job =
+      RemoteFlushJob::CreateRemoteFlushJob(
+          dbname_, cfd, db_options_, *cfd->GetLatestMutableCFOptions(),
+          std::numeric_limits<uint64_t>::max() /* memtable_id */, env_options_,
+          versions_.get(), &mutex_, &shutting_down_, snapshots,
+          kMaxSequenceNumber, snapshot_checker, &job_context,
+          FlushReason::kTest, nullptr, nullptr, nullptr, kNoCompression,
+          db_options_.statistics.get(), &event_logger, true,
+          true /* sync_output_directory */, true /* write_manifest */,
+          Env::Priority::USER, nullptr /*IOTracer*/,
+          empty_seqno_to_time_mapping_,
+          /*db_id=*/"",
+          /*db_session_id=*/"", full_history_ts_low);
 
   FileMetaData fmeta;
   mutex_.Lock();
-  flush_job.PickMemTable();
-  ASSERT_OK(flush_job.Run(/*prep_tracker=*/nullptr, &fmeta));
+  flush_job->PickMemTable();
+  ASSERT_OK(flush_job->RunRemote(/*prep_tracker=*/nullptr, &fmeta));
   mutex_.Unlock();
 
   {

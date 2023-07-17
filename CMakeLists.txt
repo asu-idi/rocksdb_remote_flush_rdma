@@ -1574,6 +1574,7 @@ if(WITH_DEV)
   # dev/shared_memory_writter_test.cpp
   # dev/shared_memory_reader_test.cpp
   # dev/open_secondary_test.cpp
+  dev/remote_flush_worker.cpp
   )
   foreach(sourcefile ${DEVELOP})
     message(STATUS "CHECK DEV: ${sourcefile}")
