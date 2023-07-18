@@ -14,6 +14,9 @@
 #include <iterator>
 #include <thread>
 
+#include "monitoring/instrumented_mutex.h"
+#include "rocksdb/system_clock.h"
+
 // for socket API
 #ifdef __linux
 #include <arpa/inet.h>
@@ -123,6 +126,43 @@ RemoteFlushJob::RemoteFlushJob(
   TEST_SYNC_POINT("RemoteFlushJob::RemoteFlushJob()");
 }
 
+void RemoteFlushJob::PackLocal() {
+  LOG("RemoteFlushJob::PackLocal thread_id:", std::this_thread::get_id(),
+      "Pack data from local side");
+  void* mem = shm_alloc(strlen(clock_->Name()));
+  memcpy(mem, clock_->Name(), strlen(clock_->Name()));
+  LOG("PackLocal clock name:", clock_->Name(),
+      " clock_ ptr:", reinterpret_cast<void*>(clock_));
+  pack_local[0] = mem;
+  pack_local_info[0] = strlen(clock_->Name());
+  LOG("RemoteFlushJob::PackLocal done");
+}
+void RemoteFlushJob::UnPackLocal() {
+  LOG("RemoteFlushJob::UnPackLocal thread_id:", std::this_thread::get_id(),
+      "UnPack data from local side");
+  LOG(" clock_ ptr : ", reinterpret_cast<void*>(clock_));
+  std::string clock_name =
+      std::string(reinterpret_cast<char*>(pack_local[0]), pack_local_info[0]);
+  pack_remote[0] = reinterpret_cast<void*>(clock_);
+  pack_remote_info[0] = sizeof(clock_);
+  clock_ = SystemClock::Default().get();
+  LOG("local system Clock:", clock_->Name(), " : ", clock_name);
+  LOG("RemoteFlushJob::UnPackLocal done");
+}
+void RemoteFlushJob::PackRemote() {
+  LOG("RemoteFlushJob::PackRemote thread_id:", std::this_thread::get_id(),
+      "Pack data from remote side");
+
+  LOG("RemoteFlushJob::PackRemote done");
+}
+void RemoteFlushJob::UnPackRemote() {
+  LOG("RemoteFlushJob::UnPackRemote thread_id:", std::this_thread::get_id(),
+      "UnPack data from remote side");
+  LOG(" clock_ ptr:", reinterpret_cast<void*>(clock_));
+  clock_ = reinterpret_cast<SystemClock*>(pack_remote[0]);
+  LOG("RemoteFlushJob::UnPackRemote done");
+}
+
 std::shared_ptr<RemoteFlushJob> RemoteFlushJob::CreateRemoteFlushJob(
     const std::string& dbname, ColumnFamilyData* cfd,
     const ImmutableDBOptions& db_options,
@@ -141,15 +181,8 @@ std::shared_ptr<RemoteFlushJob> RemoteFlushJob::CreateRemoteFlushJob(
     const std::string& db_session_id, std::string full_history_ts_low,
     BlobFileCompletionCallback* blob_callback) {
   void* mem = shm_alloc(sizeof(RemoteFlushJob));
-  // auto* flush_job = new (mem) RemoteFlushJob(
-  //     dbname, cfd, db_options, mutable_cf_options, max_memtable_id,
-  //     file_options, versions, db_mutex, shutting_down,
-  //     std::move(existing_snapshots), earliest_write_conflict_snapshot,
-  //     snapshot_checker, job_context, flush_reason, log_buffer, db_directory,
-  //     output_file_directory, output_compression, stats, event_logger,
-  //     measure_io_stats, sync_output_directory, write_manifest, thread_pri,
-  //     io_tracer, seqno_time_mapping, db_id, db_session_id,
-  //     std::move(full_history_ts_low), blob_callback);
+  LOG("RemoteFlushJob::CreateRemoteFlushJob thread_id:",
+      std::this_thread::get_id(), "Create RemoteFlushJob: handle:", mem);
   return {new (mem) RemoteFlushJob(
               dbname, cfd, db_options, mutable_cf_options, max_memtable_id,
               file_options, versions, db_mutex, shutting_down,
@@ -307,18 +340,7 @@ Status RemoteFlushJob::RunRemote(LogsWithPrepTracker* prep_tracker,
   } else {
     // This will release and re-acquire the mutex.
     LOG("Run job: write l0table");
-    // s = WriteLevel0Table();
-    // RunLocal(prep_tracker, file_meta, switched_to_mempurge);
-    Status ret = MatchRemoteWorker();
-    if (ret.IsIOError()) {
-      LOG("WriteLevel0Table Remote Worker offline");
-      assert(!ret.IsIOError());
-    } else if (ret.IsAborted()) {
-      LOG("WriteLevel0Table return Non-OK");
-      s = Status::Corruption("WriteLevel0Table return Non-OK");
-    } else {
-      LOG("WriteLevel0Table return OK");
-    }
+    s = WriteLevel0Table();
     LOG("Run job: write l0table done");
   }
 
@@ -389,7 +411,6 @@ Status RemoteFlushJob::RunRemote(LogsWithPrepTracker* prep_tracker,
     stream << "file_cpu_read_nanos"
            << (IOSTATS(cpu_read_nanos) - prev_cpu_read_nanos);
   }
-
   return s;
 }
 
@@ -397,7 +418,6 @@ Status RemoteFlushJob::MatchRemoteWorker() {
   int sock = 0;
   struct sockaddr_in serv_addr;
   size_t buffer = 0;
-  int valread = 0;
   if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
     LOG("Socket creation error");
     return Status::IOError("Socket creation error");
@@ -413,16 +433,29 @@ Status RemoteFlushJob::MatchRemoteWorker() {
     LOG("Connection Failed");
     return Status::IOError("Connection Failed");
   }
-  auto data = (size_t)this;
-  send(sock, &data, sizeof(size_t), 0);
-  LOG("Message sent: ", std::hex, data, std::dec, ' ', data);
+  server_socket_fd = sock;
+  auto data = this;
+  send(server_socket_fd, &data, sizeof(long long), 0);
+  LOG("server Message sent1 / JobHandle: ", std::hex, data, std::dec, ' ',
+      server_socket_fd);
 
-  valread = read(sock, &buffer, sizeof(size_t));
-  LOG("Message received: ", std::hex, buffer, std::dec, ' ', buffer, ' ',
-      valread);
-  close(sock);
+  read(server_socket_fd, &buffer, sizeof(size_t));
+  LOG("server Message received1: ", buffer, ' ', server_socket_fd);
+
+  return buffer == 4321 ? Status::OK()
+                        : Status::Corruption("MatchRemoteWorker error");
+}
+
+Status RemoteFlushJob::QuitRemoteWorker() {
+  int data = 1234;
+  send(server_socket_fd, &data, sizeof(size_t), 0);
+  LOG("server Message sent2: ", data, ' ', server_socket_fd);
+  size_t buffer = 0;
+  read(server_socket_fd, &buffer, sizeof(size_t));
+  LOG("server Message received2: ", buffer, ' ', server_socket_fd);
+  close(server_socket_fd);
   return buffer == 1234 ? Status::OK()
-                        : Status::Aborted("WriteLevel0Data error");
+                        : Status::Aborted("QuitRemoteWorker error");
 }
 
 Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
@@ -432,8 +465,17 @@ Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
       " RemoteFlushJob ptr: ", std::hex, reinterpret_cast<void*>(this),
       std::dec);
   // std::this_thread::sleep_for(std::chrono::seconds(4));
-  Status s = WriteLevel0Table();
-  return s;
+  int signal = 0;
+  read(worker_socket_fd, &signal, sizeof(int));
+  LOG("server Message received3: ", signal, ' ', worker_socket_fd);
+  // UnPackLocal();
+
+  // PackRemote();
+  signal = 1;
+  send(worker_socket_fd, &signal, sizeof(int), 0);
+  LOG("server Message sent3: ", signal, ' ', worker_socket_fd);
+
+  return Status::OK();
 }
 
 void RemoteFlushJob::Cancel() {
@@ -902,6 +944,18 @@ Status RemoteFlushJob::WriteLevel0Table() {
   AutoThreadOperationStageUpdater stage_updater(
       ThreadStatus::STAGE_REMOTE_FLUSH_WRITE_L0);
   db_mutex_->AssertHeld();
+  assert(MatchRemoteWorker() == Status::OK());
+  // PackLocal();
+  int signal = 1;
+  send(server_socket_fd, &signal, sizeof(int), 0);
+  LOG("server Message sent4: ", signal, ' ', server_socket_fd);
+
+  signal = 0;
+  read(server_socket_fd, &signal, sizeof(int));
+  LOG("server Message received4: ", signal, ' ', server_socket_fd);
+  assert(signal == 1);
+  // UnPackRemote();
+  // ********** 1.  **********
   const uint64_t start_micros = clock_->NowMicros();
   const uint64_t start_cpu_micros = clock_->CPUMicros();
   Status s;
@@ -918,6 +972,7 @@ Status RemoteFlushJob::WriteLevel0Table() {
   {
     auto write_hint = cfd_->CalculateSSTWriteHint(0);
     Env::IOPriority io_priority = GetRateLimiterPriorityForWrite();
+    // ********** 1.  **********
     db_mutex_->Unlock();
     if (log_buffer_) {
       log_buffer_->FlushBufferToLog();
@@ -1129,7 +1184,7 @@ Status RemoteFlushJob::WriteLevel0Table() {
       InternalStats::BYTES_FLUSHED,
       stats.bytes_written + stats.bytes_written_blob);
   RecordFlushIOStats();
-
+  assert(QuitRemoteWorker() == Status::OK());
   return s;
 }
 

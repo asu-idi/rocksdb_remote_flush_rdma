@@ -12,14 +12,14 @@ if [[ "$1" == "1" ]]; then
     rm -rf .cmake
 fi
 cmake ..
-make flush_job_test -j 18
-make db_flush_test -j 18
+make remote_flush_worker -j 18
+make db_remote_flush_test -j 18
 cd $PROJECT_ROOT/dev
 
 # cp ../build/trace_analyzer ./
 # cp ../build/trace_query_test ./
-cp ../build/flush_job_test ./
-cp ../build/db_flush_test ./
+cp ../build/db_remote_flush_test ./
+cp ../build/remote_flush_worker ./
 # cp ../build/shared_std_test ./
 # cp ../build/memtable_list_test ./
 # cp ../build/memtable_tracer_parser ./

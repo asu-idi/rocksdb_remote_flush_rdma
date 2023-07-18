@@ -312,25 +312,32 @@ DBImpl::DBImpl(const DBOptions& options, const std::string& dbname,
 
 void DBImpl::BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri) {
   TEST_SYNC_POINT("DBImpl::BackgroundCallRemoteFlush:Start");
-  int valread;
   size_t magic = 0;
-  size_t buffer = 0;
+  long long buffer = 0;
   char* buffer_ptr = reinterpret_cast<char*>(&buffer);
 
-  valread = read(sockfd, buffer_ptr, sizeof(size_t));
-  LOG("Received RemoteFlushJob ptr: ", std::hex,
-      reinterpret_cast<void*>(buffer), std::dec, ' ', valread,
-      " bytes in total");
-  auto* flush_job = reinterpret_cast<RemoteFlushJob*>(buffer);
-  Status ret = flush_job->RunLocal();
-  if (ret.ok()) {
-    magic = 1234;
-  } else {
-    magic = 4321;
-  }
+  read(sockfd, buffer_ptr, sizeof(long long));
+  LOG("worker Message received1 / JobHandle: ", std::hex, buffer, std::dec, ' ',
+      sockfd);
+
+  magic = 4321;
   send(sockfd, &magic, sizeof(size_t), 0);
+  LOG("worker Message sent1: ", magic, ' ', sockfd);
+
+  auto* flush_job = reinterpret_cast<RemoteFlushJob*>(buffer);
+  LOG("worker carry JobHandle: ", std::hex, flush_job, std::dec, ' ', sockfd);
+  flush_job->worker_socket_fd = sockfd;
+  flush_job->RunLocal();
+
+  magic = 0;
+  read(sockfd, &magic, sizeof(size_t));
+  LOG("worker Message received2: ", magic, ' ', sockfd);
+
+  buffer = 1234;
+  send(sockfd, &buffer, sizeof(int), 0);
+  LOG("worker Message sent2: ", buffer, ' ', sockfd);
+
   close(sockfd);
-  LOG("Sent finish signal: ", magic, " DBImpl::BackgroundCallRemoteFlush done");
   bg_flush_scheduled_--;
   TEST_SYNC_POINT("DBImpl::BackgroundCallRemoteFlush:Finish");
 }
