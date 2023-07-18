@@ -1,7 +1,10 @@
 #pragma once
+#include <unistd.h>
+
 #include <fstream>
 #include <iostream>
 #include <mutex>
+#include <sstream>
 #include <utility>
 
 namespace Noncopyable {

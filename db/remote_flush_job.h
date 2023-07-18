@@ -78,6 +78,18 @@ class RemoteFlushJob {
       const std::string& db_session_id = "",
       std::string full_history_ts_low = "",
       BlobFileCompletionCallback* blob_callback = nullptr);
+  void PackLocal();
+  void UnPackLocal();
+  void PackRemote();
+  void UnPackRemote();
+  int server_socket_fd = 0;
+  int worker_socket_fd = 0;
+  void* pack_local[1];
+  // info: size | if_local_is_shared | type_enum_info(use this to create
+  // corresponding type)
+  size_t pack_local_info[1];
+  void* pack_remote[1];
+  size_t pack_remote_info[1];
 
  private:
   // TODO(icanadi) make effort to reduce number of parameters here
@@ -118,6 +130,8 @@ class RemoteFlushJob {
                    FileMetaData* file_meta = nullptr,
                    bool* switched_to_mempurge = nullptr);
   Status MatchRemoteWorker();
+  Status QuitRemoteWorker();
+
   void Cancel();
   const autovector<MemTable*>& GetMemTables() const { return mems_; }
 

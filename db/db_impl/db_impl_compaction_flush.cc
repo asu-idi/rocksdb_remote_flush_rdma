@@ -230,7 +230,9 @@ Status DBImpl::FlushMemTableToOutputFile(
             thread_pri, io_tracer_, seqno_time_mapping_, db_id_, db_session_id_,
             cfd->GetFullHistoryTsLow(), &blob_callback_);
     FileMetaData file_meta;
-
+    LOG("RemoteFlushJob::CreateRemoteFlushJob thread_id:",
+        std::this_thread::get_id(),
+        "Create RemoteFlushJob: handle:", flush_job.get());
     Status s;
     bool need_cancel = false;
     IOStatus log_io_s = IOStatus::OK();
@@ -284,6 +286,7 @@ Status DBImpl::FlushMemTableToOutputFile(
     // is unlocked by the current thread.
     if (s.ok()) {
       // TODO(iaIm14)
+      LOG("flush job run remote: ptr = ", std::hex, flush_job.get(), std::dec);
       s = flush_job->RunRemote(&logs_with_prep_tracker_, &file_meta,
                                &switched_to_mempurge);
       // s = flush_job->RunLocal(&logs_with_prep_tracker_, &file_meta,

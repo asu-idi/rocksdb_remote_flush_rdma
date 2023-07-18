@@ -1,4 +1,6 @@
 #pragma once
+#include <unistd.h>
+
 #include <chrono>
 #include <cstring>
 #include <fstream>
@@ -6,6 +8,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include "macro.hpp"
@@ -26,7 +29,8 @@ namespace LocalLogger {
 
 template <typename OUT, typename T>
 void LOG_INFO(OUT &&stream, T arg) {
-  stream << arg << ' ' << std::endl;
+  stream << arg << ' ' << getpid() << ":" << std::this_thread::get_id()
+         << std::endl;
 }
 template <typename OUT, typename U, typename... T>
 void LOG_INFO(OUT &&stream, U arg, T... Args) {
