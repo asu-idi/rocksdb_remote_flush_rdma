@@ -96,9 +96,9 @@ class RemoteFlushJob {
   void* pack_local[1];
   // info: size | if_local_is_shared | type_enum_info(use this to create
   // corresponding type)
-  size_t pack_local_info[1];
-  void* pack_remote[1];
-  size_t pack_remote_info[1];
+  size_t pack_local_info[2];
+  void* pack_remote[2];
+  size_t pack_remote_info[2];
 
  private:
   // TODO(icanadi) make effort to reduce number of parameters here
@@ -202,14 +202,10 @@ class RemoteFlushJob {
   SnapshotChecker* snapshot_checker_;
   JobContext* job_context_;
   FlushReason flush_reason_;
-  LogBuffer* log_buffer_;
   FSDirectory* db_directory_;
   FSDirectory* output_file_directory_;
   CompressionType output_compression_;
-  Statistics* stats_;
-  EventLogger* event_logger_;
   TableProperties table_properties_;
-  bool measure_io_stats_;
   // True if this flush job should call fsync on the output directory. False
   // otherwise.
   // Usually sync_output_directory_ is true. A flush job needs to call sync on
@@ -240,7 +236,6 @@ class RemoteFlushJob {
   bool pick_memtable_called;
   Env::Priority thread_pri_;
 
-  const std::shared_ptr<IOTracer> io_tracer_;
   SystemClock* clock_;
 
   const std::string full_history_ts_low_;

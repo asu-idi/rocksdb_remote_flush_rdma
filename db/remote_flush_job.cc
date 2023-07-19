@@ -107,20 +107,15 @@ RemoteFlushJob::RemoteFlushJob(
       snapshot_checker_(snapshot_checker),
       job_context_(job_context),
       flush_reason_(flush_reason),
-      log_buffer_(log_buffer),
       db_directory_(db_directory),
       output_file_directory_(output_file_directory),
       output_compression_(output_compression),
-      stats_(stats),
-      event_logger_(event_logger),
-      measure_io_stats_(measure_io_stats),
       sync_output_directory_(sync_output_directory),
       write_manifest_(write_manifest),
       edit_(nullptr),
       base_(nullptr),
       pick_memtable_called(false),
       thread_pri_(thread_pri),
-      io_tracer_(io_tracer),
       clock_(db_options_.clock),
       full_history_ts_low_(std::move(full_history_ts_low)),
       blob_callback_(blob_callback),
@@ -136,9 +131,17 @@ void* RemoteFlushJob::PackLocal() {
   void* mem = malloc(sizeof(RemoteFlushJob));
   memcpy(mem, reinterpret_cast<void*>(this), sizeof(RemoteFlushJob));
   auto* flush_job = reinterpret_cast<RemoteFlushJob*>(mem);
-  // flush_job->clock_ = reinterpret_cast<SystemClock*>(clock_->PackLocal());
+  // Pack clock
+  size_t cnt_packages = 0;
   void* remote_clock_info_ = clock_->PackLocal(server_socket_fd);
-  flush_job->pack_remote[0] = remote_clock_info_;
+  flush_job->pack_remote[cnt_packages++] = remote_clock_info_;
+  // Pack mems_
+  if (mems_.size()) {
+    // void* remote_memtable_info = mems_.front().PackLocal(server_socket_fd);
+    // flush_job->pack_remote[cnt_packages++] = remote_memtable_info;
+  } else {
+    // flush_job->pack_remote[cnt_packages++] = nullptr;
+  }
 
   send(server_socket_fd, mem, sizeof(RemoteFlushJob), 0);
   free(mem);
@@ -159,9 +162,6 @@ void* RemoteFlushJob::UnPackLocal() {
   LOG("worker waiting for clock info");
   read(worker_socket_fd, clock_info_.data(), clock_info_.length());
   LOG("worker recv ::", clock_info_);
-  for (size_t i = 0; i < 20; i++) {
-    LOG("worker recv ", (int)clock_info_[i], ' ', clock_info_[i]);
-  }
   clock_ret_addr = retrieve_from(clock_info_);
   LOG("worker retrieve ", std::hex, clock_ret_addr, std::dec);
   send(worker_socket_fd, &local_handler->clock_, sizeof(int64_t), 0);
@@ -254,7 +254,6 @@ void RemoteFlushJob::ReportFlushInputSize(const autovector<MemTable*>& mems) {
 }
 
 void RemoteFlushJob::RecordFlushIOStats() {
-  RecordTick(stats_, FLUSH_WRITE_BYTES, IOSTATS(bytes_written));
   ThreadStatusUtil::IncreaseThreadOperationProperty(
       ThreadStatus::FLUSH_BYTES_WRITTEN, IOSTATS(bytes_written));
   IOSTATS_RESET(bytes_written);
@@ -318,30 +317,8 @@ Status RemoteFlushJob::RunRemote(LogsWithPrepTracker* prep_tracker,
 
   AutoThreadOperationStageUpdater stage_run(
       ThreadStatus::STAGE_REMOTE_FLUSH_RUN);
-  if (mems_.empty()) {
-    ROCKS_LOG_BUFFER(log_buffer_, "[%s] Nothing in memtable to flush",
-                     cfd_->GetName().c_str());
-    return Status::OK();
-  }
+  if (mems_.empty()) return Status::OK();
 
-  // I/O measurement variables
-  PerfLevel prev_perf_level = PerfLevel::kEnableTime;
-  uint64_t prev_write_nanos = 0;
-  uint64_t prev_fsync_nanos = 0;
-  uint64_t prev_range_sync_nanos = 0;
-  uint64_t prev_prepare_write_nanos = 0;
-  uint64_t prev_cpu_write_nanos = 0;
-  uint64_t prev_cpu_read_nanos = 0;
-  if (measure_io_stats_) {
-    prev_perf_level = GetPerfLevel();
-    SetPerfLevel(PerfLevel::kEnableTime);
-    prev_write_nanos = IOSTATS(write_nanos);
-    prev_fsync_nanos = IOSTATS(fsync_nanos);
-    prev_range_sync_nanos = IOSTATS(range_sync_nanos);
-    prev_prepare_write_nanos = IOSTATS(prepare_write_nanos);
-    prev_cpu_write_nanos = IOSTATS(cpu_write_nanos);
-    prev_cpu_read_nanos = IOSTATS(cpu_read_nanos);
-  }
   Status mempurge_s = Status::NotFound("No MemPurge.");
   if ((mempurge_threshold > 0.0) &&
       (flush_reason_ == FlushReason::kWriteBufferFull) && (!mems_.empty()) &&
@@ -399,7 +376,7 @@ Status RemoteFlushJob::RunRemote(LogsWithPrepTracker* prep_tracker,
     s = cfd_->imm()->TryInstallMemtableFlushResults(
         cfd_, mutable_cf_options_, mems_, prep_tracker, versions_, db_mutex_,
         meta_.fd.GetNumber(), &job_context_->memtables_to_free, db_directory_,
-        log_buffer_, &committed_flush_jobs_info_,
+        nullptr, &committed_flush_jobs_info_,
         !(mempurge_s.ok()) /* write_edit : true if no mempurge happened (or if aborted),
                               but 'false' if mempurge successful: no new min log number
                               or new level 0 file path to write to manifest. */);
@@ -410,46 +387,6 @@ Status RemoteFlushJob::RunRemote(LogsWithPrepTracker* prep_tracker,
   }
   RecordFlushIOStats();
 
-  // When measure_io_stats_ is true, the default 512 bytes is not enough.
-  auto stream = event_logger_->LogToBuffer(log_buffer_, 1024);
-  stream << "job" << job_context_->job_id << "event"
-         << "flush_finished";
-  stream << "output_compression"
-         << CompressionTypeToString(output_compression_);
-  stream << "lsm_state";
-  stream.StartArray();
-  auto vstorage = cfd_->current()->storage_info();
-  for (int level = 0; level < vstorage->num_levels(); ++level) {
-    stream << vstorage->NumLevelFiles(level);
-  }
-  stream.EndArray();
-
-  const auto& blob_files = vstorage->GetBlobFiles();
-  if (!blob_files.empty()) {
-    assert(blob_files.front());
-    stream << "blob_file_head" << blob_files.front()->GetBlobFileNumber();
-
-    assert(blob_files.back());
-    stream << "blob_file_tail" << blob_files.back()->GetBlobFileNumber();
-  }
-
-  stream << "immutable_memtables" << cfd_->imm()->NumNotFlushed();
-
-  if (measure_io_stats_) {
-    if (prev_perf_level != PerfLevel::kEnableTime) {
-      SetPerfLevel(prev_perf_level);
-    }
-    stream << "file_write_nanos" << (IOSTATS(write_nanos) - prev_write_nanos);
-    stream << "file_range_sync_nanos"
-           << (IOSTATS(range_sync_nanos) - prev_range_sync_nanos);
-    stream << "file_fsync_nanos" << (IOSTATS(fsync_nanos) - prev_fsync_nanos);
-    stream << "file_prepare_write_nanos"
-           << (IOSTATS(prepare_write_nanos) - prev_prepare_write_nanos);
-    stream << "file_cpu_write_nanos"
-           << (IOSTATS(cpu_write_nanos) - prev_cpu_write_nanos);
-    stream << "file_cpu_read_nanos"
-           << (IOSTATS(cpu_read_nanos) - prev_cpu_read_nanos);
-  }
   return s;
 }
 
@@ -992,12 +929,12 @@ Status RemoteFlushJob::WriteLevel0Table() {
   // ********** 1.  **********
   const uint64_t start_micros = install_info_.start_micros_;
   const uint64_t start_cpu_micros = install_info_.start_cpu_micros_;
+  Status s;
+
   int64_t signal_ret = 0;
   read(server_socket_fd, &signal_ret, sizeof(int64_t));
   LOG("server Message received3: ", signal_ret, ' ', server_socket_fd);
   assert(signal_ret == signal);
-
-  Status s;
 
   SequenceNumber smallest_seqno = mems_.front()->GetEarliestSequenceNumber();
   if (!db_impl_seqno_time_mapping_.Empty()) {
@@ -1013,9 +950,6 @@ Status RemoteFlushJob::WriteLevel0Table() {
     Env::IOPriority io_priority = GetRateLimiterPriorityForWrite();
     // ********** 1.  **********
     db_mutex_->Unlock();
-    if (log_buffer_) {
-      log_buffer_->FlushBufferToLog();
-    }
     // memtables and range_del_iters store internal iterators over each data
     // memtable and its associated range deletion memtable, respectively, at
     // corresponding indexes.
@@ -1025,9 +959,7 @@ Status RemoteFlushJob::WriteLevel0Table() {
     ReadOptions ro;
     ro.total_order_seek = true;
     Arena arena;
-    uint64_t total_num_entries = 0, total_num_deletes = 0;
-    uint64_t total_data_size = 0;
-    size_t total_memory_usage = 0;
+    uint64_t total_num_entries = 0;
     // Used for testing:
     uint64_t mems_size = mems_.size();
     (void)mems_size;  // avoids unused variable error when
@@ -1047,19 +979,7 @@ Status RemoteFlushJob::WriteLevel0Table() {
         range_del_iters.emplace_back(range_del_iter);
       }
       total_num_entries += m->num_entries();
-      total_num_deletes += m->num_deletes();
-      total_data_size += m->get_data_size();
-      total_memory_usage += m->ApproximateMemoryUsage();
     }
-
-    event_logger_->Log() << "job" << job_context_->job_id << "event"
-                         << "flush_started"
-                         << "num_memtables" << mems_.size() << "num_entries"
-                         << total_num_entries << "num_deletes"
-                         << total_num_deletes << "total_data_size"
-                         << total_data_size << "memory_usage"
-                         << total_memory_usage << "flush_reason"
-                         << GetFlushReasonString(flush_reason_);
 
     {
       ScopedArenaIterator iter(
@@ -1115,14 +1035,13 @@ Status RemoteFlushJob::WriteLevel0Table() {
       const SequenceNumber job_snapshot_seq =
           job_context_->GetJobSnapshotSequence();
       LOG("RemoteFlushJob::WriteLevel0Table: BuildTable");
-      s = BuildTable(
+      s = RemoteBuildTable(
           dbname_, versions_, db_options_, tboptions, file_options_,
           cfd_->table_cache(), iter.get(), std::move(range_del_iters), &meta_,
-          &blob_file_additions, existing_snapshots_,
-          earliest_write_conflict_snapshot_, job_snapshot_seq,
-          snapshot_checker_, mutable_cf_options_.paranoid_file_checks,
-          cfd_->internal_stats(), &io_s, io_tracer_,
-          BlobFileCreationReason::kFlush, seqno_to_time_mapping_, event_logger_,
+          existing_snapshots_, earliest_write_conflict_snapshot_,
+          job_snapshot_seq, snapshot_checker_,
+          mutable_cf_options_.paranoid_file_checks, cfd_->internal_stats(),
+          &io_s, BlobFileCreationReason::kFlush, seqno_to_time_mapping_,
           job_context_->job_id, io_priority, &table_properties_, write_hint,
           full_history_ts_low, blob_callback_, base_, &num_input_entries,
           &memtable_payload_bytes, &memtable_garbage_bytes);
@@ -1142,21 +1061,9 @@ Status RemoteFlushJob::WriteLevel0Table() {
       }
       if (tboptions.reason == TableFileCreationReason::kFlush) {
         TEST_SYNC_POINT("DBImpl::RemoteFlushJob:Flush");
-        RecordTick(stats_, MEMTABLE_PAYLOAD_BYTES_AT_FLUSH,
-                   memtable_payload_bytes);
-        RecordTick(stats_, MEMTABLE_GARBAGE_BYTES_AT_FLUSH,
-                   memtable_garbage_bytes);
       }
       LogFlush(db_options_.info_log);
     }
-    ROCKS_LOG_BUFFER(log_buffer_,
-                     "[%s] [JOB %d] Level-0 flush table #%" PRIu64 ": %" PRIu64
-                     " bytes %s"
-                     "%s",
-                     cfd_->GetName().c_str(), job_context_->job_id,
-                     meta_.fd.GetNumber(), meta_.fd.GetFileSize(),
-                     s.ToString().c_str(),
-                     meta_.marked_for_compaction ? " (needs compaction)" : "");
 
     if (s.ok() && output_file_directory_ != nullptr && sync_output_directory_) {
       s = output_file_directory_->FsyncWithDirOptions(
@@ -1217,7 +1124,6 @@ Status RemoteFlushJob::WriteLevel0Table() {
 
   stats.num_output_files_blob = static_cast<int>(blobs.size());
 
-  RecordTimeToHistogram(stats_, FLUSH_TIME, stats.micros);
   cfd_->internal_stats()->AddCompactionStats(0 /* level */, thread_pri_, stats);
   cfd_->internal_stats()->AddCFStats(
       InternalStats::BYTES_FLUSHED,
