@@ -9,6 +9,20 @@
 #pragma once
 #include <stdint.h>
 
+#include <cassert>
+
+#include "util/logger.hpp"
+// for socket API
+#ifdef __linux
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <pthread.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif  //__linux
+
+#include <cstdint>
+#include <cstring>
 #include <memory>
 
 #include "rocksdb/customizable.h"
@@ -26,6 +40,19 @@ struct ConfigOptions;
 // A SystemClock is an interface used by the rocksdb implementation to access
 // operating system time-related functionality.
 class SystemClock : public Customizable {
+ public:
+  virtual void* PackLocal(int sockfd) const {
+    std::string mem(Name());
+    mem.resize(20);
+    assert(mem.length() == 20);
+    send(sockfd, mem.c_str(), mem.length(), 0);
+    LOG("send ", mem.c_str());
+    int64_t ret_addr = 0;
+    read(sockfd, &ret_addr, sizeof(int64_t));
+    LOG("recv ", ret_addr);
+    return reinterpret_cast<void*>(ret_addr);
+  }
+
  public:
   ~SystemClock() override {}
 

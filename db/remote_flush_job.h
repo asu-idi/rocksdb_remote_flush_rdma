@@ -10,6 +10,8 @@
 
 #include <atomic>
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <deque>
 #include <limits>
 #include <list>
@@ -59,6 +61,13 @@ class Arena;
 
 class RemoteFlushJob {
  public:
+  struct install_info {
+    uint64_t start_micros_;
+    uint64_t start_cpu_micros_;
+  };
+  install_info install_info_;
+
+ public:
   static std::shared_ptr<RemoteFlushJob> CreateRemoteFlushJob(
       const std::string& dbname, ColumnFamilyData* cfd,
       const ImmutableDBOptions& db_options,
@@ -78,10 +87,10 @@ class RemoteFlushJob {
       const std::string& db_session_id = "",
       std::string full_history_ts_low = "",
       BlobFileCompletionCallback* blob_callback = nullptr);
-  void PackLocal();
-  void UnPackLocal();
-  void PackRemote();
-  void UnPackRemote();
+  void* PackLocal();
+  void* UnPackLocal();
+  void* PackRemote();
+  void* UnPackRemote();
   int server_socket_fd = 0;
   int worker_socket_fd = 0;
   void* pack_local[1];

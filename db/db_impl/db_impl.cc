@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <cassert>
+#include <cstdint>
 #include <functional>
 #include <thread>
 
@@ -312,7 +313,7 @@ DBImpl::DBImpl(const DBOptions& options, const std::string& dbname,
 
 void DBImpl::BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri) {
   TEST_SYNC_POINT("DBImpl::BackgroundCallRemoteFlush:Start");
-  size_t magic = 0;
+  int64_t magic = 0;
   long long buffer = 0;
   char* buffer_ptr = reinterpret_cast<char*>(&buffer);
 
@@ -324,18 +325,29 @@ void DBImpl::BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri) {
   send(sockfd, &magic, sizeof(size_t), 0);
   LOG("worker Message sent1: ", magic, ' ', sockfd);
 
-  auto* flush_job = reinterpret_cast<RemoteFlushJob*>(buffer);
-  LOG("worker carry JobHandle: ", std::hex, flush_job, std::dec, ' ', sockfd);
+  auto* flush_job =
+      reinterpret_cast<RemoteFlushJob*>(malloc(sizeof(RemoteFlushJob)));
   flush_job->worker_socket_fd = sockfd;
-  flush_job->RunLocal();
+  auto* local_handler =
+      reinterpret_cast<RemoteFlushJob*>(flush_job->UnPackLocal());
+  int64_t signal_verify = 0;
+  read(sockfd, &signal_verify, sizeof(int64_t));
+  LOG("worker Message received2: ", signal_verify, ' ', sockfd);
+  local_handler->worker_socket_fd = sockfd;
+  local_handler->RunLocal();
+
+  auto signal = reinterpret_cast<int64_t>(local_handler);
+  send(sockfd, &signal, sizeof(int64_t), 0);
+  LOG("worker Message sent3: ", signal, ' ', sockfd);
 
   magic = 0;
-  read(sockfd, &magic, sizeof(size_t));
-  LOG("worker Message received2: ", magic, ' ', sockfd);
+  read(sockfd, &magic, sizeof(int64_t));
+  LOG("worker Message received4: ", magic, ' ', sockfd);
+  assert(magic == 1234);
 
   buffer = 1234;
   send(sockfd, &buffer, sizeof(int), 0);
-  LOG("worker Message sent2: ", buffer, ' ', sockfd);
+  LOG("worker Message sent5: ", buffer, ' ', sockfd);
 
   close(sockfd);
   bg_flush_scheduled_--;
