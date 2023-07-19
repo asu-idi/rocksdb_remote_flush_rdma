@@ -11,9 +11,13 @@
 
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <ctime>
 #include <iterator>
 #include <thread>
 
+#include "db/retrieve_info.h"
 #include "monitoring/instrumented_mutex.h"
 #include "rocksdb/system_clock.h"
 
@@ -126,41 +130,76 @@ RemoteFlushJob::RemoteFlushJob(
   TEST_SYNC_POINT("RemoteFlushJob::RemoteFlushJob()");
 }
 
-void RemoteFlushJob::PackLocal() {
+void* RemoteFlushJob::PackLocal() {
   LOG("RemoteFlushJob::PackLocal thread_id:", std::this_thread::get_id(),
       "Pack data from local side");
-  void* mem = shm_alloc(strlen(clock_->Name()));
-  memcpy(mem, clock_->Name(), strlen(clock_->Name()));
-  LOG("PackLocal clock name:", clock_->Name(),
-      " clock_ ptr:", reinterpret_cast<void*>(clock_));
-  pack_local[0] = mem;
-  pack_local_info[0] = strlen(clock_->Name());
-  LOG("RemoteFlushJob::PackLocal done");
+  void* mem = malloc(sizeof(RemoteFlushJob));
+  memcpy(mem, reinterpret_cast<void*>(this), sizeof(RemoteFlushJob));
+  auto* flush_job = reinterpret_cast<RemoteFlushJob*>(mem);
+  // flush_job->clock_ = reinterpret_cast<SystemClock*>(clock_->PackLocal());
+  void* remote_clock_info_ = clock_->PackLocal(server_socket_fd);
+  flush_job->pack_remote[0] = remote_clock_info_;
+
+  send(server_socket_fd, mem, sizeof(RemoteFlushJob), 0);
+  free(mem);
+  int64_t ret_addr = 0;
+  read(server_socket_fd, &ret_addr, sizeof(int64_t));
+  LOG("RemoteFlushJob::PackLocal done, remote_handler = ", std::hex, ret_addr,
+      std::dec);
+  return reinterpret_cast<void*>(ret_addr);
 }
-void RemoteFlushJob::UnPackLocal() {
+void* RemoteFlushJob::UnPackLocal() {
   LOG("RemoteFlushJob::UnPackLocal thread_id:", std::this_thread::get_id(),
       "UnPack data from local side");
-  LOG(" clock_ ptr : ", reinterpret_cast<void*>(clock_));
-  std::string clock_name =
-      std::string(reinterpret_cast<char*>(pack_local[0]), pack_local_info[0]);
-  pack_remote[0] = reinterpret_cast<void*>(clock_);
-  pack_remote_info[0] = sizeof(clock_);
-  clock_ = SystemClock::Default().get();
-  LOG("local system Clock:", clock_->Name(), " : ", clock_name);
+  void* mem = malloc(sizeof(RemoteFlushJob));
+  auto* local_handler = reinterpret_cast<RemoteFlushJob*>(mem);
+  void* clock_ret_addr = nullptr;
+  std::string clock_info_;
+  clock_info_.resize(20);
+  LOG("worker waiting for clock info");
+  read(worker_socket_fd, clock_info_.data(), clock_info_.length());
+  LOG("worker recv ::", clock_info_);
+  for (size_t i = 0; i < 20; i++) {
+    LOG("worker recv ", (int)clock_info_[i], ' ', clock_info_[i]);
+  }
+  clock_ret_addr = retrieve_from(clock_info_);
+  LOG("worker retrieve ", std::hex, clock_ret_addr, std::dec);
+  send(worker_socket_fd, &local_handler->clock_, sizeof(int64_t), 0);
+  LOG("worker send ", std::hex, &local_handler->clock_, std::dec);
+  read(worker_socket_fd, mem, sizeof(RemoteFlushJob));
+  LOG("worker recv ", std::hex, mem, std::dec);
+  // assert(local_handler->clock_ == clock_ret_addr);
+  local_handler->clock_ = reinterpret_cast<SystemClock*>(clock_ret_addr);
+
+  send(worker_socket_fd, &mem, sizeof(int64_t), 0);
+  LOG("worker send ", std::hex, mem, std::dec);
+  return mem;
   LOG("RemoteFlushJob::UnPackLocal done");
 }
-void RemoteFlushJob::PackRemote() {
+void* RemoteFlushJob::PackRemote() {
   LOG("RemoteFlushJob::PackRemote thread_id:", std::this_thread::get_id(),
       "Pack data from remote side");
+  void* install_needed = &install_info_;
+  send(worker_socket_fd, install_needed, sizeof(install_info), 0);
+  LOG("worker send ", std::hex, install_needed, std::dec);
+
+  int64_t remote_install_addr = 0;
+  read(worker_socket_fd, &remote_install_addr, sizeof(int64_t));
+  LOG("worker recv ", std::hex, remote_install_addr, std::dec);
 
   LOG("RemoteFlushJob::PackRemote done");
+  return reinterpret_cast<void*>(remote_install_addr);
 }
-void RemoteFlushJob::UnPackRemote() {
+void* RemoteFlushJob::UnPackRemote() {
   LOG("RemoteFlushJob::UnPackRemote thread_id:", std::this_thread::get_id(),
       "UnPack data from remote side");
-  LOG(" clock_ ptr:", reinterpret_cast<void*>(clock_));
-  clock_ = reinterpret_cast<SystemClock*>(pack_remote[0]);
+  read(server_socket_fd, &install_info_, sizeof(install_info));
+  LOG("server recv ", std::hex, &install_info_, std::dec);
+  // unpack install_info
+  send(server_socket_fd, &install_info_, sizeof(int64_t), 0);
+  LOG("server send ", std::hex, &install_info_, std::dec);
   LOG("RemoteFlushJob::UnPackRemote done");
+  return &install_info_;
 }
 
 std::shared_ptr<RemoteFlushJob> RemoteFlushJob::CreateRemoteFlushJob(
@@ -447,12 +486,12 @@ Status RemoteFlushJob::MatchRemoteWorker() {
 }
 
 Status RemoteFlushJob::QuitRemoteWorker() {
-  int data = 1234;
-  send(server_socket_fd, &data, sizeof(size_t), 0);
-  LOG("server Message sent2: ", data, ' ', server_socket_fd);
-  size_t buffer = 0;
-  read(server_socket_fd, &buffer, sizeof(size_t));
-  LOG("server Message received2: ", buffer, ' ', server_socket_fd);
+  int64_t data = 1234;
+  send(server_socket_fd, &data, sizeof(int64_t), 0);
+  LOG("server Message sent4: ", data, ' ', server_socket_fd);
+  int64_t buffer = 0;
+  read(server_socket_fd, &buffer, sizeof(int64_t));
+  LOG("server Message received5: ", buffer, ' ', server_socket_fd);
   close(server_socket_fd);
   return buffer == 1234 ? Status::OK()
                         : Status::Aborted("QuitRemoteWorker error");
@@ -464,17 +503,14 @@ Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
   LOG("RemoteFlushJob::RunLocal thread_id:", std::this_thread::get_id(),
       " RemoteFlushJob ptr: ", std::hex, reinterpret_cast<void*>(this),
       std::dec);
-  // std::this_thread::sleep_for(std::chrono::seconds(4));
-  int signal = 0;
-  read(worker_socket_fd, &signal, sizeof(int));
-  LOG("server Message received3: ", signal, ' ', worker_socket_fd);
-  // UnPackLocal();
+  const uint64_t start_micros = clock_->NowMicros();
+  const uint64_t start_cpu_micros = clock_->CPUMicros();
 
-  // PackRemote();
-  signal = 1;
-  send(worker_socket_fd, &signal, sizeof(int), 0);
-  LOG("server Message sent3: ", signal, ' ', worker_socket_fd);
+  install_info_.start_micros_ = start_micros;
+  install_info_.start_cpu_micros_ = start_cpu_micros;
 
+  LOG("worker calculation: ", start_micros, ' ', start_cpu_micros);
+  void* remote_install_handler = PackRemote();
   return Status::OK();
 }
 
@@ -945,19 +981,22 @@ Status RemoteFlushJob::WriteLevel0Table() {
       ThreadStatus::STAGE_REMOTE_FLUSH_WRITE_L0);
   db_mutex_->AssertHeld();
   assert(MatchRemoteWorker() == Status::OK());
-  // PackLocal();
-  int signal = 1;
-  send(server_socket_fd, &signal, sizeof(int), 0);
-  LOG("server Message sent4: ", signal, ' ', server_socket_fd);
+  auto* remote_handler = reinterpret_cast<RemoteFlushJob*>(PackLocal());
+  LOG("RemoteFlushJob::WriteLevel0Table server recv remote_worker_handler: ",
+      std::hex, remote_handler, std::dec);
+  int64_t signal = reinterpret_cast<int64_t>(remote_handler);
+  send(server_socket_fd, &signal, sizeof(int64_t), 0);
+  LOG("server Message sent2: ", signal, ' ', server_socket_fd);
 
-  signal = 0;
-  read(server_socket_fd, &signal, sizeof(int));
-  LOG("server Message received4: ", signal, ' ', server_socket_fd);
-  assert(signal == 1);
-  // UnPackRemote();
+  void* local_install_handler = UnPackRemote();
   // ********** 1.  **********
-  const uint64_t start_micros = clock_->NowMicros();
-  const uint64_t start_cpu_micros = clock_->CPUMicros();
+  const uint64_t start_micros = install_info_.start_micros_;
+  const uint64_t start_cpu_micros = install_info_.start_cpu_micros_;
+  int64_t signal_ret = 0;
+  read(server_socket_fd, &signal_ret, sizeof(int64_t));
+  LOG("server Message received3: ", signal_ret, ' ', server_socket_fd);
+  assert(signal_ret == signal);
+
   Status s;
 
   SequenceNumber smallest_seqno = mems_.front()->GetEarliestSequenceNumber();
