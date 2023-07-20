@@ -440,13 +440,9 @@ Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
   LOG("RemoteFlushJob::RunLocal thread_id:", std::this_thread::get_id(),
       " RemoteFlushJob ptr: ", std::hex, reinterpret_cast<void*>(this),
       std::dec);
-  const uint64_t start_micros = clock_->NowMicros();
-  const uint64_t start_cpu_micros = clock_->CPUMicros();
+  LOG("worker calculation: ");
 
-  install_info_.start_micros_ = start_micros;
-  install_info_.start_cpu_micros_ = start_cpu_micros;
-
-  LOG("worker calculation: ", start_micros, ' ', start_cpu_micros);
+  LOG("worker calculation finished");
   void* remote_install_handler = PackRemote();
   return Status::OK();
 }
