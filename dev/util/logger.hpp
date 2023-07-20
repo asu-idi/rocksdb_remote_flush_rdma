@@ -74,7 +74,7 @@ void LocalLogger::output(const std::thread::id &thread_id, const char *filename,
   {
     std::lock_guard<std::mutex> lock(mtx);
     _stream_.close();
-    _stream_.open(path_ + std::to_string(id) + "Log.log",
+    _stream_.open(path_ + "Log-" + std::to_string(id) + ".log",
                   std::ios::out | std::ios::app);
     _stream_ << buffer;
     _stream_.flush();
