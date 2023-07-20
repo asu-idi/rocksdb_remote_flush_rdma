@@ -87,6 +87,10 @@ using MultiGetRange = MultiGetContext::Range;
 // written to (aka the 'immutable memtables').
 class MemTable {
  public:
+  static void* UnPackLocal(int sock_fd);
+  void* PackLocal(int sock_fd) const;
+
+ public:
   struct KeyComparator : public MemTableRep::KeyComparator {
     const InternalKeyComparator comparator;
     explicit KeyComparator(const InternalKeyComparator& c) : comparator(c) {}

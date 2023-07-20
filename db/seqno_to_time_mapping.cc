@@ -6,10 +6,67 @@
 
 #include "db/seqno_to_time_mapping.h"
 
+#include <sys/socket.h>
+
+#include <cassert>
+#include <cstdint>
+#include <deque>
+
 #include "db/version_edit.h"
 #include "util/string_util.h"
 
 namespace ROCKSDB_NAMESPACE {
+
+void* SeqnoToTimeMapping::PackLocal(int sockfd) const {
+  int64_t ret = 0;
+  size_t mp_size = seqno_time_mapping_.size();
+  send(sockfd, &mp_size, sizeof(size_t), 0);
+  LOG("server send SeqnoToTimeMapping::mp_size:", mp_size);
+  size_t mp_size_ = 0;
+  read(sockfd, &mp_size_, sizeof(size_t));
+  LOG("server recv SeqnoToTimeMapping::mp_size_:", mp_size_);
+  assert(mp_size == mp_size_);
+  for (auto& it : seqno_time_mapping_) {
+    send(sockfd, &it, sizeof(SeqnoTimePair), 0);
+    // LOG("server send SeqnoToTimeMapping::it:",
+    //     reinterpret_cast<void*>(const_cast<SeqnoTimePair*>(&it)));
+    ret = 0;
+    read(sockfd, &ret, sizeof(int64_t));
+  }
+  send(sockfd, reinterpret_cast<void*>(const_cast<SeqnoToTimeMapping*>(this)),
+       sizeof(SeqnoToTimeMapping), 0);
+  // LOG("server send SeqnoToTimeMapping::this:", this);
+  ret = 0;
+  read(sockfd, &ret, sizeof(int64_t));
+  LOG("server recv SeqnoToTimeMapping::ret:", ret);
+  return reinterpret_cast<void*>(ret);
+}
+
+void* SeqnoToTimeMapping::UnPackLocal(int sockfd) {
+  void* mem = malloc(sizeof(SeqnoToTimeMapping));
+  int64_t ret = 0;
+  size_t mp_size = 0;
+  read(sockfd, &mp_size, sizeof(size_t));
+  LOG("client recv SeqnoToTimeMapping::mp_size:", mp_size);
+  send(sockfd, &mp_size, sizeof(size_t), 0);
+  LOG("client send SeqnoToTimeMapping::mp_size:", mp_size);
+  std::deque<SeqnoTimePair> prs;
+  for (size_t i = 0; i < mp_size; i++) {
+    SeqnoTimePair it;
+    read(sockfd, &it, sizeof(SeqnoTimePair));
+    // LOG("client recv SeqnoToTimeMapping::it:", it);
+    send(sockfd, &ret, sizeof(int64_t), 0);
+    LOG("client send SeqnoToTimeMapping::ret:", ret);
+    prs.emplace_back(it);
+  }
+  read(sockfd, mem, sizeof(SeqnoToTimeMapping));
+  LOG("client recv SeqnoToTimeMapping::mem:", mem);
+  send(sockfd, &mem, sizeof(int64_t), 0);
+  LOG("client send SeqnoToTimeMapping::ret:", mem);
+  auto* mp = reinterpret_cast<SeqnoToTimeMapping*>(mem);
+  mp->seqno_time_mapping_ = prs;
+  return mem;
+}
 
 uint64_t SeqnoToTimeMapping::GetOldestApproximateTime(
     const SequenceNumber seqno) const {

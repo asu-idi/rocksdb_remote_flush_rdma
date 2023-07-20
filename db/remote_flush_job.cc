@@ -18,8 +18,10 @@
 #include <thread>
 
 #include "db/retrieve_info.h"
+#include "db/seqno_to_time_mapping.h"
 #include "monitoring/instrumented_mutex.h"
 #include "rocksdb/system_clock.h"
+#include "util/autovector.h"
 
 // for socket API
 #ifdef __linux
@@ -136,12 +138,22 @@ void* RemoteFlushJob::PackLocal() {
   void* remote_clock_info_ = clock_->PackLocal(server_socket_fd);
   flush_job->pack_remote[cnt_packages++] = remote_clock_info_;
   // Pack mems_
-  if (mems_.size()) {
-    // void* remote_memtable_info = mems_.front().PackLocal(server_socket_fd);
-    // flush_job->pack_remote[cnt_packages++] = remote_memtable_info;
-  } else {
-    // flush_job->pack_remote[cnt_packages++] = nullptr;
+  int64_t mem_size = mems_.size();
+  send(server_socket_fd, &mem_size, sizeof(int64_t), 0);
+  LOG("server send mems size: ", mem_size);
+  int64_t mem_size_ret = 0;
+  read(server_socket_fd, &mem_size_ret, sizeof(int64_t));
+  LOG("server recv mems size: ", mem_size_ret);
+  assert(mem_size == mem_size_ret);
+  for (auto& memtable : mems_) {
+    void* remote_mem_info_ = memtable->PackLocal(server_socket_fd);
+    // flush_job->pack_remote[cnt_packages++] = remote_mem_info_;
   }
+  // Pack db_impl_seqno_time_mapping_
+  void* db_impl_seqno_time_mapping_ret =
+      db_impl_seqno_time_mapping_.PackLocal(server_socket_fd);
+  void* seqno_to_time_mapping_ret =
+      seqno_to_time_mapping_.PackLocal(server_socket_fd);
 
   send(server_socket_fd, mem, sizeof(RemoteFlushJob), 0);
   free(mem);
@@ -151,6 +163,7 @@ void* RemoteFlushJob::PackLocal() {
       std::dec);
   return reinterpret_cast<void*>(ret_addr);
 }
+
 void* RemoteFlushJob::UnPackLocal() {
   LOG("RemoteFlushJob::UnPackLocal thread_id:", std::this_thread::get_id(),
       "UnPack data from local side");
@@ -164,12 +177,46 @@ void* RemoteFlushJob::UnPackLocal() {
   LOG("worker recv ::", clock_info_);
   clock_ret_addr = retrieve_from(clock_info_);
   LOG("worker retrieve ", std::hex, clock_ret_addr, std::dec);
+
   send(worker_socket_fd, &local_handler->clock_, sizeof(int64_t), 0);
   LOG("worker send ", std::hex, &local_handler->clock_, std::dec);
+
+  // RemoteFlushJob recv other data
+  int64_t mems_size_ = 0;
+  read(worker_socket_fd, &mems_size_, sizeof(int64_t));
+  LOG("worker recv mems size: ", mems_size_);
+  send(worker_socket_fd, &mems_size_, sizeof(int64_t), 0);
+  LOG("worker send back mems size: ", mems_size_);
+  std::vector<MemTable*> mems_temp;
+  for (int64_t i = 0; i < mems_size_; i++) {
+    void* local_mem_handler = MemTable::UnPackLocal(worker_socket_fd);
+    mems_temp.emplace_back(reinterpret_cast<MemTable*>(local_mem_handler));
+  }
+  void* db_impl_seqno_time_mapping_ret =
+      SeqnoToTimeMapping::UnPackLocal(worker_socket_fd);
+  void* seqno_to_time_mapping_ret =
+      SeqnoToTimeMapping::UnPackLocal(worker_socket_fd);
   read(worker_socket_fd, mem, sizeof(RemoteFlushJob));
   LOG("worker recv ", std::hex, mem, std::dec);
-  // assert(local_handler->clock_ == clock_ret_addr);
+
+  // fill local_handler
   local_handler->clock_ = reinterpret_cast<SystemClock*>(clock_ret_addr);
+  local_handler->db_mutex_ = new InstrumentedMutex();
+  local_handler->db_mutex_->Unlock();
+  local_handler->mems_ = autovector<MemTable*>();
+  for (auto& memtable : mems_temp) {
+    LOG("worker copy data: ", memtable);
+    local_handler->mems_.emplace_back(memtable);
+  }
+  char* ptr = reinterpret_cast<char*>(&local_handler->seqno_to_time_mapping_);
+  ptr -= sizeof(SeqnoToTimeMapping*);
+  memcpy(reinterpret_cast<void*>(ptr),
+         reinterpret_cast<void*>(&db_impl_seqno_time_mapping_ret),
+         sizeof(SeqnoToTimeMapping*));
+  memcpy(reinterpret_cast<void*>(const_cast<SeqnoToTimeMapping*>(
+             &(local_handler->seqno_to_time_mapping_))),
+         reinterpret_cast<void*>(&seqno_to_time_mapping_ret),
+         sizeof(SeqnoToTimeMapping*));
 
   send(worker_socket_fd, &mem, sizeof(int64_t), 0);
   LOG("worker send ", std::hex, mem, std::dec);
@@ -463,15 +510,15 @@ Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
 }
 
 void RemoteFlushJob::Cancel() {
-  db_mutex_->AssertHeld();
+  // db_mutex_->AssertHeld();
   assert(base_ != nullptr);
   base_->Unref();
 }
 
 Status RemoteFlushJob::MemPurge() {
   Status s;
-  db_mutex_->AssertHeld();
-  db_mutex_->Unlock();
+  // db_mutex_->AssertHeld();
+  // db_mutex_->Unlock();
   assert(!mems_.empty());
 
   // Measure purging time.
@@ -700,7 +747,7 @@ Status RemoteFlushJob::MemPurge() {
           !(new_mem->ShouldFlushNow())) {
         // Construct fragmented memtable range tombstones without mutex
         new_mem->ConstructFragmentedRangeTombstones();
-        db_mutex_->Lock();
+        // db_mutex_->Lock();
         uint64_t new_mem_id = mems_[0]->GetID();
 
         new_mem->SetID(new_mem_id);
@@ -711,10 +758,10 @@ Status RemoteFlushJob::MemPurge() {
         cfd_->imm()->Add(new_mem, &job_context_->memtables_to_free);
         new_mem->Ref();
         // Piggyback RemoteFlushJobInfo on the first flushed memtable.
-        db_mutex_->AssertHeld();
+        // db_mutex_->AssertHeld();
         meta_.fd.file_size = 0;
         mems_[0]->SetFlushJobInfo(GetFlushJobInfo());
-        db_mutex_->Unlock();
+        // db_mutex_->Unlock();
       } else {
         s = Status::Aborted(Slice("Mempurge filled more than one memtable."));
         new_mem_capacity = 1.0;
@@ -730,7 +777,7 @@ Status RemoteFlushJob::MemPurge() {
   }
 
   // Reacquire the mutex for WriteLevel0 function.
-  db_mutex_->Lock();
+  // db_mutex_->Lock();
 
   // If mempurge successful, don't write input tables to level0,
   // but write any full output table to level0.
@@ -927,9 +974,7 @@ bool RemoteFlushJob::MemPurgeDecider(double threshold) {
 Status RemoteFlushJob::WriteLevel0Table() {
   AutoThreadOperationStageUpdater stage_updater(
       ThreadStatus::STAGE_REMOTE_FLUSH_WRITE_L0);
-  LOG("");
-  db_mutex_->AssertHeld();
-  LOG("");
+  // db_mutex_->AssertHeld();
   const uint64_t start_micros = clock_->NowMicros();
   const uint64_t start_cpu_micros = clock_->CPUMicros();
   SequenceNumber smallest_seqno = mems_.front()->GetEarliestSequenceNumber();
@@ -940,13 +985,12 @@ Status RemoteFlushJob::WriteLevel0Table() {
     seqno_to_time_mapping_ = db_impl_seqno_time_mapping_.Copy(smallest_seqno);
   }
 
-  std::vector<BlobFileAddition> blob_file_additions;
-
   {
+    LOG("");
     auto write_hint = cfd_->CalculateSSTWriteHint(0);
+    LOG("");
     Env::IOPriority io_priority = GetRateLimiterPriorityForWrite();
-    // ********** 1.  **********
-    db_mutex_->Unlock();
+    // db_mutex_->Unlock();
     // memtables and range_del_iters store internal iterators over each data
     // memtable and its associated range deletion memtable, respectively, at
     // corresponding indexes.
@@ -1068,7 +1112,7 @@ Status RemoteFlushJob::WriteLevel0Table() {
           DirFsyncOptions(DirFsyncOptions::FsyncReason::kNewFileSynced));
     }
     TEST_SYNC_POINT_CALLBACK("RemoteFlushJob::WriteLevel0Table", &mems_);
-    db_mutex_->Lock();
+    // db_mutex_->Lock();
   }
   base_->Unref();
 
@@ -1091,7 +1135,6 @@ Status RemoteFlushJob::WriteLevel0Table() {
                    meta_.file_creation_time, meta_.epoch_number,
                    meta_.file_checksum, meta_.file_checksum_func_name,
                    meta_.unique_id, meta_.compensated_range_deletion_size);
-    edit_->SetBlobFileAdditions(std::move(blob_file_additions));
   }
   // Piggyback RemoteFlushJobInfo on the first first flushed memtable.
   mems_[0]->SetFlushJobInfo(GetFlushJobInfo());
@@ -1143,7 +1186,7 @@ Env::IOPriority RemoteFlushJob::GetRateLimiterPriorityForWrite() {
 }
 
 std::unique_ptr<FlushJobInfo> RemoteFlushJob::GetFlushJobInfo() const {
-  db_mutex_->AssertHeld();
+  // db_mutex_->AssertHeld();
   std::unique_ptr<FlushJobInfo> info(new FlushJobInfo{});
   info->cf_id = cfd_->GetID();
   info->cf_name = cfd_->GetName();
