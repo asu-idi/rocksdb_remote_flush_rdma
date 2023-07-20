@@ -9,10 +9,14 @@
 
 #include "db/memtable.h"
 
+#include <sys/socket.h>
+
 #include <algorithm>
 #include <array>
 #include <cassert>
 #include <cstddef>
+#include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -258,6 +262,24 @@ void MemTable::UnPack() {
   edit_.UnPack();
   // TODO: check if a shared std::unique_ptr could work
   if (flush_job_info_ != nullptr) flush_job_info_->UnPack();
+}
+void* MemTable::UnPackLocal(int sock_fd) {
+  void* mem = malloc(sizeof(MemTable));
+  read(sock_fd, mem, sizeof(MemTable));
+  LOG("recv MemTable", mem);
+  send(sock_fd, &mem, sizeof(void*), 0);
+  LOG("send MemTable", mem);
+  return mem;
+}
+
+void* MemTable::PackLocal(int sock_fd) const {
+  send(sock_fd, reinterpret_cast<const char*>(this), sizeof(MemTable), 0);
+  LOG("send MemTable", reinterpret_cast<const char*>(this));
+  int64_t ret_addr = 0;
+  read(sock_fd, &ret_addr, sizeof(int64_t));
+  LOG("recv MemTable", ret_addr);
+
+  return reinterpret_cast<void*>(ret_addr);
 }
 
 MemTable::~MemTable() {
