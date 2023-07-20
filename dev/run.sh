@@ -15,7 +15,7 @@ cmake ..
 make remote_flush_worker -j 18
 make db_remote_flush_test -j 18
 cd $PROJECT_ROOT/dev
-
+rm Log-???????????????\.log
 # cp ../build/trace_analyzer ./
 # cp ../build/trace_query_test ./
 cp ../build/db_remote_flush_test ./

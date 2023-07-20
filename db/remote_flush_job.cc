@@ -356,7 +356,22 @@ Status RemoteFlushJob::RunRemote(LogsWithPrepTracker* prep_tracker,
   } else {
     // This will release and re-acquire the mutex.
     LOG("Run job: write l0table");
-    s = WriteLevel0Table();
+    assert(MatchRemoteWorker() == Status::OK());
+    auto* remote_handler = reinterpret_cast<RemoteFlushJob*>(PackLocal());
+    LOG("RemoteFlushJob::WriteLevel0Table server recv remote_worker_handler: ",
+        std::hex, remote_handler, std::dec);
+    int64_t signal = reinterpret_cast<int64_t>(remote_handler);
+    send(server_socket_fd, &signal, sizeof(int64_t), 0);
+    LOG("server Message sent2: ", signal, ' ', server_socket_fd);
+
+    // s = WriteLevel0Table();
+
+    void* local_install_handler = UnPackRemote();
+    assert(QuitRemoteWorker() == Status::OK());
+    int64_t signal_ret = 0;
+    read(server_socket_fd, &signal_ret, sizeof(int64_t));
+    LOG("server Message received3: ", signal_ret, ' ', server_socket_fd);
+    assert(signal_ret == signal);
     LOG("Run job: write l0table done");
   }
 
@@ -441,7 +456,7 @@ Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
       " RemoteFlushJob ptr: ", std::hex, reinterpret_cast<void*>(this),
       std::dec);
   LOG("worker calculation: ");
-
+  Status ret = WriteLevel0Table();
   LOG("worker calculation finished");
   void* remote_install_handler = PackRemote();
   return Status::OK();
@@ -912,27 +927,13 @@ bool RemoteFlushJob::MemPurgeDecider(double threshold) {
 Status RemoteFlushJob::WriteLevel0Table() {
   AutoThreadOperationStageUpdater stage_updater(
       ThreadStatus::STAGE_REMOTE_FLUSH_WRITE_L0);
+  LOG("");
   db_mutex_->AssertHeld();
-  assert(MatchRemoteWorker() == Status::OK());
-  auto* remote_handler = reinterpret_cast<RemoteFlushJob*>(PackLocal());
-  LOG("RemoteFlushJob::WriteLevel0Table server recv remote_worker_handler: ",
-      std::hex, remote_handler, std::dec);
-  int64_t signal = reinterpret_cast<int64_t>(remote_handler);
-  send(server_socket_fd, &signal, sizeof(int64_t), 0);
-  LOG("server Message sent2: ", signal, ' ', server_socket_fd);
-
-  void* local_install_handler = UnPackRemote();
-  // ********** 1.  **********
-  const uint64_t start_micros = install_info_.start_micros_;
-  const uint64_t start_cpu_micros = install_info_.start_cpu_micros_;
-  Status s;
-
-  int64_t signal_ret = 0;
-  read(server_socket_fd, &signal_ret, sizeof(int64_t));
-  LOG("server Message received3: ", signal_ret, ' ', server_socket_fd);
-  assert(signal_ret == signal);
-
+  LOG("");
+  const uint64_t start_micros = clock_->NowMicros();
+  const uint64_t start_cpu_micros = clock_->CPUMicros();
   SequenceNumber smallest_seqno = mems_.front()->GetEarliestSequenceNumber();
+  Status s;
   if (!db_impl_seqno_time_mapping_.Empty()) {
     // make a local copy, as the seqno_time_mapping from db_impl is not
     // thread safe, which will be used while not holding the db_mutex.
@@ -1125,7 +1126,6 @@ Status RemoteFlushJob::WriteLevel0Table() {
       InternalStats::BYTES_FLUSHED,
       stats.bytes_written + stats.bytes_written_blob);
   RecordFlushIOStats();
-  assert(QuitRemoteWorker() == Status::OK());
   return s;
 }
 
