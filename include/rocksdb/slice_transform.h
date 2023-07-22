@@ -19,6 +19,7 @@
 
 #include "rocksdb/customizable.h"
 #include "rocksdb/rocksdb_namespace.h"
+#include "util/logger.hpp"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -33,6 +34,12 @@ struct ConfigOptions;
 // because RocksDB is not exception-safe. This could cause undefined behavior
 // including data loss, unreported corruption, deadlocks, and more.
 class SliceTransform : public Customizable {
+ public:
+  virtual void PackLocal(int sockfd) const {
+    LOG("SliceTransform::PackLocal: error: not implemented");
+    assert(false);
+  };
+
  public:
   virtual ~SliceTransform(){};
 

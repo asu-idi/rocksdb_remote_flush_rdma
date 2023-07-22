@@ -12,6 +12,7 @@
 #include <stdio.h>
 
 #include <algorithm>
+#include <cstdint>
 
 #include "rocksdb/convenience.h"
 #include "rocksdb/slice_transform.h"
@@ -24,6 +25,16 @@ namespace ROCKSDB_NAMESPACE {
 namespace {
 
 class FixedPrefixTransform : public SliceTransform {
+ public:
+  void PackLocal(int sockfd) const override {
+    int64_t msg = 0;
+    msg += (0x01);
+    msg += (((int64_t)prefix_len_) << 8);
+    send(sockfd, &msg, sizeof(msg), 0);
+    int64_t ret = 0;
+    read(sockfd, &ret, sizeof(ret));
+  }
+
  private:
   size_t prefix_len_;
   std::string id_;
@@ -77,6 +88,16 @@ class FixedPrefixTransform : public SliceTransform {
 };
 
 class CappedPrefixTransform : public SliceTransform {
+ public:
+  void PackLocal(int sockfd) const override {
+    int64_t msg = 0;
+    msg += (0x02);
+    msg += (((int64_t)cap_len_) << 8);
+    send(sockfd, &msg, sizeof(msg), 0);
+    int64_t ret = 0;
+    read(sockfd, &ret, sizeof(ret));
+  }
+
  private:
   size_t cap_len_;
   std::string id_;
@@ -127,6 +148,15 @@ class CappedPrefixTransform : public SliceTransform {
 };
 
 class NoopTransform : public SliceTransform {
+ public:
+  void PackLocal(int sockfd) const override {
+    int64_t msg = 0;
+    msg += (0x03);
+    send(sockfd, &msg, sizeof(msg), 0);
+    int64_t ret = 0;
+    read(sockfd, &ret, sizeof(ret));
+  }
+
  public:
   explicit NoopTransform() {}
 

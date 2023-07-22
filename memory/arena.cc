@@ -9,16 +9,35 @@
 
 #include "memory/arena.h"
 
+#include <sys/socket.h>
+
 #include <algorithm>
+#include <cstdint>
 
 #include "logging/logging.h"
 #include "port/malloc.h"
 #include "port/port.h"
 #include "rocksdb/env.h"
 #include "test_util/sync_point.h"
+#include "util/logger.hpp"
 #include "util/string_util.h"
 
 namespace ROCKSDB_NAMESPACE {
+
+void Arena::PackLocal(int sockfd) const {
+  LOG("Arena::PackLocal");
+  std::string name = "Arena";
+  name.resize(15);
+  send(sockfd, name.data(), name.size(), 0);
+  int64_t ret = 0;
+  read(sockfd, &ret, sizeof(int64_t));
+}
+
+void* Arena::UnPackLocal(int sockfd) {
+  void* arena = reinterpret_cast<void*>(new Arena());
+  send(sockfd, &arena, sizeof(void*), 0);
+  return arena;
+}
 
 size_t Arena::OptimizeBlockSize(size_t block_size) {
   // Make sure block_size is in optimal range

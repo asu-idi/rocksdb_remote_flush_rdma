@@ -42,6 +42,10 @@ class Logger;
 // shard blocks are allocated from the underlying main arena.
 class ConcurrentArena : public BasicArena {
  public:
+  void PackLocal(int sockfd) const override;
+  static void* UnPackLocal(int sockfd);
+
+ public:
   const char* name() const override { return "ConcurrentArena"; }
   // block_size and huge_page_size are the same as for Arena (and are
   // in fact just passed to the constructor of arena_.  The core-local

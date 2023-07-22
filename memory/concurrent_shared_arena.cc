@@ -9,6 +9,8 @@
 
 #include "memory/concurrent_shared_arena.h"
 
+#include <sys/socket.h>
+
 #include <cassert>
 
 #include "logging/logging.h"
@@ -21,6 +23,21 @@
 #include "util/string_util.h"
 
 namespace ROCKSDB_NAMESPACE {
+
+void ConSharedArena::PackLocal(int sockfd) const {
+  LOG("ConSharedArena::PackLocal");
+  std::string name = this->name();
+  name.resize(15);
+  send(sockfd, name.data(), name.size(), 0);
+  int64_t ret = 0;
+  read(sockfd, &ret, sizeof(int64_t));
+}
+
+void* ConSharedArena::UnPackLocal(int sockfd) {
+  void* arena = reinterpret_cast<void*>(new ConSharedArena());
+  send(sockfd, &arena, sizeof(void*), 0);
+  return arena;
+}
 
 ConSharedArena* ConSharedArena::CreateSharedConSharedArena(
     size_t block_size, AllocTracker* tracker, size_t huge_page_size) {

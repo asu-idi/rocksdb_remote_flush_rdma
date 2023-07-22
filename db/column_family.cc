@@ -9,6 +9,8 @@
 
 #include "db/column_family.h"
 
+#include <sys/socket.h>
+
 #include <algorithm>
 #include <cassert>
 #include <cinttypes>
@@ -52,6 +54,7 @@
 #include "rocksdb/configurable.h"
 #include "rocksdb/convenience.h"
 #include "rocksdb/env.h"
+#include "rocksdb/options.h"
 #include "rocksdb/table.h"
 #include "rocksdb/write_buffer_manager.h"
 #include "table/merging_iterator.h"
@@ -964,6 +967,35 @@ bool ColumnFamilyData::blockUnusedDataForTest() {
   return true;
 }
 
+void* ColumnFamilyData::PackLocal(int sockfd) const {
+  void* shadow_ = malloc(sizeof(ColumnFamilyData));
+  memcpy(shadow_, reinterpret_cast<const void*>(this),
+         sizeof(ColumnFamilyData));
+  initial_cf_options_.PackLocal(sockfd);
+  current_->PackLocal(sockfd);
+  send(sockfd, reinterpret_cast<const void*>(this), sizeof(ColumnFamilyData),
+       0);
+  int64_t ret_addr = 0;
+  read(sockfd, reinterpret_cast<void*>(&ret_addr), sizeof(int64_t));
+  return reinterpret_cast<void*>(ret_addr);
+}
+
+void* ColumnFamilyData::UnPackLocal(int sockfd) {
+  auto* worker_initial_cf_options_ = reinterpret_cast<ColumnFamilyOptions*>(
+      ColumnFamilyOptions::UnPackLocal(sockfd));
+  auto* worker_current_ =
+      reinterpret_cast<Version*>(Version::UnPackLocal(sockfd));
+  void* mem = malloc(sizeof(ColumnFamilyData));
+  read(sockfd, mem, sizeof(ColumnFamilyData));
+  auto* worker_cfd_ = reinterpret_cast<ColumnFamilyData*>(mem);
+  memcpy(reinterpret_cast<void*>(const_cast<ColumnFamilyOptions*>(
+             &worker_cfd_->initial_cf_options_)),
+         reinterpret_cast<void*>(worker_initial_cf_options_),
+         sizeof(ColumnFamilyOptions));
+  send(sockfd, reinterpret_cast<const void*>(&mem), sizeof(int64_t), 0);
+  return mem;
+}
+
 // internal_comparator_ ; imm_ ; ioptions_ ; table_cache_ ; internal_stats_ ;
 // local_sv_ ; compaction_picker_ ;
 void ColumnFamilyData::Pack() {
@@ -1777,6 +1809,7 @@ Env::WriteLifeTimeHint ColumnFamilyData::CalculateSSTWriteHint(int level) {
   if (level == 0) {
     return Env::WLTH_MEDIUM;
   }
+  LOG("[error] unchecked branch");
   int base_level = current_->storage_info()->base_level();
 
   // L1: medium, L2: long, ...

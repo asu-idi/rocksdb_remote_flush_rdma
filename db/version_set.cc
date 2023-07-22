@@ -9,9 +9,12 @@
 
 #include "db/version_set.h"
 
+#include <sys/socket.h>
+
 #include <algorithm>
 #include <array>
 #include <cinttypes>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -1539,6 +1542,23 @@ void LevelIterator::InitFileIterator(size_t new_file_index) {
   }
 }
 }  // anonymous namespace
+
+void Version::PackLocal(int sockfd) const {
+  storage_info_.PackLocal(sockfd);
+  send(sockfd, reinterpret_cast<const void*>(this), sizeof(Version), 0);
+  int64_t ret_val = 0;
+  read(sockfd, &ret_val, sizeof(int64_t));
+}
+void* Version::UnPackLocal(int sockfd) {
+  void* mem = malloc(sizeof(Version));
+  auto* mem_ptr = reinterpret_cast<Version*>(mem);
+  void* worker_storage_info = VersionStorageInfo::UnPackLocal(sockfd);
+  read(sockfd, mem, sizeof(Version));
+  memcpy(reinterpret_cast<void*>(&mem_ptr->storage_info_), worker_storage_info,
+         sizeof(VersionStorageInfo));
+  send(sockfd, &mem_ptr, sizeof(int64_t), 0);
+  return mem;
+}
 
 void Version::Pack() {
   if (is_packaged_) return;
@@ -3253,6 +3273,21 @@ void Version::UpdateAccumulatedStats() {
   }
 }
 
+void VersionStorageInfo::PackLocal(int sockfd) const {
+  send(sockfd, reinterpret_cast<const void*>(this), sizeof(VersionStorageInfo),
+       0);
+  int64_t ret = 0;
+  read(sockfd, reinterpret_cast<void*>(&ret), sizeof(int64_t));
+}
+
+void* VersionStorageInfo::UnPackLocal(int sockfd) {
+  void* mem = malloc(sizeof(VersionStorageInfo));
+  read(sockfd, mem, sizeof(VersionStorageInfo));
+  int64_t ret = 0;
+  send(sockfd, reinterpret_cast<void*>(&ret), sizeof(int64_t), 0);
+  return mem;
+}
+
 void VersionStorageInfo::ComputeCompensatedSizes() {
   static const int kDeletionWeightOnCompaction = 2;
   uint64_t average_value_size = GetAverageValueSize();
@@ -4896,6 +4931,11 @@ std::string Version::DebugString(bool hex, bool print_stats) const {
   }
 
   return r;
+}
+
+void VersionSet::PackLocal(int sockfd) const {}
+void* VersionSet::UnPackLocal(int sockfd) {
+  void* mem = malloc(sizeof(VersionSet));
 }
 
 // this is used to batch writes to the manifest file
