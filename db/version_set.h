@@ -128,6 +128,10 @@ enum EpochNumberRequirement {
 // compaction, blob files, etc.
 class VersionStorageInfo {
  public:
+  void PackLocal(int sockfd) const;
+  static void* UnPackLocal(int sockfd);
+
+ public:
   VersionStorageInfo(const InternalKeyComparator* internal_comparator,
                      const Comparator* user_comparator, int num_levels,
                      CompactionStyle compaction_style,
@@ -820,6 +824,10 @@ using MultiGetRange = MultiGetContext::Range;
 // the column family at a certain point in time.
 class Version {
  public:
+  void PackLocal(int sockfd) const;
+  static void* UnPackLocal(int sockfd);
+
+ public:
   // Append to *iters a sequence of iterators that will
   // yield the contents of this Version when merged together.
   // @param read_options Must outlive any iterator built by
@@ -1125,6 +1133,10 @@ class AtomicGroupReadBuffer {
 // database. Each database owns one VersionSet. A VersionSet has access to all
 // column families via ColumnFamilySet, i.e. set of the column families.
 class VersionSet {
+ public:
+  void PackLocal(int sockfd) const;
+  static void* UnPackLocal(int sockfd);
+
  public:
   VersionSet(const std::string& dbname, const ImmutableDBOptions* db_options,
              const FileOptions& file_options, Cache* table_cache,

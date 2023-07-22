@@ -65,7 +65,8 @@ class RemoteFlushJob {
     uint64_t start_micros_;
     uint64_t start_cpu_micros_;
   };
-  install_info install_info_;
+  int server_socket_fd_;
+  int worker_socket_fd_;
 
  public:
   static std::shared_ptr<RemoteFlushJob> CreateRemoteFlushJob(
@@ -87,18 +88,10 @@ class RemoteFlushJob {
       const std::string& db_session_id = "",
       std::string full_history_ts_low = "",
       BlobFileCompletionCallback* blob_callback = nullptr);
-  void* PackLocal();
-  void* UnPackLocal();
-  void* PackRemote();
-  void* UnPackRemote();
-  int server_socket_fd = 0;
-  int worker_socket_fd = 0;
-  void* pack_local[1];
-  // info: size | if_local_is_shared | type_enum_info(use this to create
-  // corresponding type)
-  size_t pack_local_info[2];
-  void* pack_remote[2];
-  size_t pack_remote_info[2];
+  void PackLocal(int sockfd) const;
+  static void* UnPackLocal(int sockfd, DBImpl* remote_db);
+  void PackRemote(int sockfd) const;
+  static void* UnPackRemote(int sockfd);
 
  private:
   // TODO(icanadi) make effort to reduce number of parameters here
@@ -245,6 +238,7 @@ class RemoteFlushJob {
   // db mutex
   const SeqnoToTimeMapping& db_impl_seqno_time_mapping_;
   SeqnoToTimeMapping seqno_to_time_mapping_;
+  DBImpl* remote_db_ = nullptr;
 };
 
 }  // namespace ROCKSDB_NAMESPACE

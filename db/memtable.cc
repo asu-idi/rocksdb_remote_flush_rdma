@@ -34,6 +34,7 @@
 #include "logging/logging.h"
 #include "memory/allocator.h"
 #include "memory/arena.h"
+#include "memory/arena_factory.h"
 #include "memory/concurrent_arena.h"
 #include "memory/concurrent_shared_arena.h"
 #include "memory/memory_usage.h"
@@ -51,6 +52,7 @@
 #include "rocksdb/merge_operator.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/slice_transform.h"
+#include "rocksdb/slice_transform_factory.h"
 #include "rocksdb/system_clock.h"
 #include "rocksdb/types.h"
 #include "rocksdb/write_buffer_manager.h"
@@ -263,16 +265,38 @@ void MemTable::UnPack() {
   // TODO: check if a shared std::unique_ptr could work
   if (flush_job_info_ != nullptr) flush_job_info_->UnPack();
 }
+
 void* MemTable::UnPackLocal(int sock_fd) {
+  void* local_arena = BasicArenaFactory::UnPackLocal(sock_fd);
+  void* local_prefix_extractor = SliceTransformFactory::UnPackLocal(sock_fd);
+  // KeyComparator local_comparator = KeyComparator::UnPackLocal(sock_fd);
+  // ImmutableMemTableOptions local_moptions =
+  //     ImmutableMemTableOptions::UnPackLocal(sock_fd);
+  // DynamicBloom* local_bloom_filter =
+  //     DynamicBloom::UnPackLocal(sock_fd, local_arena);
+  // MemTableRep* local_table = MemTableRep::UnPackLocal(sock_fd, local_arena);
+  // MemTableRep* local_range_del_table =
+  //     MemTableRep::UnPackLocal(sock_fd, local_arena);
   void* mem = malloc(sizeof(MemTable));
+  auto* memtable = reinterpret_cast<MemTable*>(mem);
   read(sock_fd, mem, sizeof(MemTable));
   LOG("recv MemTable", mem);
   send(sock_fd, &mem, sizeof(void*), 0);
   LOG("send MemTable", mem);
+
+  memtable->arena_ = reinterpret_cast<BasicArena*>(local_arena);
   return mem;
 }
 
 void* MemTable::PackLocal(int sock_fd) const {
+  arena_->PackLocal(sock_fd);
+  prefix_extractor_->PackLocal(sock_fd);
+  // comparator_.PackLocal(sock_fd);
+  // moptions_.PackLocal(sock_fd);
+  // bloom_filter_->PackLocal(sock_fd);
+  // table_->PackLocal(sock_fd);
+  // range_del_table_->PackLocal(sock_fd);
+
   send(sock_fd, reinterpret_cast<const char*>(this), sizeof(MemTable), 0);
   LOG("send MemTable", reinterpret_cast<const char*>(this));
   int64_t ret_addr = 0;
@@ -708,8 +732,12 @@ class MemTableIterator : public InternalIterator {
 InternalIterator* MemTable::NewIterator(const ReadOptions& read_options,
                                         Arena* arena) {
   assert(arena != nullptr);
+  LOG("");
   auto mem = arena->AllocateAligned(sizeof(MemTableIterator));
-  return new (mem) MemTableIterator(*this, read_options, arena);
+  LOG("");
+  auto* test_ptr = new (mem) MemTableIterator(*this, read_options, arena);
+  LOG("");
+  return test_ptr;
 }
 
 FragmentedRangeTombstoneIterator* MemTable::NewRangeTombstoneIterator(

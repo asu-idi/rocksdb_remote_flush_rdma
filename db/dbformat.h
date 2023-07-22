@@ -675,6 +675,17 @@ class IterKey {
 // internal keys.
 class InternalKeySliceTransform : public SliceTransform {
  public:
+  void PackLocal(int sockfd) const override {
+    int64_t info = 0;
+    info += (0x00);
+    send(sockfd, &info, sizeof(info), 0);
+    int64_t ret_val = 0;
+    read(sockfd, &ret_val, sizeof(ret_val));
+    transform_->PackLocal(sockfd);
+  }
+  static void* UnPackLocal(void* transform, int sockfd);
+
+ public:
   explicit InternalKeySliceTransform(const SliceTransform* transform)
       : transform_(transform) {}
 
@@ -702,7 +713,12 @@ class InternalKeySliceTransform : public SliceTransform {
   // deletion of transform_
   const SliceTransform* const transform_;
 };
-
+inline void* InternalKeySliceTransform::UnPackLocal(void* transform,
+                                                    int sockfd) {
+  void* mem = reinterpret_cast<void*>(new InternalKeySliceTransform(
+      reinterpret_cast<SliceTransform*>(transform)));
+  return mem;
+}
 // Read the key of a record from a write batch.
 // if this record represent the default column family then cf_record
 // must be passed as false, otherwise it must be passed as true.

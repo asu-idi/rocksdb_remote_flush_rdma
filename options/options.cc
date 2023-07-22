@@ -9,11 +9,17 @@
 
 #include "rocksdb/options.h"
 
+#include <sys/socket.h>
+
+#include <cassert>
 #include <cinttypes>
+#include <cstdint>
+#include <fstream>
 #include <functional>
 #include <limits>
 #include <memory>
 #include <random>
+#include <sstream>
 
 #include "logging/logging.h"
 #include "memory/shared_mem_basic.h"
@@ -42,6 +48,7 @@
 #include "rocksdb/wal_filter.h"
 #include "table/block_based/block_based_table_factory.h"
 #include "util/compression.h"
+#include "util/macro.hpp"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -134,6 +141,59 @@ ColumnFamilyOptions::ColumnFamilyOptions()
 
 ColumnFamilyOptions::ColumnFamilyOptions(const Options& options)
     : ColumnFamilyOptions(*static_cast<const ColumnFamilyOptions*>(&options)) {}
+
+void ColumnFamilyOptions::PackLocal(int sockfd) const {
+  std::function<std::string()> gen = []() {
+    std::string ret = "/tmp/ColumnFamilyOptions-";
+    for (int i = 0; i < 10; i++) {
+      std::random_device rd;
+      std::mt19937 gen(rd());
+      ret += std::to_string(gen() % 10);
+    }
+    return ret;
+  };
+  std::string file_name = gen();
+  DBOptions db_options = DBOptions();
+  std::vector<std::string> cf_names_;
+  std::vector<ColumnFamilyOptions> cf_options_;
+  cf_names_.push_back("default");
+  cf_options_.push_back(*this);
+  Status ret =
+      PersistRocksDBOptions(db_options, cf_names_, cf_options_, file_name,
+                            Env::Default()->GetFileSystem().get());
+  assert(ret.ok());
+  send(sockfd, file_name.c_str(), file_name.length(), 0);
+  LOG("Packaging ImmutableDBOptions to file:", file_name.c_str());
+  int64_t ret_val = 0;
+  read(sockfd, &ret_val, sizeof(ret_val));
+  LOG("Packaging ImmutableDBOptions");
+}
+
+void* ColumnFamilyOptions::UnPackLocal(int sockfd) {
+  size_t recv_length = std::string("/tmp/ColumnFamilyOptions-").length() + 10;
+  void* mem = malloc(recv_length);
+  read(sockfd, mem, recv_length);
+  LOG("read file name:", static_cast<char*>(mem));
+  std::string file_name =
+      std::string(static_cast<char*>(mem)).substr(0, recv_length);
+  LOG("Unpackaging ImmutableDBOptions from file:", file_name.c_str());
+  LOG("Unpackaging ImmutableDBOptions");
+  DBOptions db_options = DBOptions();
+  ConfigOptions config_options;
+  std::vector<ColumnFamilyDescriptor> loaded_cf_descs;
+
+  Status ret = LoadOptionsFromFile(config_options, file_name, &db_options,
+                                   &loaded_cf_descs);
+  // assert(ret.ok());
+  auto* options = new ColumnFamilyOptions();
+  LOG("Unpackaging ImmutableDBOptions");
+  assert(loaded_cf_descs.size() == 1);
+  *options = loaded_cf_descs[0].options;
+  LOG("Unpackaging ImmutableDBOptions");
+  int64_t ret_val = 4321;
+  send(sockfd, &ret_val, sizeof(int64_t), 0);
+  return reinterpret_cast<void*>(options);
+}
 
 void* ColumnFamilyOptions::Pack(std::shared_ptr<FileSystem> fs) {
   if (is_packaged_) {

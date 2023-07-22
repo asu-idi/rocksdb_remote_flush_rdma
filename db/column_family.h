@@ -272,6 +272,10 @@ class ColumnFamilySet;
 // Most methods require DB mutex held, unless otherwise noted
 class ColumnFamilyData {
  public:
+  void* PackLocal(int sockfd) const;
+  static void* UnPackLocal(int sockfd);
+
+ public:
   ~ColumnFamilyData();
 
   // thread-safe

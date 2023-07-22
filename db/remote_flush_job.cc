@@ -12,11 +12,13 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <iterator>
 #include <thread>
 
+#include "db/db_impl/db_impl.h"
 #include "db/retrieve_info.h"
 #include "db/seqno_to_time_mapping.h"
 #include "monitoring/instrumented_mutex.h"
@@ -127,16 +129,12 @@ RemoteFlushJob::RemoteFlushJob(
   TEST_SYNC_POINT("RemoteFlushJob::RemoteFlushJob()");
 }
 
-void* RemoteFlushJob::PackLocal() {
+void RemoteFlushJob::PackLocal(int server_socket_fd) const {
   LOG("RemoteFlushJob::PackLocal thread_id:", std::this_thread::get_id(),
       "Pack data from local side");
-  void* mem = malloc(sizeof(RemoteFlushJob));
-  memcpy(mem, reinterpret_cast<void*>(this), sizeof(RemoteFlushJob));
-  auto* flush_job = reinterpret_cast<RemoteFlushJob*>(mem);
   // Pack clock
   size_t cnt_packages = 0;
-  void* remote_clock_info_ = clock_->PackLocal(server_socket_fd);
-  flush_job->pack_remote[cnt_packages++] = remote_clock_info_;
+  clock_->PackLocal(server_socket_fd);
   // Pack mems_
   int64_t mem_size = mems_.size();
   send(server_socket_fd, &mem_size, sizeof(int64_t), 0);
@@ -146,25 +144,24 @@ void* RemoteFlushJob::PackLocal() {
   LOG("server recv mems size: ", mem_size_ret);
   assert(mem_size == mem_size_ret);
   for (auto& memtable : mems_) {
-    void* remote_mem_info_ = memtable->PackLocal(server_socket_fd);
-    // flush_job->pack_remote[cnt_packages++] = remote_mem_info_;
+    memtable->PackLocal(server_socket_fd);
   }
   // Pack db_impl_seqno_time_mapping_
-  void* db_impl_seqno_time_mapping_ret =
-      db_impl_seqno_time_mapping_.PackLocal(server_socket_fd);
-  void* seqno_to_time_mapping_ret =
-      seqno_to_time_mapping_.PackLocal(server_socket_fd);
+  db_impl_seqno_time_mapping_.PackLocal(server_socket_fd);
+  seqno_to_time_mapping_.PackLocal(server_socket_fd);
+  // Pack cfd_
+  cfd_->PackLocal(server_socket_fd);
+  // versions_->PackLocal(server_socket_fd);
 
-  send(server_socket_fd, mem, sizeof(RemoteFlushJob), 0);
-  free(mem);
+  send(server_socket_fd, reinterpret_cast<const void*>(this),
+       sizeof(RemoteFlushJob), 0);
   int64_t ret_addr = 0;
   read(server_socket_fd, &ret_addr, sizeof(int64_t));
   LOG("RemoteFlushJob::PackLocal done, remote_handler = ", std::hex, ret_addr,
       std::dec);
-  return reinterpret_cast<void*>(ret_addr);
 }
 
-void* RemoteFlushJob::UnPackLocal() {
+void* RemoteFlushJob::UnPackLocal(int worker_socket_fd, DBImpl* remote_db) {
   LOG("RemoteFlushJob::UnPackLocal thread_id:", std::this_thread::get_id(),
       "UnPack data from local side");
   void* mem = malloc(sizeof(RemoteFlushJob));
@@ -196,10 +193,14 @@ void* RemoteFlushJob::UnPackLocal() {
       SeqnoToTimeMapping::UnPackLocal(worker_socket_fd);
   void* seqno_to_time_mapping_ret =
       SeqnoToTimeMapping::UnPackLocal(worker_socket_fd);
+  void* cfd_ret = ColumnFamilyData::UnPackLocal(worker_socket_fd);
+  // void* versions_ret = VersionSet::UnPackLocal(worker_socket_fd);
+
   read(worker_socket_fd, mem, sizeof(RemoteFlushJob));
   LOG("worker recv ", std::hex, mem, std::dec);
 
   // fill local_handler
+  local_handler->remote_db_ = remote_db;
   local_handler->clock_ = reinterpret_cast<SystemClock*>(clock_ret_addr);
   local_handler->db_mutex_ = new InstrumentedMutex();
   local_handler->db_mutex_->Unlock();
@@ -218,15 +219,17 @@ void* RemoteFlushJob::UnPackLocal() {
          reinterpret_cast<void*>(&seqno_to_time_mapping_ret),
          sizeof(SeqnoToTimeMapping*));
 
+  local_handler->cfd_ = reinterpret_cast<ColumnFamilyData*>(cfd_ret);
+
   send(worker_socket_fd, &mem, sizeof(int64_t), 0);
   LOG("worker send ", std::hex, mem, std::dec);
   return mem;
   LOG("RemoteFlushJob::UnPackLocal done");
 }
-void* RemoteFlushJob::PackRemote() {
+void RemoteFlushJob::PackRemote(int worker_socket_fd) const {
   LOG("RemoteFlushJob::PackRemote thread_id:", std::this_thread::get_id(),
       "Pack data from remote side");
-  void* install_needed = &install_info_;
+  void* install_needed = malloc(sizeof(install_info));
   send(worker_socket_fd, install_needed, sizeof(install_info), 0);
   LOG("worker send ", std::hex, install_needed, std::dec);
 
@@ -235,18 +238,19 @@ void* RemoteFlushJob::PackRemote() {
   LOG("worker recv ", std::hex, remote_install_addr, std::dec);
 
   LOG("RemoteFlushJob::PackRemote done");
-  return reinterpret_cast<void*>(remote_install_addr);
 }
-void* RemoteFlushJob::UnPackRemote() {
+void* RemoteFlushJob::UnPackRemote(int server_socket_fd) {
   LOG("RemoteFlushJob::UnPackRemote thread_id:", std::this_thread::get_id(),
       "UnPack data from remote side");
+  void* mem = malloc(sizeof(install_info));
+  auto* install_info_ = reinterpret_cast<install_info*>(mem);
   read(server_socket_fd, &install_info_, sizeof(install_info));
   LOG("server recv ", std::hex, &install_info_, std::dec);
   // unpack install_info
   send(server_socket_fd, &install_info_, sizeof(int64_t), 0);
   LOG("server send ", std::hex, &install_info_, std::dec);
   LOG("RemoteFlushJob::UnPackRemote done");
-  return &install_info_;
+  return install_info_;
 }
 
 std::shared_ptr<RemoteFlushJob> RemoteFlushJob::CreateRemoteFlushJob(
@@ -404,20 +408,18 @@ Status RemoteFlushJob::RunRemote(LogsWithPrepTracker* prep_tracker,
     // This will release and re-acquire the mutex.
     LOG("Run job: write l0table");
     assert(MatchRemoteWorker() == Status::OK());
-    auto* remote_handler = reinterpret_cast<RemoteFlushJob*>(PackLocal());
-    LOG("RemoteFlushJob::WriteLevel0Table server recv remote_worker_handler: ",
-        std::hex, remote_handler, std::dec);
-    int64_t signal = reinterpret_cast<int64_t>(remote_handler);
-    send(server_socket_fd, &signal, sizeof(int64_t), 0);
-    LOG("server Message sent2: ", signal, ' ', server_socket_fd);
+    PackLocal(server_socket_fd_);
+    int64_t signal = 4321;
+    send(server_socket_fd_, &signal, sizeof(int64_t), 0);
+    LOG("server Message sent2: ", signal, ' ', server_socket_fd_);
 
     // s = WriteLevel0Table();
 
-    void* local_install_handler = UnPackRemote();
+    void* local_install_handler = UnPackRemote(server_socket_fd_);
     assert(QuitRemoteWorker() == Status::OK());
     int64_t signal_ret = 0;
-    read(server_socket_fd, &signal_ret, sizeof(int64_t));
-    LOG("server Message received3: ", signal_ret, ' ', server_socket_fd);
+    read(server_socket_fd_, &signal_ret, sizeof(int64_t));
+    LOG("server Message received3: ", signal_ret, ' ', server_socket_fd_);
     assert(signal_ret == signal);
     LOG("Run job: write l0table done");
   }
@@ -471,14 +473,14 @@ Status RemoteFlushJob::MatchRemoteWorker() {
     LOG("Connection Failed");
     return Status::IOError("Connection Failed");
   }
-  server_socket_fd = sock;
+  server_socket_fd_ = sock;
   auto data = this;
-  send(server_socket_fd, &data, sizeof(long long), 0);
+  send(server_socket_fd_, &data, sizeof(long long), 0);
   LOG("server Message sent1 / JobHandle: ", std::hex, data, std::dec, ' ',
-      server_socket_fd);
+      server_socket_fd_);
 
-  read(server_socket_fd, &buffer, sizeof(size_t));
-  LOG("server Message received1: ", buffer, ' ', server_socket_fd);
+  read(server_socket_fd_, &buffer, sizeof(size_t));
+  LOG("server Message received1: ", buffer, ' ', server_socket_fd_);
 
   return buffer == 4321 ? Status::OK()
                         : Status::Corruption("MatchRemoteWorker error");
@@ -486,12 +488,12 @@ Status RemoteFlushJob::MatchRemoteWorker() {
 
 Status RemoteFlushJob::QuitRemoteWorker() {
   int64_t data = 1234;
-  send(server_socket_fd, &data, sizeof(int64_t), 0);
-  LOG("server Message sent4: ", data, ' ', server_socket_fd);
+  send(server_socket_fd_, &data, sizeof(int64_t), 0);
+  LOG("server Message sent4: ", data, ' ', server_socket_fd_);
   int64_t buffer = 0;
-  read(server_socket_fd, &buffer, sizeof(int64_t));
-  LOG("server Message received5: ", buffer, ' ', server_socket_fd);
-  close(server_socket_fd);
+  read(server_socket_fd_, &buffer, sizeof(int64_t));
+  LOG("server Message received5: ", buffer, ' ', server_socket_fd_);
+  close(server_socket_fd_);
   return buffer == 1234 ? Status::OK()
                         : Status::Aborted("QuitRemoteWorker error");
 }
@@ -505,7 +507,7 @@ Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
   LOG("worker calculation: ");
   Status ret = WriteLevel0Table();
   LOG("worker calculation finished");
-  void* remote_install_handler = PackRemote();
+  PackRemote(worker_socket_fd_);
   return Status::OK();
 }
 
@@ -986,7 +988,6 @@ Status RemoteFlushJob::WriteLevel0Table() {
   }
 
   {
-    LOG("");
     auto write_hint = cfd_->CalculateSSTWriteHint(0);
     LOG("");
     Env::IOPriority io_priority = GetRateLimiterPriorityForWrite();
@@ -1005,15 +1006,19 @@ Status RemoteFlushJob::WriteLevel0Table() {
     uint64_t mems_size = mems_.size();
     (void)mems_size;  // avoids unused variable error when
                       // TEST_SYNC_POINT_CALLBACK not used.
-    TEST_SYNC_POINT_CALLBACK("RemoteFlushJob::WriteLevel0Table:num_memtables",
-                             &mems_size);
+    // TEST_SYNC_POINT_CALLBACK("RemoteFlushJob::WriteLevel0Table:num_memtables",
+    //                          &mems_size);
+    LOG("");
     assert(job_context_);
+    LOG("");
     for (MemTable* m : mems_) {
-      ROCKS_LOG_INFO(
-          db_options_.info_log,
-          "[%s] [JOB %d] Flushing memtable with next log file: %" PRIu64 "\n",
-          cfd_->GetName().c_str(), job_context_->job_id, m->GetNextLogNumber());
+      // ROCKS_LOG_INFO(
+      //     db_options_.info_log,
+      //     "[%s] [JOB %d] Flushing memtable with next log file: %" PRIu64
+      //     "\n", cfd_->GetName().c_str(), job_context_->job_id,
+      //     m->GetNextLogNumber());
       memtables.push_back(m->NewIterator(ro, &arena));
+      LOG("");
       auto* range_del_iter = m->NewRangeTombstoneIterator(
           ro, kMaxSequenceNumber, true /* immutable_memtable */);
       if (range_del_iter != nullptr) {
@@ -1173,10 +1178,11 @@ Status RemoteFlushJob::WriteLevel0Table() {
 }
 
 Env::IOPriority RemoteFlushJob::GetRateLimiterPriorityForWrite() {
-  if (versions_ && versions_->GetColumnFamilySet() &&
-      versions_->GetColumnFamilySet()->write_controller()) {
+  if (remote_db_->GetVersionSet() &&
+      remote_db_->GetVersionSet()->GetColumnFamilySet() &&
+      remote_db_->GetVersionSet()->GetColumnFamilySet()->write_controller()) {
     WriteController* write_controller =
-        versions_->GetColumnFamilySet()->write_controller();
+        remote_db_->GetVersionSet()->GetColumnFamilySet()->write_controller();
     if (write_controller->IsStopped() || write_controller->NeedsDelay()) {
       return Env::IO_USER;
     }

@@ -63,6 +63,10 @@ struct DbPath;
 using FileTypeSet = SmallEnumSet<FileType, FileType::kBlobFile>;
 
 struct ColumnFamilyOptions : public AdvancedColumnFamilyOptions {
+ public:
+  void PackLocal(int sockfd) const;
+  static void* UnPackLocal(int sockfd);
+
   // The function recovers options to a previous version. Only 4.6 or later
   // versions are supported.
   // NOT MAINTAINED: This function has not been and is not maintained.

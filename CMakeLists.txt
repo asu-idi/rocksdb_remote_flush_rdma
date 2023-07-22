@@ -1303,6 +1303,7 @@ if(WITH_TESTS)
         env/env_basic_test.cc
   )
   if(WITH_ALL_TESTS)
+    add_definitions(-DROCKSDB_ALL_TESTS_ENABLED)
     list(APPEND TESTS
         cache/cache_reservation_manager_test.cc
         cache/cache_test.cc

@@ -257,6 +257,7 @@ Status RocksDBOptionsParser::Parse(const ConfigOptions& config_options_in,
   Status s =
       fs->NewSequentialFile(file_name, FileOptions(), &seq_file, nullptr);
   if (!s.ok()) {
+    LOG("Failed");
     return s;
   }
   LineFileReader lf_reader(std::move(seq_file), file_name,

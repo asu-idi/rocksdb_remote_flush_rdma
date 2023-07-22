@@ -327,13 +327,13 @@ void DBImpl::BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri) {
 
   auto* flush_job =
       reinterpret_cast<RemoteFlushJob*>(malloc(sizeof(RemoteFlushJob)));
-  flush_job->worker_socket_fd = sockfd;
-  auto* local_handler =
-      reinterpret_cast<RemoteFlushJob*>(flush_job->UnPackLocal());
+  flush_job->worker_socket_fd_ = sockfd;
+  auto* local_handler = reinterpret_cast<RemoteFlushJob*>(
+      flush_job->UnPackLocal(flush_job->worker_socket_fd_, this));
   int64_t signal_verify = 0;
   read(sockfd, &signal_verify, sizeof(int64_t));
   LOG("worker Message received2: ", signal_verify, ' ', sockfd);
-  local_handler->worker_socket_fd = sockfd;
+  local_handler->worker_socket_fd_ = sockfd;
   local_handler->RunLocal();
 
   auto signal = reinterpret_cast<int64_t>(local_handler);
@@ -384,6 +384,7 @@ void DBImpl::TEST_BGWorkRemoteFlush(void* arg) {
       reinterpret_cast<void*>(buffer), std::dec, ' ', valread,
       " bytes in total");
   auto* flush_job = reinterpret_cast<RemoteFlushJob*>(buffer);
+  flush_job->worker_socket_fd_ = fta.sockfd_;
   Status ret = flush_job->RunLocal();
   if (ret.ok()) {
     magic = 1234;

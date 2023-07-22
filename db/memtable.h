@@ -92,6 +92,9 @@ class MemTable {
 
  public:
   struct KeyComparator : public MemTableRep::KeyComparator {
+   public:
+    void PackLocal(int sockfd) const;
+
     const InternalKeyComparator comparator;
     explicit KeyComparator(const InternalKeyComparator& c) : comparator(c) {}
     virtual int operator()(const char* prefix_len_key1,
