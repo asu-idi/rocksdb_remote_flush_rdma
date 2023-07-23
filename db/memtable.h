@@ -9,6 +9,7 @@
 
 #pragma once
 #include <atomic>
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -42,6 +43,23 @@ class MergeContext;
 class SystemClock;
 
 struct ImmutableMemTableOptions {
+ public:
+  void PackLocal(int sockfd) const {
+    LOG("ImmutableMemTableOptions::PackLocal");
+    send(sockfd, reinterpret_cast<const void*>(this), sizeof(*this), 0);
+    int64_t ret_val = 0;
+    read(sockfd, &ret_val, sizeof(int64_t));
+  }
+  static void* UnPackLocal(int sockfd) {
+    LOG("ImmutableMemTableOptions::UnPackLocal");
+    void* mem = malloc(sizeof(ImmutableMemTableOptions));
+    read(sockfd, mem, sizeof(ImmutableMemTableOptions));
+    auto* ptr = reinterpret_cast<ImmutableMemTableOptions*>(mem);
+    ptr->info_log = nullptr;  // todo(iaIm14)
+    send(sockfd, &mem, sizeof(mem), 0);
+    return mem;
+  }
+
   explicit ImmutableMemTableOptions(const ImmutableOptions& ioptions,
                                     const MutableCFOptions& mutable_cf_options);
   size_t arena_block_size;
@@ -93,7 +111,26 @@ class MemTable {
  public:
   struct KeyComparator : public MemTableRep::KeyComparator {
    public:
-    void PackLocal(int sockfd) const;
+    void PackLocal(int sockfd) const {
+      LOG("KeyComparator::PackLocal");
+      comparator.PackLocal(sockfd);
+      send(sockfd, reinterpret_cast<const void*>(this), sizeof(*this), 0);
+      int64_t ret_val = 0;
+      read(sockfd, &ret_val, sizeof(int64_t));
+    }
+    static void* UnPackLocal(int sockfd) {
+      LOG("KeyComparator::UnPackLocal");
+      void* internal_key_comparator =
+          InternalKeyComparator::UnPackLocal(sockfd);
+      void* mem = malloc(sizeof(KeyComparator));
+      auto* kcmp = reinterpret_cast<KeyComparator*>(mem);
+      read(sockfd, mem, sizeof(KeyComparator));
+      memcpy(reinterpret_cast<void*>(
+                 const_cast<InternalKeyComparator*>(&kcmp->comparator)),
+             internal_key_comparator, sizeof(InternalKeyComparator));
+      send(sockfd, &kcmp, sizeof(kcmp), 0);
+      return mem;
+    }
 
     const InternalKeyComparator comparator;
     explicit KeyComparator(const InternalKeyComparator& c) : comparator(c) {}

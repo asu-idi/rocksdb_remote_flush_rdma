@@ -19,10 +19,11 @@ class SliceTransformFactory {
  public:
   static void* UnPackLocal(int sockfd);
 
- private:
-  SliceTransformFactory() = default;
   SliceTransformFactory(const SliceTransformFactory&) = delete;
   void operator=(const SliceTransformFactory&) = delete;
+
+ private:
+  SliceTransformFactory() = default;
   ~SliceTransformFactory() = default;
 };
 
@@ -48,6 +49,9 @@ inline void* SliceTransformFactory::UnPackLocal(int sockfd) {
     send(sockfd, &msg, sizeof(msg), 0);
     const SliceTransform* local_ptr = NewNoopTransform();
     return reinterpret_cast<void*>(const_cast<SliceTransform*>(local_ptr));
+  } else if (type == 0xff) {
+    send(sockfd, &msg, sizeof(msg), 0);
+    return nullptr;
   } else {
     LOG("SliceTransformFactory::UnPackLocal: error: ", type, ' ', info);
     assert(false);

@@ -269,13 +269,12 @@ void MemTable::UnPack() {
 void* MemTable::UnPackLocal(int sock_fd) {
   void* local_arena = BasicArenaFactory::UnPackLocal(sock_fd);
   void* local_prefix_extractor = SliceTransformFactory::UnPackLocal(sock_fd);
-  // KeyComparator local_comparator = KeyComparator::UnPackLocal(sock_fd);
-  // ImmutableMemTableOptions local_moptions =
-  //     ImmutableMemTableOptions::UnPackLocal(sock_fd);
+  void* local_comparator = KeyComparator::UnPackLocal(sock_fd);
+  void* local_moptions = ImmutableMemTableOptions::UnPackLocal(sock_fd);
   // DynamicBloom* local_bloom_filter =
   //     DynamicBloom::UnPackLocal(sock_fd, local_arena);
-  // MemTableRep* local_table = MemTableRep::UnPackLocal(sock_fd, local_arena);
-  // MemTableRep* local_range_del_table =
+  // MemTableRep* local_table = MemTableRep::UnPackLocal(sock_fd,
+  // local_arena); MemTableRep* local_range_del_table =
   //     MemTableRep::UnPackLocal(sock_fd, local_arena);
   void* mem = malloc(sizeof(MemTable));
   auto* memtable = reinterpret_cast<MemTable*>(mem);
@@ -285,14 +284,38 @@ void* MemTable::UnPackLocal(int sock_fd) {
   LOG("send MemTable", mem);
 
   memtable->arena_ = reinterpret_cast<BasicArena*>(local_arena);
+  // memtable->prefix_extractor_ =
+  //     reinterpret_cast<SliceTransform*>(local_prefix_extractor);
+  memcpy(reinterpret_cast<void*>(
+             const_cast<SliceTransform**>(&memtable->prefix_extractor_)),
+         reinterpret_cast<void*>(&local_prefix_extractor),
+         sizeof(SliceTransform*));
+  memcpy(reinterpret_cast<void*>(&memtable->comparator_),
+         reinterpret_cast<void*>(local_comparator), sizeof(KeyComparator));
+  memcpy(reinterpret_cast<void*>(
+             const_cast<ImmutableMemTableOptions*>(&memtable->moptions_)),
+         reinterpret_cast<void*>(local_moptions),
+         sizeof(ImmutableMemTableOptions));
   return mem;
 }
 
 void* MemTable::PackLocal(int sock_fd) const {
+  LOG("start MemTable::PackLocal");
   arena_->PackLocal(sock_fd);
-  prefix_extractor_->PackLocal(sock_fd);
-  // comparator_.PackLocal(sock_fd);
-  // moptions_.PackLocal(sock_fd);
+  LOG("arena_->PackLocal(sock_fd) done");
+  if (prefix_extractor_ != nullptr)
+    prefix_extractor_->PackLocal(sock_fd);
+  else {
+    int64_t msg = 0xff;
+    send(sock_fd, &msg, sizeof(msg), 0);
+    int64_t ret_val = 0;
+    read(sock_fd, &ret_val, sizeof(int64_t));
+  }
+  LOG("prefix_extractor_->PackLocal(sock_fd) done");
+  comparator_.PackLocal(sock_fd);
+  LOG("comparator_.PackLocal(sock_fd) done");
+  moptions_.PackLocal(sock_fd);
+  LOG("moptions_.PackLocal(sock_fd) done");
   // bloom_filter_->PackLocal(sock_fd);
   // table_->PackLocal(sock_fd);
   // range_del_table_->PackLocal(sock_fd);
@@ -316,9 +339,8 @@ MemTable::~MemTable() {
         reinterpret_cast<char*>(table_), sizeof(MemTableRep)));
     assert(singleton<SharedContainer>::Instance().find(
         reinterpret_cast<char*>(range_del_table_), sizeof(MemTableRep)));
-    // TODO(iaIm14): free without calling destructor, as MemtableRep is derived
-    // table_->~MemTableRep();
-    // range_del_table_->~MemTableRep();
+    // TODO(iaIm14): free without calling destructor, as MemtableRep is
+    // derived table_->~MemTableRep(); range_del_table_->~MemTableRep();
     shm_delete(reinterpret_cast<char*>(table_));
     shm_delete(reinterpret_cast<char*>(range_del_table_));
   } else {
@@ -359,16 +381,16 @@ size_t MemTable::ApproximateMemoryUsage() {
 
 bool MemTable::ShouldFlushNow() {
   size_t write_buffer_size = write_buffer_size_.load(std::memory_order_relaxed);
-  // In a lot of times, we cannot allocate arena blocks that exactly matches the
-  // buffer size. Thus we have to decide if we should over-allocate or
-  // under-allocate.
-  // This constant variable can be interpreted as: if we still have more than
-  // "kAllowOverAllocationRatio * kArenaBlockSize" space left, we'd try to over
-  // allocate one more block.
+  // In a lot of times, we cannot allocate arena blocks that exactly
+  // matches the buffer size. Thus we have to decide if we should
+  // over-allocate or under-allocate. This constant variable can be
+  // interpreted as: if we still have more than
+  // "kAllowOverAllocationRatio * kArenaBlockSize" space left, we'd try
+  // to over allocate one more block.
   const double kAllowOverAllocationRatio = 0.6;
 
-  // If arena still have room for new block allocation, we can safely say it
-  // shouldn't flush.
+  // If arena still have room for new block allocation, we can safely say
+  // it shouldn't flush.
   auto allocated_memory = table_->ApproximateMemoryUsage() +
                           range_del_table_->ApproximateMemoryUsage() +
                           arena_->MemoryAllocatedBytes();
@@ -382,38 +404,43 @@ bool MemTable::ShouldFlushNow() {
     return false;
   }
 
-  // if user keeps adding entries that exceeds write_buffer_size, we need to
-  // flush earlier even though we still have much available memory left.
+  // if user keeps adding entries that exceeds write_buffer_size, we need
+  // to flush earlier even though we still have much available memory
+  // left.
   if (allocated_memory >
       write_buffer_size + kArenaBlockSize * kAllowOverAllocationRatio) {
     return true;
   }
 
-  // In this code path, Arena has already allocated its "last block", which
-  // means the total allocatedmemory size is either:
-  //  (1) "moderately" over allocated the memory (no more than `0.6 * arena
+  // In this code path, Arena has already allocated its "last block",
+  // which means the total allocatedmemory size is either:
+  //  (1) "moderately" over allocated the memory (no more than `0.6 *
+  //  arena
   // block size`. Or,
-  //  (2) the allocated memory is less than write buffer size, but we'll stop
-  // here since if we allocate a new arena block, we'll over allocate too much
-  // more (half of the arena block size) memory.
+  //  (2) the allocated memory is less than write buffer size, but we'll
+  //  stop
+  // here since if we allocate a new arena block, we'll over allocate too
+  // much more (half of the arena block size) memory.
   //
-  // In either case, to avoid over-allocate, the last block will stop allocation
-  // when its usage reaches a certain ratio, which we carefully choose "0.75
-  // full" as the stop condition because it addresses the following issue with
-  // great simplicity: What if the next inserted entry's size is
-  // bigger than AllocatedAndUnused()?
+  // In either case, to avoid over-allocate, the last block will stop
+  // allocation when its usage reaches a certain ratio, which we
+  // carefully choose "0.75 full" as the stop condition because it
+  // addresses the following issue with great simplicity: What if the
+  // next inserted entry's size is bigger than AllocatedAndUnused()?
   //
   // The answer is: if the entry size is also bigger than 0.25 *
-  // kArenaBlockSize, a dedicated block will be allocated for it; otherwise
-  // arena will anyway skip the AllocatedAndUnused() and allocate a new, empty
-  // and regular block. In either case, we *overly* over-allocated.
+  // kArenaBlockSize, a dedicated block will be allocated for it;
+  // otherwise arena will anyway skip the AllocatedAndUnused() and
+  // allocate a new, empty and regular block. In either case, we *overly*
+  // over-allocated.
   //
-  // Therefore, setting the last block to be at most "0.75 full" avoids both
-  // cases.
+  // Therefore, setting the last block to be at most "0.75 full" avoids
+  // both cases.
   //
-  // NOTE: the average percentage of waste space of this approach can be counted
-  // as: "arena block size * 0.25 / write buffer size". User who specify a small
-  // write buffer size and/or big arena block size may suffer.
+  // NOTE: the average percentage of waste space of this approach can be
+  // counted as: "arena block size * 0.25 / write buffer size". User who
+  // specify a small write buffer size and/or big arena block size may
+  // suffer.
   return arena_->AllocatedAndUnused() < kArenaBlockSize / 4;
 }
 
@@ -563,15 +590,20 @@ class MemTableIterator : public InternalIterator {
         protection_bytes_per_key_(mem.moptions_.protection_bytes_per_key),
         status_(Status::OK()),
         logger_(mem.moptions_.info_log) {
+    LOG("");
     if (use_range_del_table) {
+      LOG("error: uncheck branch");
       iter_ = mem.range_del_table_->GetIterator(arena);
     } else if (prefix_extractor_ != nullptr && !read_options.total_order_seek &&
                !read_options.auto_prefix_mode) {
+      LOG("error: uncheck branch");
       // Auto prefix mode is not implemented in memtable yet.
       bloom_ = mem.bloom_filter_.get();
       iter_ = mem.table_->GetDynamicPrefixIterator(arena);
     } else {
+      LOG("rightnow");
       iter_ = mem.table_->GetIterator(arena);
+      LOG("rightnow");
     }
     status_.PermitUncheckedError();
   }
@@ -702,7 +734,8 @@ class MemTableIterator : public InternalIterator {
   }
 
   bool IsValuePinned() const override {
-    // memtable value is always pinned, except if we allow inplace update.
+    // memtable value is always pinned, except if we allow inplace
+    // update.
     return value_pinned_;
   }
 
@@ -818,9 +851,9 @@ MemTable::MemTableStats MemTable::ApproximateStats(const Slice& start_ikey,
     return {0, 0};
   }
   if (entry_count > n) {
-    // (range_del_)table_->ApproximateNumEntries() is just an estimate so it can
-    // be larger than actual entries we have. Cap it to entries we have to limit
-    // the inaccuracy.
+    // (range_del_)table_->ApproximateNumEntries() is just an estimate so
+    // it can be larger than actual entries we have. Cap it to entries we
+    // have to limit the inaccuracy.
     entry_count = n;
   }
   uint64_t data_size = data_size_.load(std::memory_order_relaxed);
@@ -1044,11 +1077,11 @@ Status MemTable::Add(SequenceNumber s, ValueType type,
           cached_range_tombstone_.AccessAtCore(i);
       auto new_local_cache_ref = std::make_shared<
           const std::shared_ptr<FragmentedRangeTombstoneListCache>>(new_cache);
-      // It is okay for some reader to load old cache during invalidation as
-      // the new sequence number is not published yet.
-      // Each core will have a shared_ptr to a shared_ptr to the cached
-      // fragmented range tombstones, so that ref count is maintianed locally
-      // per-core using the per-core shared_ptr.
+      // It is okay for some reader to load old cache during invalidation
+      // as the new sequence number is not published yet. Each core will
+      // have a shared_ptr to a shared_ptr to the cached fragmented range
+      // tombstones, so that ref count is maintianed locally per-core
+      // using the per-core shared_ptr.
       std::atomic_store_explicit(
           local_cache_ref_ptr,
           std::shared_ptr<FragmentedRangeTombstoneListCache>(
@@ -1153,9 +1186,10 @@ static bool SaveValue(void* arg, const char* entry) {
       if (s->seq > max_covering_tombstone_seq) {
         if (ts_sz && s->timestamp != nullptr) {
           // `timestamp` was set to range tombstone's timestamp before
-          // `SaveValue` is ever called. This key has a higher sequence number
-          // than range tombstone, and is the key with the highest seqno across
-          // all keys with this user_key, so we update timestamp here.
+          // `SaveValue` is ever called. This key has a higher sequence
+          // number than range tombstone, and is the key with the highest
+          // seqno across all keys with this user_key, so we update
+          // timestamp here.
           Slice ts = ExtractTimestampFromUserKey(user_key_slice, ts_sz);
           s->timestamp->assign(ts.data(), ts_sz);
         }
@@ -1243,8 +1277,8 @@ static bool SaveValue(void* arg, const char* entry) {
         if (!s->do_merge) {
           // Preserve the value with the goal of returning it as part of
           // raw merge operands to the user
-          // TODO(yanqin) update MergeContext so that timestamps information
-          // can also be retained.
+          // TODO(yanqin) update MergeContext so that timestamps
+          // information can also be retained.
 
           merge_context->PushOperand(
               v, s->inplace_update_support == false /* operand_pinned */);
@@ -1253,9 +1287,9 @@ static bool SaveValue(void* arg, const char* entry) {
 
           if (s->value || s->columns) {
             std::string result;
-            // `op_failure_scope` (an output parameter) is not provided (set to
-            // nullptr) since a failure must be propagated regardless of its
-            // value.
+            // `op_failure_scope` (an output parameter) is not provided
+            // (set to nullptr) since a failure must be propagated
+            // regardless of its value.
             *(s->status) = MergeHelper::TimedFullMerge(
                 merge_operator, s->key->user_key(), &v,
                 merge_context->GetOperands(), &result, s->logger, s->statistics,
@@ -1320,9 +1354,9 @@ static bool SaveValue(void* arg, const char* entry) {
             *(s->status) = WideColumnSerialization::GetValueOfDefaultColumn(
                 v, value_of_default);
             if (s->status->ok()) {
-              // `op_failure_scope` (an output parameter) is not provided (set
-              // to nullptr) since a failure must be propagated regardless of
-              // its value.
+              // `op_failure_scope` (an output parameter) is not provided
+              // (set to nullptr) since a failure must be propagated
+              // regardless of its value.
               *(s->status) = MergeHelper::TimedFullMerge(
                   merge_operator, s->key->user_key(), &value_of_default,
                   merge_context->GetOperands(), s->value, s->logger,
@@ -1332,9 +1366,9 @@ static bool SaveValue(void* arg, const char* entry) {
             }
           } else if (s->columns) {
             std::string result;
-            // `op_failure_scope` (an output parameter) is not provided (set to
-            // nullptr) since a failure must be propagated regardless of its
-            // value.
+            // `op_failure_scope` (an output parameter) is not provided
+            // (set to nullptr) since a failure must be propagated
+            // regardless of its value.
             *(s->status) = MergeHelper::TimedFullMergeWithEntity(
                 merge_operator, s->key->user_key(), v,
                 merge_context->GetOperands(), &result, s->logger, s->statistics,
@@ -1375,9 +1409,9 @@ static bool SaveValue(void* arg, const char* entry) {
         if (*(s->merge_in_progress)) {
           if (s->value || s->columns) {
             std::string result;
-            // `op_failure_scope` (an output parameter) is not provided (set to
-            // nullptr) since a failure must be propagated regardless of its
-            // value.
+            // `op_failure_scope` (an output parameter) is not provided
+            // (set to nullptr) since a failure must be propagated
+            // regardless of its value.
             *(s->status) = MergeHelper::TimedFullMerge(
                 merge_operator, s->key->user_key(), nullptr,
                 merge_context->GetOperands(), &result, s->logger, s->statistics,
@@ -1394,9 +1428,9 @@ static bool SaveValue(void* arg, const char* entry) {
               }
             }
           } else {
-            // We have found a final value (a base deletion) and have newer
-            // merge operands that we do not intend to merge. Nothing remains
-            // to be done so assign status to OK.
+            // We have found a final value (a base deletion) and have
+            // newer merge operands that we do not intend to merge.
+            // Nothing remains to be done so assign status to OK.
             *(s->status) = Status::OK();
           }
         } else {
@@ -1409,10 +1443,11 @@ static bool SaveValue(void* arg, const char* entry) {
         if (!merge_operator) {
           *(s->status) = Status::InvalidArgument(
               "merge_operator is not properly initialized.");
-          // Normally we continue the loop (return true) when we see a merge
-          // operand.  But in case of an error, we should stop the loop
-          // immediately and pretend we have found the value to stop further
-          // seek.  Otherwise, the later call will override this error status.
+          // Normally we continue the loop (return true) when we see a
+          // merge operand.  But in case of an error, we should stop the
+          // loop immediately and pretend we have found the value to stop
+          // further seek.  Otherwise, the later call will override this
+          // error status.
           *(s->found_final_value) = true;
           return false;
         }
@@ -1426,9 +1461,9 @@ static bool SaveValue(void* arg, const char* entry) {
                                merge_context->GetOperandsDirectionBackward())) {
           if (s->value || s->columns) {
             std::string result;
-            // `op_failure_scope` (an output parameter) is not provided (set to
-            // nullptr) since a failure must be propagated regardless of its
-            // value.
+            // `op_failure_scope` (an output parameter) is not provided
+            // (set to nullptr) since a failure must be propagated
+            // regardless of its value.
             *(s->status) = MergeHelper::TimedFullMerge(
                 merge_operator, s->key->user_key(), nullptr,
                 merge_context->GetOperands(), &result, s->logger, s->statistics,
@@ -1494,8 +1529,8 @@ bool MemTable::Get(const LookupKey& key, std::string* value,
     if (covering_seq > *max_covering_tombstone_seq) {
       *max_covering_tombstone_seq = covering_seq;
       if (timestamp) {
-        // Will be overwritten in SaveValue() if there is a point key with
-        // a higher seqno.
+        // Will be overwritten in SaveValue() if there is a point key
+        // with a higher seqno.
         timestamp->assign(range_del_iter->timestamp().data(),
                           range_del_iter->timestamp().size());
       }
@@ -1509,8 +1544,8 @@ bool MemTable::Get(const LookupKey& key, std::string* value,
   Slice user_key_without_ts = StripTimestampFromUserKey(key.user_key(), ts_sz);
   bool bloom_checked = false;
   if (bloom_filter_) {
-    // when both memtable_whole_key_filtering and prefix_extractor_ are set,
-    // only do whole key filtering for Get() to save CPU
+    // when both memtable_whole_key_filtering and prefix_extractor_ are
+    // set, only do whole key filtering for Get() to save CPU
     if (moptions_.memtable_whole_key_filtering) {
       may_contain = bloom_filter_->MayContain(user_key_without_ts);
       bloom_checked = true;
@@ -1589,9 +1624,10 @@ void MemTable::MultiGet(const ReadOptions& read_options, MultiGetRange* range,
   }
   PERF_TIMER_GUARD(get_from_memtable_time);
 
-  // For now, memtable Bloom filter is effectively disabled if there are any
-  // range tombstones. This is the simplest way to ensure range tombstones are
-  // handled. TODO: allow Bloom checks where max_covering_tombstone_seq==0
+  // For now, memtable Bloom filter is effectively disabled if there are
+  // any range tombstones. This is the simplest way to ensure range
+  // tombstones are handled. TODO: allow Bloom checks where
+  // max_covering_tombstone_seq==0
   bool no_range_del = read_options.ignore_range_deletions ||
                       is_range_del_table_empty_.load(std::memory_order_relaxed);
   MultiGetRange temp_range(*range, range->begin(), range->end());
@@ -1635,8 +1671,8 @@ void MemTable::MultiGet(const ReadOptions& read_options, MultiGetRange* range,
       if (covering_seq > iter->max_covering_tombstone_seq) {
         iter->max_covering_tombstone_seq = covering_seq;
         if (iter->timestamp) {
-          // Will be overwritten in SaveValue() if there is a point key with
-          // a higher seqno.
+          // Will be overwritten in SaveValue() if there is a point key
+          // with a higher seqno.
           iter->timestamp->assign(range_del_iter->timestamp().data(),
                                   range_del_iter->timestamp().size());
         }
@@ -1837,9 +1873,10 @@ Status MemTable::UpdateCallback(SequenceNumber seq, const Slice& key,
 size_t MemTable::CountSuccessiveMergeEntries(const LookupKey& key) {
   Slice memkey = key.memtable_key();
 
-  // A total ordered iterator is costly for some memtablerep (prefix aware
-  // reps). By passing in the user key, we allow efficient iterator creation.
-  // The iterator only needs to be ordered within the same user key.
+  // A total ordered iterator is costly for some memtablerep (prefix
+  // aware reps). By passing in the user key, we allow efficient iterator
+  // creation. The iterator only needs to be ordered within the same user
+  // key.
   std::unique_ptr<MemTableRep::Iterator> iter(
       table_->GetDynamicPrefixIterator());
   iter->Seek(key.internal_key(), memkey.data());

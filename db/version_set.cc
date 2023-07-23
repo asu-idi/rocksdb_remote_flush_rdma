@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
@@ -4933,10 +4934,8 @@ std::string Version::DebugString(bool hex, bool print_stats) const {
   return r;
 }
 
-void VersionSet::PackLocal(int sockfd) const {}
-void* VersionSet::UnPackLocal(int sockfd) {
-  void* mem = malloc(sizeof(VersionSet));
-}
+void VersionSet::PackLocal(int sockfd) const { assert(false); }
+void* VersionSet::UnPackLocal(int sockfd) { assert(false); }
 
 // this is used to batch writes to the manifest file
 struct VersionSet::ManifestWriter {

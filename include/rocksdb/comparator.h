@@ -25,6 +25,12 @@ class Slice;
 // Comparator and some internal data structures.
 class CompareInterface {
  public:
+  virtual void PackLocal(int sockfd) const {
+    LOG("CompareInterface::PackLocal");
+    assert(false);
+  };
+
+ public:
   virtual ~CompareInterface() {}
 
   // Three-way comparison.  Returns value:
@@ -46,6 +52,12 @@ class CompareInterface {
 // because RocksDB is not exception-safe. This could cause undefined behavior
 // including data loss, unreported corruption, deadlocks, and more.
 class Comparator : public Customizable, public CompareInterface {
+ public:
+  void PackLocal(int sockfd) const override {
+    LOG("Comparator::PackLocal");
+    assert(false);
+  }
+
  public:
   Comparator() : timestamp_size_(0) {}
 
