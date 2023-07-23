@@ -111,24 +111,29 @@ class MemTable {
  public:
   struct KeyComparator : public MemTableRep::KeyComparator {
    public:
-    void PackLocal(int sockfd) const {
+    void PackLocal(int sockfd) const override {
       LOG("KeyComparator::PackLocal");
       comparator.PackLocal(sockfd);
-      send(sockfd, reinterpret_cast<const void*>(this), sizeof(*this), 0);
       int64_t ret_val = 0;
+      send(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t), 0);
+      LOG("send KeyComparator");
       read(sockfd, &ret_val, sizeof(int64_t));
+      LOG("read KeyComparator");
     }
     static void* UnPackLocal(int sockfd) {
       LOG("KeyComparator::UnPackLocal");
       void* internal_key_comparator =
           InternalKeyComparator::UnPackLocal(sockfd);
-      void* mem = malloc(sizeof(KeyComparator));
+      void* mem = new KeyComparator(InternalKeyComparator());
       auto* kcmp = reinterpret_cast<KeyComparator*>(mem);
-      read(sockfd, mem, sizeof(KeyComparator));
+      int64_t ret_val = 0;
+      read(sockfd, &ret_val, sizeof(int64_t));
+      LOG("read KeyComparator");
       memcpy(reinterpret_cast<void*>(
                  const_cast<InternalKeyComparator*>(&kcmp->comparator)),
              internal_key_comparator, sizeof(InternalKeyComparator));
-      send(sockfd, &kcmp, sizeof(kcmp), 0);
+      send(sockfd, &kcmp, sizeof(int64_t), 0);
+      LOG("send KeyComparator");
       return mem;
     }
 

@@ -44,13 +44,24 @@
 #include <assert.h>
 #include <stdlib.h>
 
+#include <cstdlib>
+#ifdef __linux__
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <unistd.h>
+#endif  //__linux__
+
+#include <cxxabi.h>
+
 #include <algorithm>
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <ios>
 #include <type_traits>
 
+#include "db/memtable.h"
 #include "memory/allocator.h"
 #include "memory/concurrent_shared_arena.h"
 #include "memory/shared_mem_basic.h"
@@ -67,7 +78,239 @@
 namespace ROCKSDB_NAMESPACE {
 
 template <class Comparator>
+class InlineSkipList;
+
+template <class Comparator>
+class ReadOnlyInlineSkipList {
+ public:
+  void PackLocal(int sockfd) const;
+  static void* UnPackLocal(int sockfd);
+  void check_data() const;
+
+ public:
+  using DecodedKey =
+      typename std::remove_reference<Comparator>::type::DecodedType;
+  explicit ReadOnlyInlineSkipList(const InlineSkipList<Comparator>&,
+                                  const Comparator cmp);
+  ~ReadOnlyInlineSkipList() {
+    if (data_ != nullptr) {
+      LOG("destruct ReadOnlyInlineSkipList");
+      free(data_);
+    }
+  }
+  ReadOnlyInlineSkipList(const ReadOnlyInlineSkipList&) = delete;
+  ReadOnlyInlineSkipList& operator=(const ReadOnlyInlineSkipList&) = delete;
+
+  class Iterator {
+   public:
+    explicit Iterator(const ReadOnlyInlineSkipList* list);
+    void SetList(const ReadOnlyInlineSkipList* list);
+    bool Valid() const;
+    const char* key() const;
+    void Next();
+    void Prev();
+    void Seek(const char* target);
+    void SeekToFirst();
+
+   private:
+    const ReadOnlyInlineSkipList* list_;
+    void* now_;
+  };
+
+ private:
+  inline static const size_t magic = 0xdeadbeef;
+  // Comparator const compare_;
+  void* data_ = nullptr;
+  int64_t total_len_ = 0;
+};
+
+template <class Comparator>
+inline void ReadOnlyInlineSkipList<Comparator>::check_data() const {
+  Iterator iter(this);
+  iter.SeekToFirst();
+  while (iter.Valid()) {
+    size_t key_len = 0;
+    char* ptr = const_cast<char*>(iter.key());
+    ptr -= sizeof(size_t);
+    memcpy(&key_len, ptr, sizeof(size_t));
+    LOG("check_data:", key_len, ' ',
+        std::string(iter.key()).substr(0, key_len));
+    iter.Next();
+  }
+}
+
+template <class Comparator>
+inline void* ReadOnlyInlineSkipList<Comparator>::UnPackLocal(int sockfd) {
+  LOG("unpack ReadOnlyInlineSkipList");
+  // void* local_cmp_ = MemTable::KeyComparator::UnPackLocal(sockfd);
+  int64_t total_len = 0;
+  int64_t ret_val = 0;
+  read(sockfd, &total_len, sizeof(total_len));
+  void* data = malloc(total_len);
+  send(sockfd, &ret_val, sizeof(ret_val), 0);
+  read(sockfd, data, total_len);
+  send(sockfd, &ret_val, sizeof(ret_val), 0);
+  void* mem = malloc(sizeof(ReadOnlyInlineSkipList));
+  auto* local_readonly_skiplistrep =
+      reinterpret_cast<ReadOnlyInlineSkipList*>(mem);
+  read(sockfd, mem, sizeof(ReadOnlyInlineSkipList));
+  // local_readonly_skiplistrep->compare_ =
+  //     *reinterpret_cast<Comparator>(local_cmp_);
+  // char* hack_ptr =
+  // reinterpret_cast<char*>(local_readonly_skiplistrep->data_); hack_ptr -=
+  // sizeof(int*); memcpy(hack_ptr, &local_cmp_,
+  // sizeof(MemTable::KeyComparator*));
+
+  // memcpy(const_cast<void*>(reinterpret_cast<const void*>(
+  //            &const_cast<Comparator>(local_readonly_skiplistrep->compare_))),
+  //        local_cmp_, sizeof(MemTable::KeyComparator));
+  LOG("checkpoint1");
+  // memcpy(reinterpret_cast<void*>(const_cast<NONE>(
+  //            const_cast<Comparator>(local_readonly_skiplistrep->compare_))),
+  //        reinterpret_cast<void*>(const_cast<Comparator>(local_cmp_)),
+  //        sizeof(Comparator));
+  local_readonly_skiplistrep->data_ = data;
+  local_readonly_skiplistrep->total_len_ = total_len;
+  send(sockfd, &ret_val, sizeof(ret_val), 0);
+  LOG("unpack ReadOnlyInlineSkipList done");
+  return mem;
+}
+
+template <class Comparator>
+inline void ReadOnlyInlineSkipList<Comparator>::PackLocal(int sockfd) const {
+  LOG("pack ReadOnlyInlineSkipList");
+  // compare_.PackLocal(sockfd);
+  send(sockfd, &total_len_, sizeof(total_len_), 0);
+  int64_t ret_val = 0;
+  read(sockfd, &ret_val, sizeof(ret_val));
+  send(sockfd, data_, total_len_, 0);
+  ret_val = 0;
+  read(sockfd, &ret_val, sizeof(ret_val));
+  send(sockfd, reinterpret_cast<const void*>(this),
+       sizeof(ReadOnlyInlineSkipList<Comparator>), 0);
+  ret_val = 0;
+  read(sockfd, &ret_val, sizeof(ret_val));
+  LOG("pack ReadOnlyInlineSkipList::Comparator done");
+}
+
+template <class Comparator>
+inline ReadOnlyInlineSkipList<Comparator>::Iterator::Iterator(
+    const ReadOnlyInlineSkipList* list) {
+  SetList(list);
+}
+
+template <class Comparator>
+inline void ReadOnlyInlineSkipList<Comparator>::Iterator::SetList(
+    const ReadOnlyInlineSkipList* list) {
+  list_ = list;
+}
+
+template <class Comparator>
+inline bool ReadOnlyInlineSkipList<Comparator>::Iterator::Valid() const {
+  if (now_ == nullptr) return false;
+  size_t key_len = 0;
+  char* ptr = reinterpret_cast<char*>(now_);
+  memcpy(&key_len, ptr, sizeof(size_t));
+  return key_len != magic;
+}
+
+template <class Comparator>
+inline const char* ReadOnlyInlineSkipList<Comparator>::Iterator::key() const {
+  assert(Valid());
+  size_t key_len = 0;
+  char* ptr = reinterpret_cast<char*>(now_);
+  memcpy(&key_len, ptr, sizeof(size_t));
+  ptr += sizeof(size_t);
+  return ptr;
+}
+template <class Comparator>
+inline void ReadOnlyInlineSkipList<Comparator>::Iterator::Next() {
+  if (!Valid()) {
+    now_ = nullptr;
+    return;
+  }
+  size_t key_len = 0;
+  char* ptr = reinterpret_cast<char*>(now_);
+  memcpy(&key_len, ptr, sizeof(size_t));
+  ptr += (2 * sizeof(size_t) + key_len);
+  now_ = reinterpret_cast<void*>(ptr);
+}
+template <class Comparator>
+inline void ReadOnlyInlineSkipList<Comparator>::Iterator::Prev() {
+  if (!Valid()) {
+    now_ = nullptr;
+    return;
+  }
+  size_t key_len = 0;
+  char* ptr = reinterpret_cast<char*>(now_);
+  ptr -= sizeof(size_t);
+  memcpy(&key_len, ptr, sizeof(size_t));
+  ptr -= ((key_len != magic) ? (key_len + sizeof(size_t)) : 0);
+  now_ = reinterpret_cast<void*>(ptr);
+  return;
+}
+
+template <class Comparator>
+inline void ReadOnlyInlineSkipList<Comparator>::Iterator::Seek(
+    const char* target) {
+  assert(false);
+}
+
+template <class Comparator>
+inline void ReadOnlyInlineSkipList<Comparator>::Iterator::SeekToFirst() {
+  char* ptr = reinterpret_cast<char*>(list_->data_);
+  size_t magic_val = 0;
+  memcpy(&magic_val, ptr, sizeof(size_t));
+  assert(magic_val == magic);
+  ptr += sizeof(size_t);
+  now_ = reinterpret_cast<void*>(ptr);
+}
+
+template <class Comparator>
+ReadOnlyInlineSkipList<Comparator>::ReadOnlyInlineSkipList(
+    const InlineSkipList<Comparator>& raw_skip_list_, const Comparator cmp) {
+  LOG("construct ReadOnlyInlineSkipList");
+  typename InlineSkipList<Comparator>::Iterator iter(&raw_skip_list_);
+  int64_t total_len = 0;
+  iter.SeekToFirst();
+  while (iter.Valid()) {
+    const char* key_ptr = iter.key();
+    size_t key_len = cmp.decode_len(key_ptr);
+    total_len += (int64_t)(key_len + 2 * sizeof(size_t));
+    iter.Next();
+  }
+  data_ = malloc(total_len + 2 * sizeof(size_t));
+  total_len_ = sizeof(size_t) * 2 + total_len;
+  char* data_ptr = reinterpret_cast<char*>(data_);
+  memcpy(data_ptr, &magic, sizeof(size_t));
+  data_ptr += sizeof(size_t);
+  iter.SeekToFirst();
+  while (iter.Valid()) {
+    const char* key_ptr = iter.key();
+    LOG("decode keylen");
+    size_t key_len = cmp.decode_len(key_ptr);
+    LOG("decode keylen finish");
+    memcpy(data_ptr, &key_len, sizeof(size_t));
+    data_ptr += sizeof(size_t);
+    memcpy(data_ptr, key_ptr, key_len);
+    data_ptr += key_len;
+    memcpy(data_ptr, &key_len, sizeof(size_t));
+    data_ptr += sizeof(size_t);
+    iter.Next();
+  }
+  memcpy(data_ptr, &magic, sizeof(size_t));
+  LOG("construct ReadOnlyInlineSkipList done");
+}
+
+template <class Comparator>
 class InlineSkipList {
+  friend ReadOnlyInlineSkipList<Comparator>;
+
+ public:
+  ReadOnlyInlineSkipList<Comparator>* Clone() const {
+    return new ReadOnlyInlineSkipList<Comparator>(*this, compare_);
+  }
+
  private:
   struct Node;
   struct Splice;
@@ -114,12 +357,12 @@ class InlineSkipList {
   bool Insert(const char* key);
 
   // Inserts a key allocated by AllocateKey with a hint of last insert
-  // position in the skip-list. If hint points to nullptr, a new hint will be
-  // populated, which can be used in subsequent calls.
+  // position in the skip-list. If hint points to nullptr, a new hint will
+  // be populated, which can be used in subsequent calls.
   //
   // It can be used to optimize the workload where there are multiple groups
-  // of keys, and each key is likely to insert to a location close to the last
-  // inserted key in the same group. One example is sequential inserts.
+  // of keys, and each key is likely to insert to a location close to the
+  // last inserted key in the same group. One example is sequential inserts.
   //
   // REQUIRES: nothing that compares equal to key is currently in the list.
   // REQUIRES: no concurrent calls to any of inserts.
@@ -263,10 +506,10 @@ class InlineSkipList {
   // level in [0..max_height_-1], if prev is non-null.
   Node* FindLessThan(const char* key, Node** prev = nullptr) const;
 
-  // Return the latest node with a key < key on bottom_level. Start searching
-  // from root node on the level below top_level.
-  // Fills prev[level] with pointer to previous node at "level" for every
-  // level in [bottom_level..top_level-1], if prev is non-null.
+  // Return the latest node with a key < key on bottom_level. Start
+  // searching from root node on the level below top_level. Fills
+  // prev[level] with pointer to previous node at "level" for every level in
+  // [bottom_level..top_level-1], if prev is non-null.
   Node* FindLessThan(const char* key, Node** prev, Node* root, int top_level,
                      int bottom_level) const;
 
@@ -420,8 +663,6 @@ bool InlineSkipList<Comparator>::CHECKShared() const {
   while (iter.Valid()) {
     // TODO: check Node next[-1]
     const char* key_ptr = iter.key();
-    DecodedKey key_val =
-        *reinterpret_cast<DecodedKey*>(const_cast<char*>(key_ptr));
     ret =
         ret &&
         singleton<SharedContainer>::Instance().find(

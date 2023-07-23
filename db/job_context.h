@@ -301,36 +301,8 @@ inline void JobContext::UnPack() {
   }
   is_packaged_ = false;
 }
-inline void JobContext::blockUnusedDataForTest() {
-  void* mem = malloc(sizeof(std::vector<ObsoleteBlobFileInfo>));
-  memcpy(mem, &blob_delete_files, sizeof(std::vector<ObsoleteBlobFileInfo>));
-  memset(&blob_delete_files, 0x1, sizeof(std::vector<ObsoleteBlobFileInfo>));
-  block_.push_back(
-      std::make_pair(mem, sizeof(std::vector<ObsoleteBlobFileInfo>)));
-
-  mem = malloc(sizeof(job_id));
-  memcpy(mem, &job_id, sizeof(job_id));
-  memset(&job_id, 0x1, sizeof(job_id));
-  block_.push_back(std::make_pair(mem, sizeof(job_id)));
-  mem = malloc(sizeof(logs_to_free));
-  memcpy(mem, &logs_to_free, sizeof(logs_to_free));
-  memset(&logs_to_free, 0x1, sizeof(logs_to_free));
-  block_.push_back(std::make_pair(mem, sizeof(logs_to_free)));
-}
-inline void JobContext::unblockUnusedDataForTest() {
-  if (block_.empty()) {
-    LOG("JobContext::unblockUnusedDataForTest() block empty");
-    return;
-  }
-  memcpy(&blob_delete_files, block_[0].first, block_[0].second);
-  free(block_[0].first);
-  memcpy(&job_id, block_[1].first, block_[1].second);
-  free(block_[1].first);
-  memcpy(&logs_to_free, block_[2].first, block_[2].second);
-  free(block_[2].first);
-
-  block_.clear();
-}
+inline void JobContext::blockUnusedDataForTest() {}
+inline void JobContext::unblockUnusedDataForTest() {}
 inline void JobContext::CHECKShared() {}
 
 }  // namespace ROCKSDB_NAMESPACE

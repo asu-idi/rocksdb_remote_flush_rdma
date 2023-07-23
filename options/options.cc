@@ -147,8 +147,8 @@ void ColumnFamilyOptions::PackLocal(int sockfd) const {
     std::string ret = "/tmp/ColumnFamilyOptions-";
     for (int i = 0; i < 10; i++) {
       std::random_device rd;
-      std::mt19937 gen(rd());
-      ret += std::to_string(gen() % 10);
+      std::mt19937 generator(rd());
+      ret += std::to_string(generator() % 10);
     }
     return ret;
   };
@@ -204,8 +204,8 @@ void* ColumnFamilyOptions::Pack(std::shared_ptr<FileSystem> fs) {
     std::string ret = "/tmp/rocksdb_options_dir/ColumnFamilyOptions-";
     for (int i = 0; i < 10; i++) {
       std::random_device rd;
-      std::mt19937 gen(rd());
-      ret += std::to_string(gen() % 10);
+      std::mt19937 generator(rd());
+      ret += std::to_string(generator() % 10);
     }
     return ret;
   };

@@ -256,16 +256,16 @@ class InternalKeyComparator
  public:
   void PackLocal(int sockfd) const override {
     user_comparator_.PackLocal(sockfd);
-    send(sockfd, reinterpret_cast<const void*>(this),
-         sizeof(InternalKeyComparator), 0);
     int64_t ret_val = 0;
+    send(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t), 0);
     read(sockfd, &ret_val, sizeof(int64_t));
   }
   static void* UnPackLocal(int sockfd) {
     void* ucmp = UserComparatorWrapper::UnPackLocal(sockfd);
-    void* mem = malloc(sizeof(InternalKeyComparator));
-    read(sockfd, mem, sizeof(InternalKeyComparator));
-    auto ptr = reinterpret_cast<InternalKeyComparator*>(mem);
+    int64_t ret = 0;
+    read(sockfd, &ret, sizeof(int64_t));
+    auto ptr = new InternalKeyComparator();
+    void* mem = reinterpret_cast<void*>(ptr);
     memcpy(reinterpret_cast<void*>(&ptr->user_comparator_), ucmp,
            sizeof(UserComparatorWrapper));
     int ret_val = 1234;
@@ -275,7 +275,6 @@ class InternalKeyComparator
 
  private:
   UserComparatorWrapper user_comparator_;
-  bool is_packaged_ = false;
 
  public:
   // `InternalKeyComparator`s constructed with the default constructor are not
@@ -288,10 +287,6 @@ class InternalKeyComparator
   //    overhead, set `named` to false. In that case, `Name()` will return a
   //    generic name that is non-specific to the underlying comparator.
   explicit InternalKeyComparator(const Comparator* c) : user_comparator_(c) {}
-
-  void Pack();
-  void UnPack();
-  bool is_shared();
 
   virtual ~InternalKeyComparator() {}
 
