@@ -27,6 +27,7 @@ namespace {
 class FixedPrefixTransform : public SliceTransform {
  public:
   void PackLocal(int sockfd) const override {
+    LOG("FixedPrefixTransform::PackLocal: sockfd: ", sockfd);
     int64_t msg = 0;
     msg += (0x01);
     msg += (((int64_t)prefix_len_) << 8);
@@ -90,6 +91,7 @@ class FixedPrefixTransform : public SliceTransform {
 class CappedPrefixTransform : public SliceTransform {
  public:
   void PackLocal(int sockfd) const override {
+    LOG("CappedPrefixTransform::PackLocal");
     int64_t msg = 0;
     msg += (0x02);
     msg += (((int64_t)cap_len_) << 8);
@@ -150,6 +152,7 @@ class CappedPrefixTransform : public SliceTransform {
 class NoopTransform : public SliceTransform {
  public:
   void PackLocal(int sockfd) const override {
+    LOG("NoopTransform::PackLocal");
     int64_t msg = 0;
     msg += (0x03);
     send(sockfd, &msg, sizeof(msg), 0);

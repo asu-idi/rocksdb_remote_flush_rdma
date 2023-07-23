@@ -8,10 +8,13 @@
 
 #pragma once
 
+#include <cstdint>
+
 #include "memory/shared_mem_basic.h"
 #include "memory/shared_std.hpp"
 #include "monitoring/perf_context_imp.h"
 #include "rocksdb/comparator.h"
+#include "rocksdb/comparator_factory.h"
 #include "util/logger.hpp"
 
 namespace ROCKSDB_NAMESPACE {
@@ -19,6 +22,23 @@ namespace ROCKSDB_NAMESPACE {
 // Wrapper of user comparator, with auto increment to
 // perf_context.user_key_comparison_count.
 class UserComparatorWrapper {
+ public:
+  void PackLocal(int sockfd) const {
+    user_comparator_->PackLocal(sockfd);
+    send(sockfd, reinterpret_cast<const void*>(this), sizeof(*this), 0);
+    int64_t ret_val = 0;
+    read(sockfd, &ret_val, sizeof(int64_t));
+  }
+  static void* UnPackLocal(int sockfd) {
+    void* ucmp = ComparatorFactory::UnPackLocal(sockfd);
+    void* mem = malloc(sizeof(UserComparatorWrapper));
+    read(sockfd, mem, sizeof(UserComparatorWrapper));
+    auto* ret = reinterpret_cast<UserComparatorWrapper*>(mem);
+    ret->user_comparator_ = reinterpret_cast<Comparator*>(ucmp);
+    send(sockfd, &ret, sizeof(void*), 0);
+    return ret;
+  }
+
  public:
   // `UserComparatorWrapper`s constructed with the default constructor are not
   // usable and will segfault on any attempt to use them for comparisons.

@@ -10,6 +10,7 @@
 #pragma once
 #include <stdio.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -252,6 +253,26 @@ class InternalKeyComparator
     final
 #endif
     : public CompareInterface {
+ public:
+  void PackLocal(int sockfd) const override {
+    user_comparator_.PackLocal(sockfd);
+    send(sockfd, reinterpret_cast<const void*>(this),
+         sizeof(InternalKeyComparator), 0);
+    int64_t ret_val = 0;
+    read(sockfd, &ret_val, sizeof(int64_t));
+  }
+  static void* UnPackLocal(int sockfd) {
+    void* ucmp = UserComparatorWrapper::UnPackLocal(sockfd);
+    void* mem = malloc(sizeof(InternalKeyComparator));
+    read(sockfd, mem, sizeof(InternalKeyComparator));
+    auto ptr = reinterpret_cast<InternalKeyComparator*>(mem);
+    memcpy(reinterpret_cast<void*>(&ptr->user_comparator_), ucmp,
+           sizeof(UserComparatorWrapper));
+    int ret_val = 1234;
+    send(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t), 0);
+    return mem;
+  }
+
  private:
   UserComparatorWrapper user_comparator_;
   bool is_packaged_ = false;
@@ -352,8 +373,8 @@ class InternalKey {
   void Set(const Slice& _user_key_with_ts, SequenceNumber s, ValueType t,
            const Slice& ts) {
     ParsedInternalKey pik = ParsedInternalKey(_user_key_with_ts, s, t);
-    // Should not call pik.SetTimestamp() directly as it overwrites the buffer
-    // containing _user_key.
+    // Should not call pik.SetTimestamp() directly as it overwrites the
+    // buffer containing _user_key.
     SetFrom(pik, ts);
   }
 
@@ -491,7 +512,8 @@ class IterKey {
     size_t total_size = shared_len + non_shared_len;
 
     if (IsKeyPinned() /* key is not in buf_ */) {
-      // Copy the key from external memory to buf_ (copy shared_len bytes)
+      // Copy the key from external memory to buf_ (copy shared_len
+      // bytes)
       EnlargeBufferIfNeeded(total_size);
       memcpy(buf_, key_, shared_len);
     } else if (total_size > buf_size_) {
@@ -661,8 +683,8 @@ class IterKey {
   // allocated, until a larger key buffer is requested. In that case, we
   // reallocate buffer and delete the old one.
   void EnlargeBufferIfNeeded(size_t key_size) {
-    // If size is smaller than buffer size, continue using current buffer,
-    // or the static allocated one, as default
+    // If size is smaller than buffer size, continue using current
+    // buffer, or the static allocated one, as default
     if (key_size > buf_size_) {
       EnlargeBuffer(key_size);
     }
@@ -676,6 +698,7 @@ class IterKey {
 class InternalKeySliceTransform : public SliceTransform {
  public:
   void PackLocal(int sockfd) const override {
+    LOG("InternalKeySliceTransform::PackLocal");
     int64_t info = 0;
     info += (0x00);
     send(sockfd, &info, sizeof(info), 0);
@@ -837,7 +860,8 @@ inline int InternalKeyComparator::CompareKeySeq(const Slice& akey,
   //    decreasing sequence number
   int r = user_comparator_.Compare(ExtractUserKey(akey), ExtractUserKey(bkey));
   if (r == 0) {
-    // Shift the number to exclude the last byte which contains the value type
+    // Shift the number to exclude the last byte which contains the value
+    // type
     const uint64_t anum =
         DecodeFixed64(akey.data() + akey.size() - kNumInternalBytes) >> 8;
     const uint64_t bnum =
