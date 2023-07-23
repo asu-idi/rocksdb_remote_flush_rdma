@@ -49,6 +49,7 @@
 #include "rocksdb/iterator.h"
 #include "rocksdb/listener.h"
 #include "rocksdb/memtablerep.h"
+#include "rocksdb/memtablerep_pack_factory.h"
 #include "rocksdb/merge_operator.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/slice_transform.h"
@@ -267,25 +268,30 @@ void MemTable::UnPack() {
 }
 
 void* MemTable::UnPackLocal(int sock_fd) {
+  LOG("start MemTable::UnPackLocal");
   void* local_arena = BasicArenaFactory::UnPackLocal(sock_fd);
+  LOG("BasicArenaFactory::UnPackLocal(sock_fd) done");
   void* local_prefix_extractor = SliceTransformFactory::UnPackLocal(sock_fd);
+  LOG("SliceTransformFactory::UnPackLocal(sock_fd) done");
   void* local_comparator = KeyComparator::UnPackLocal(sock_fd);
+  LOG("KeyComparator::UnPackLocal(sock_fd) done");
   void* local_moptions = ImmutableMemTableOptions::UnPackLocal(sock_fd);
+  LOG("ImmutableMemTableOptions::UnPackLocal(sock_fd) done");
   // DynamicBloom* local_bloom_filter =
   //     DynamicBloom::UnPackLocal(sock_fd, local_arena);
-  // MemTableRep* local_table = MemTableRep::UnPackLocal(sock_fd,
-  // local_arena); MemTableRep* local_range_del_table =
-  //     MemTableRep::UnPackLocal(sock_fd, local_arena);
+  auto* local_table = reinterpret_cast<MemTableRep*>(
+      MemTableRepPackFactory::UnPackLocal(sock_fd));
+  LOG("local_table MemTableRepPackFactory::UnPackLocal(sock_fd) done");
+  auto* local_range_del_table = reinterpret_cast<MemTableRep*>(
+      MemTableRepPackFactory::UnPackLocal(sock_fd));
+  LOG("local_range_del_table MemTableRepPackFactory::UnPackLocal(sock_fd) "
+      "done");
   void* mem = malloc(sizeof(MemTable));
   auto* memtable = reinterpret_cast<MemTable*>(mem);
   read(sock_fd, mem, sizeof(MemTable));
   LOG("recv MemTable", mem);
-  send(sock_fd, &mem, sizeof(void*), 0);
-  LOG("send MemTable", mem);
 
   memtable->arena_ = reinterpret_cast<BasicArena*>(local_arena);
-  // memtable->prefix_extractor_ =
-  //     reinterpret_cast<SliceTransform*>(local_prefix_extractor);
   memcpy(reinterpret_cast<void*>(
              const_cast<SliceTransform**>(&memtable->prefix_extractor_)),
          reinterpret_cast<void*>(&local_prefix_extractor),
@@ -296,6 +302,13 @@ void* MemTable::UnPackLocal(int sock_fd) {
              const_cast<ImmutableMemTableOptions*>(&memtable->moptions_)),
          reinterpret_cast<void*>(local_moptions),
          sizeof(ImmutableMemTableOptions));
+  LOG("checkpoint:", std::hex, local_table, ' ', local_range_del_table,
+      std::dec);
+  memtable->table_ = local_table;
+  memtable->range_del_table_ = local_range_del_table;
+
+  send(sock_fd, &mem, sizeof(void*), 0);
+  LOG("send MemTable", mem);
   return mem;
 }
 
@@ -317,8 +330,10 @@ void* MemTable::PackLocal(int sock_fd) const {
   moptions_.PackLocal(sock_fd);
   LOG("moptions_.PackLocal(sock_fd) done");
   // bloom_filter_->PackLocal(sock_fd);
-  // table_->PackLocal(sock_fd);
-  // range_del_table_->PackLocal(sock_fd);
+  table_->PackLocal(sock_fd);
+  LOG("table_->PackLocal(sock_fd) done");
+  range_del_table_->PackLocal(sock_fd);
+  LOG("range_del_table_->PackLocal(sock_fd) done");
 
   send(sock_fd, reinterpret_cast<const char*>(this), sizeof(MemTable), 0);
   LOG("send MemTable", reinterpret_cast<const char*>(this));
@@ -601,9 +616,7 @@ class MemTableIterator : public InternalIterator {
       bloom_ = mem.bloom_filter_.get();
       iter_ = mem.table_->GetDynamicPrefixIterator(arena);
     } else {
-      LOG("rightnow");
       iter_ = mem.table_->GetIterator(arena);
-      LOG("rightnow");
     }
     status_.PermitUncheckedError();
   }
@@ -765,12 +778,8 @@ class MemTableIterator : public InternalIterator {
 InternalIterator* MemTable::NewIterator(const ReadOptions& read_options,
                                         Arena* arena) {
   assert(arena != nullptr);
-  LOG("");
   auto mem = arena->AllocateAligned(sizeof(MemTableIterator));
-  LOG("");
-  auto* test_ptr = new (mem) MemTableIterator(*this, read_options, arena);
-  LOG("");
-  return test_ptr;
+  return new (mem) MemTableIterator(*this, read_options, arena);
 }
 
 FragmentedRangeTombstoneIterator* MemTable::NewRangeTombstoneIterator(

@@ -555,6 +555,12 @@ namespace {
 // A hacky skip list mem table that triggers flush after number of entries.
 class SpecialMemTableRep : public MemTableRep {
  public:
+  void PackLocal(int sockfd) const override {
+    assert(false);
+    memtable_->PackLocal(sockfd);
+  }
+
+ public:
   explicit SpecialMemTableRep(Allocator* allocator, MemTableRep* memtable,
                               int num_entries_flush)
       : MemTableRep(allocator),

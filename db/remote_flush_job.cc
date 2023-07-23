@@ -223,8 +223,8 @@ void* RemoteFlushJob::UnPackLocal(int worker_socket_fd, DBImpl* remote_db) {
 
   send(worker_socket_fd, &mem, sizeof(int64_t), 0);
   LOG("worker send ", std::hex, mem, std::dec);
-  return mem;
   LOG("RemoteFlushJob::UnPackLocal done");
+  return mem;
 }
 void RemoteFlushJob::PackRemote(int worker_socket_fd) const {
   LOG("RemoteFlushJob::PackRemote thread_id:", std::this_thread::get_id(),
@@ -244,7 +244,7 @@ void* RemoteFlushJob::UnPackRemote(int server_socket_fd) {
       "UnPack data from remote side");
   void* mem = malloc(sizeof(install_info));
   auto* install_info_ = reinterpret_cast<install_info*>(mem);
-  read(server_socket_fd, &install_info_, sizeof(install_info));
+  read(server_socket_fd, install_info_, sizeof(install_info));
   LOG("server recv ", std::hex, &install_info_, std::dec);
   // unpack install_info
   send(server_socket_fd, &install_info_, sizeof(int64_t), 0);
@@ -1018,7 +1018,6 @@ Status RemoteFlushJob::WriteLevel0Table() {
       //     "\n", cfd_->GetName().c_str(), job_context_->job_id,
       //     m->GetNextLogNumber());
       memtables.push_back(m->NewIterator(ro, &arena));
-      LOG("");
       auto* range_del_iter = m->NewRangeTombstoneIterator(
           ro, kMaxSequenceNumber, true /* immutable_memtable */);
       if (range_del_iter != nullptr) {
@@ -1026,7 +1025,7 @@ Status RemoteFlushJob::WriteLevel0Table() {
       }
       total_num_entries += m->num_entries();
     }
-
+    LOG("rightnow");
     {
       ScopedArenaIterator iter(
           NewMergingIterator(&cfd_->internal_comparator(), memtables.data(),

@@ -779,10 +779,10 @@ void* ImmutableDBOptions::Pack() {
   std::function<std::string()> gen = []() {
     std::random_device rd;
     std::string now = "/tmp/rocksdb_options_dir/ImmutableDBOptions-";
-    std::mt19937 gen(rd());
+    std::mt19937 generator(rd());
     std::uniform_int_distribution<> dis(0, 9);
     for (int i = 1; i <= 10; i++) {
-      now += std::to_string(dis(gen));
+      now += std::to_string(dis(generator));
     }
     return now;
   };

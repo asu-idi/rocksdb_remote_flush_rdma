@@ -1004,7 +1004,7 @@ void ColumnFamilyData::Pack() {
     LOG("ColumnFamilyData is already packaged");
     return;
   }
-  internal_comparator_.Pack();
+  // internal_comparator_.Pack();
   ioptions_.Pack(const_cast<ColumnFamilyOptions&>(initial_cf_options_));
   is_packaged_ = true;
 }
@@ -1014,7 +1014,7 @@ void ColumnFamilyData::UnPack() {
     LOG("ColumnFamilyData is already unpackaged");
     return;
   }
-  internal_comparator_.UnPack();
+  // internal_comparator_.UnPack();
   ioptions_.UnPack(const_cast<ColumnFamilyOptions&>(initial_cf_options_));
   is_packaged_ = false;
 }
