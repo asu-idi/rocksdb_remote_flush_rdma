@@ -9,9 +9,13 @@
 
 #include "db/version_edit.h"
 
+#include <sys/socket.h>
+
+#include <array>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <utility>
 
@@ -21,6 +25,7 @@
 #include "logging/event_logger.h"
 #include "memory/shared_mem_basic.h"
 #include "memory/shared_package.h"
+#include "rocksdb/file_checksum.h"
 #include "rocksdb/slice.h"
 #include "table/unique_id_impl.h"
 #include "test_util/sync_point.h"
@@ -36,69 +41,80 @@ uint64_t PackFileNumberAndPathId(uint64_t number, uint64_t path_id) {
   return number | (path_id * (kFileNumberMask + 1));
 }
 
-bool FileMetaData::CHECKShared() {
-  bool ret = singleton<SharedContainer>::Instance().find(
-                 reinterpret_cast<void*>(this), sizeof(FileMetaData)) &&
-             is_packaged_;
-  return ret;
-}
-void FileMetaData::Pack() {
-  if (is_packaged_) return;
-  // InternalKey && std::string && unique_id && FileDescriptor
-  string_package_.push_back(std::make_pair(shm_package::Pack(*smallest.rep()),
-                                           smallest.rep()->length()));
-  string_package_.push_back(std::make_pair(shm_package::Pack(*largest.rep()),
-                                           largest.rep()->length()));
-  string_package_.push_back(
-      std::make_pair(shm_package::Pack(file_checksum), file_checksum.length()));
-  string_package_.push_back(
-      std::make_pair(shm_package::Pack(file_checksum_func_name),
-                     file_checksum_func_name.length()));
-  std::pair<std::string, std::string> unique_id_pair = std::make_pair(
-      std::to_string(unique_id[0]), std::to_string(unique_id[1]));
-  string_package_.push_back(std::make_pair(
-      shm_package::Pack(unique_id_pair.first), unique_id_pair.first.length()));
-  string_package_.push_back(
-      std::make_pair(shm_package::Pack(unique_id_pair.second),
-                     unique_id_pair.second.length()));
-  smallest.Clear();
-  largest.Clear();
-  file_checksum.clear();
-  file_checksum_func_name.clear();
-  // TODO: block fd.table_reader
+void FileMetaData::PackLocal(int sockfd) const {
+  LOG("server FileMetaData::PackLocal");
+  fd.PackLocal(sockfd);
+  LOG("server FileMetaData::PackLocal fd");
+  assert(table_reader_handle == nullptr);
+  assert(file_checksum == kUnknownFileChecksum);
+  assert(file_checksum_func_name == kUnknownFileChecksumFuncName);
 
-  is_packaged_ = true;
-}
-void FileMetaData::UnPack() {
-  if (!is_packaged_) return;
-  assert(string_package_.size() == 6);
-  // InternalKey && std::string && unique_id && FileDescriptor
-  std::string now;
-  shm_package::Unpack(string_package_[0].first, now, string_package_[0].second);
-  smallest.SharedSet(now);
-  now.clear();
-  shm_package::Unpack(string_package_[1].first, now, string_package_[1].second);
-  largest.SharedSet(now);
-  now.clear();
-  shm_package::Unpack(string_package_[2].first, file_checksum,
-                      string_package_[2].second);
-  shm_package::Unpack(string_package_[3].first, file_checksum_func_name,
-                      string_package_[3].second);
-  shm_package::Unpack(string_package_[4].first, now, string_package_[4].second);
-  uint64_t first = std::stoull(now);
-  unique_id[0] = first;
-  now.clear();
-  shm_package::Unpack(string_package_[5].first, now, string_package_[5].second);
-  uint64_t second = std::stoull(now);
-  unique_id[1] = second;
-  now.clear();
+  int64_t ret_val = 0;
+  ret_val = smallest.size();
+  send(sockfd, &ret_val, sizeof(int64_t), 0);
+  ret_val = 0;
+  read(sockfd, &ret_val, sizeof(int64_t));
+  send(sockfd, smallest.get_rep().data(), smallest.size(), 0);
+  ret_val = 0;
+  read(sockfd, &ret_val, sizeof(int64_t));
+  ret_val = largest.size();
+  send(sockfd, &ret_val, sizeof(int64_t), 0);
+  ret_val = 0;
+  read(sockfd, &ret_val, sizeof(int64_t));
+  send(sockfd, largest.get_rep().data(), largest.size(), 0);
+  ret_val = 0;
+  read(sockfd, &ret_val, sizeof(int64_t));
 
-  string_package_.clear();
-  is_packaged_ = false;
+  uint64_t uid[2] = {unique_id.at(0), unique_id.at(1)};
+  send(sockfd, uid, sizeof(uint64_t) * 2, 0);
+  ret_val = 0;
+  read(sockfd, &ret_val, sizeof(int64_t));
+  send(sockfd, reinterpret_cast<const char*>(this), sizeof(FileMetaData), 0);
+  ret_val = 0;
+  read(sockfd, &ret_val, sizeof(int64_t));
 }
 
-void FileMetaData::blockUnusedDataForTest() {
-  // TODO: block Cache::Handle* table_reader_handle
+void* FileMetaData::UnPackLocal(int sockfd) {
+  LOG("client FileMetaData::UnPackLocal");
+  void* local_fd = FileDescriptor::UnPackLocal(sockfd);
+  int64_t len = 0, len2 = 0;
+  read(sockfd, &len, sizeof(int64_t));
+  send(sockfd, &len, sizeof(int64_t), 0);
+  void* data = malloc(len);
+  read(sockfd, data, len);
+  send(sockfd, &len, sizeof(int64_t), 0);
+
+  len2 = 0;
+  read(sockfd, &len2, sizeof(int64_t));
+  send(sockfd, &len2, sizeof(int64_t), 0);
+  void* data2 = malloc(len2);
+  read(sockfd, data2, len2);
+  send(sockfd, &len2, sizeof(int64_t), 0);
+
+  void* local_uid = malloc(2 * sizeof(uint64_t));
+  read(sockfd, local_uid, 2 * sizeof(uint64_t));
+  send(sockfd, &local_uid, sizeof(int64_t), 0);
+
+  void* mem = malloc(sizeof(FileMetaData));
+  read(sockfd, mem, sizeof(FileMetaData));
+  auto ptr = reinterpret_cast<FileMetaData*>(mem);
+  ptr->fd = *reinterpret_cast<FileDescriptor*>(local_fd);
+  new (&ptr->file_checksum) std::string(kUnknownFileChecksum);
+  new (&ptr->file_checksum_func_name) std::string(kUnknownFileChecksumFuncName);
+  // new (&ptr->smallest.SharedSet(const std::string &now)) InternalKey();
+  ptr->smallest.SharedSet(
+      std::string(reinterpret_cast<const char*>(data)).substr(0, len));
+  ptr->largest.SharedSet(
+      std::string(reinterpret_cast<const char*>(data2)).substr(0, len2));
+
+  LOG("client FileMetaData::UnPackLocal unique_id");
+  new (&ptr->unique_id) std::array<uint64_t, 2>();
+  ptr->unique_id.at(0) = reinterpret_cast<uint64_t*>(local_uid)[0];
+  ptr->unique_id.at(1) = reinterpret_cast<uint64_t*>(local_uid)[1];
+  LOG("client FileMetaData::UnPackLocal unique_id");
+
+  send(sockfd, &mem, sizeof(int64_t), 0);
+  return mem;
 }
 
 FileMetaData* FileMetaData::CreateSharedMetaData() {
@@ -185,11 +201,12 @@ void VersionEdit::Pack() {
   full_history_ts_low_.clear();
   // CompactCursors std::vector
   for (auto& iter : compact_cursors_) {
-    std::string first = std::to_string(iter.first), second = *iter.second.rep();
-    compact_cursors_package_.push_back(
-        std::make_pair(shm_package::Pack(first), first.length()));
-    compact_cursors_package_.push_back(
-        std::make_pair(shm_package::Pack(second), second.length()));
+    // std::string first = std::to_string(iter.first), second =
+    // *iter.second.rep();
+    // compact_cursors_package_.push_back(
+    //     std::make_pair(shm_package::Pack(first), first.length()));
+    // compact_cursors_package_.push_back(
+    //     std::make_pair(shm_package::Pack(second), second.length()));
   }
   compact_cursors_.clear();
   for (auto& iter : deleted_files_) {
@@ -209,7 +226,7 @@ void VersionEdit::Pack() {
     FileMetaData* second = FileMetaData::CreateSharedMetaData();
     // TODO(copy): copy from/to shm and pack, change this when use rdma
     *second = iter.second;
-    second->Pack();
+    // second->Pack();
     new_files_package_.push_back(
         std::make_pair(reinterpret_cast<void*>(second), sizeof(FileMetaData)));
   }
@@ -260,7 +277,7 @@ void VersionEdit::UnPack() {
     int fir = std::stoi(first);
     auto* second =
         reinterpret_cast<FileMetaData*>(new_files_package_[i + 1].first);
-    second->UnPack();
+    // second->UnPack();
     // TODO(copy): copy from/to shm and pack, change this when use rdma
     new_files_.push_back(std::make_pair(fir, *second));
     second->~FileMetaData();

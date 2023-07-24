@@ -15,6 +15,11 @@ namespace ROCKSDB_NAMESPACE {
 class SystemClock;
 
 struct ImmutableDBOptions {
+ public:
+  void PackLocal(int sockfd) const;
+  static void* UnPackLocal(int sockfd);
+
+ public:
   static const char* kName() { return "ImmutableDBOptions"; }
   ImmutableDBOptions();
   explicit ImmutableDBOptions(const DBOptions& options);

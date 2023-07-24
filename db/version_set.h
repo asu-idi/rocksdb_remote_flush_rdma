@@ -1571,7 +1571,7 @@ class VersionSet {
   SystemClock* const clock_;
   const std::string dbname_;  // TODO
   std::string db_id_;
-  const ImmutableDBOptions* const db_options_;  // DONE
+  const ImmutableDBOptions* const db_options_;
   std::atomic<uint64_t> next_file_number_;
   // Any WAL number smaller than this should be ignored during recovery,
   // and is qualified for being deleted.

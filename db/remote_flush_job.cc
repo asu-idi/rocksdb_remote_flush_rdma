@@ -18,6 +18,7 @@
 #include <iterator>
 #include <thread>
 
+#include "db/column_family.h"
 #include "db/db_impl/db_impl.h"
 #include "db/retrieve_info.h"
 #include "db/seqno_to_time_mapping.h"
@@ -151,7 +152,16 @@ void RemoteFlushJob::PackLocal(int server_socket_fd) const {
   seqno_to_time_mapping_.PackLocal(server_socket_fd);
   // Pack cfd_
   cfd_->PackLocal(server_socket_fd);
-  // versions_->PackLocal(server_socket_fd);
+  versions_->PackLocal(server_socket_fd);
+  job_context_->PackLocal(server_socket_fd);
+  meta_.PackLocal(server_socket_fd);
+  size_t len = full_history_ts_low_.size();
+  send(server_socket_fd, &len, sizeof(size_t), 0);
+  read(server_socket_fd, &len, sizeof(size_t));
+  if (!full_history_ts_low_.empty()) {
+    send(server_socket_fd, full_history_ts_low_.data(), len, 0);
+    read(server_socket_fd, &len, sizeof(size_t));
+  }
 
   send(server_socket_fd, reinterpret_cast<const void*>(this),
        sizeof(RemoteFlushJob), 0);
@@ -194,7 +204,19 @@ void* RemoteFlushJob::UnPackLocal(int worker_socket_fd, DBImpl* remote_db) {
   void* seqno_to_time_mapping_ret =
       SeqnoToTimeMapping::UnPackLocal(worker_socket_fd);
   void* cfd_ret = ColumnFamilyData::UnPackLocal(worker_socket_fd);
-  // void* versions_ret = VersionSet::UnPackLocal(worker_socket_fd);
+  void* versions_ret = VersionSet::UnPackLocal(worker_socket_fd);
+  void* job_context_ret = JobContext::UnPackLocal(worker_socket_fd);
+  void* meta_ret = FileMetaData::UnPackLocal(worker_socket_fd);
+
+  size_t ts_len = 0;
+  read(worker_socket_fd, &ts_len, sizeof(size_t));
+  send(worker_socket_fd, &ts_len, sizeof(size_t), 0);
+  std::string local_ts_low;
+  local_ts_low.resize(ts_len);
+  if (local_ts_low.size()) {
+    read(worker_socket_fd, local_ts_low.data(), local_ts_low.size());
+    send(worker_socket_fd, &ts_len, sizeof(size_t), 0);
+  }
 
   read(worker_socket_fd, mem, sizeof(RemoteFlushJob));
   LOG("worker recv ", std::hex, mem, std::dec);
@@ -205,10 +227,17 @@ void* RemoteFlushJob::UnPackLocal(int worker_socket_fd, DBImpl* remote_db) {
   local_handler->db_mutex_ = new InstrumentedMutex();
   local_handler->db_mutex_->Unlock();
   local_handler->mems_ = autovector<MemTable*>();
+  local_handler->job_context_ = reinterpret_cast<JobContext*>(job_context_ret);
+  LOG("local_handler copy FileMetaData");
+  memcpy(reinterpret_cast<void*>(&local_handler->meta_), meta_ret,
+         sizeof(FileMetaData));
+  //  todo: fix copy
+  // local_handler->meta_ = *reinterpret_cast<FileMetaData*>(meta_ret);
   for (auto& memtable : mems_temp) {
     LOG("worker copy data: ", memtable);
     local_handler->mems_.emplace_back(memtable);
   }
+  LOG("");
   char* ptr = reinterpret_cast<char*>(&local_handler->seqno_to_time_mapping_);
   ptr -= sizeof(SeqnoToTimeMapping*);
   memcpy(reinterpret_cast<void*>(ptr),
@@ -218,9 +247,18 @@ void* RemoteFlushJob::UnPackLocal(int worker_socket_fd, DBImpl* remote_db) {
              &(local_handler->seqno_to_time_mapping_))),
          reinterpret_cast<void*>(&seqno_to_time_mapping_ret),
          sizeof(SeqnoToTimeMapping*));
-
   local_handler->cfd_ = reinterpret_cast<ColumnFamilyData*>(cfd_ret);
-
+  local_handler->versions_ = reinterpret_cast<VersionSet*>(versions_ret);
+  new (const_cast<std::string*>(&local_handler->full_history_ts_low_))
+      std::string(local_ts_low);
+  char* hack_dboption_ptr = reinterpret_cast<char*>(&local_handler->cfd_);
+  hack_dboption_ptr += sizeof(ColumnFamilyData*);
+  void* local_db_options = const_cast<void*>(
+      reinterpret_cast<const void*>(local_handler->versions_->db_options()));
+  memcpy(reinterpret_cast<void*>(hack_dboption_ptr),
+         reinterpret_cast<void*>(&local_db_options),
+         sizeof(ImmutableDBOptions*));
+  LOG("");
   send(worker_socket_fd, &mem, sizeof(int64_t), 0);
   LOG("worker send ", std::hex, mem, std::dec);
   LOG("RemoteFlushJob::UnPackLocal done");
@@ -1025,11 +1063,16 @@ Status RemoteFlushJob::WriteLevel0Table() {
       }
       total_num_entries += m->num_entries();
     }
-    LOG("rightnow");
+
     {
       ScopedArenaIterator iter(
           NewMergingIterator(&cfd_->internal_comparator(), memtables.data(),
                              static_cast<int>(memtables.size()), &arena));
+      LOG("check infoLog: ",
+          db_options_.info_log == nullptr ? "null" : "not null");
+      if (db_options_.info_log != nullptr) {
+        LOG("rightnow:", db_options_.info_log->GetInfoLogLevel());
+      }
       ROCKS_LOG_INFO(db_options_.info_log,
                      "[%s] [JOB %d] Level-0 flush table #%" PRIu64 ": started",
                      cfd_->GetName().c_str(), job_context_->job_id,
@@ -1066,9 +1109,10 @@ Status RemoteFlushJob::WriteLevel0Table() {
       uint64_t memtable_payload_bytes = 0;
       uint64_t memtable_garbage_bytes = 0;
       IOStatus io_s;
-
+      LOG("rightnow");
       const std::string* const full_history_ts_low =
           (full_history_ts_low_.empty()) ? nullptr : &full_history_ts_low_;
+      LOG("rightnow");
       TableBuilderOptions tboptions(
           *cfd_->ioptions(), mutable_cf_options_, cfd_->internal_comparator(),
           cfd_->int_tbl_prop_collector_factories(), output_compression_,
@@ -1077,6 +1121,7 @@ Status RemoteFlushJob::WriteLevel0Table() {
           TableFileCreationReason::kFlush, oldest_key_time, current_time,
           db_id_, db_session_id_, 0 /* target_file_size */,
           meta_.fd.GetNumber());
+      LOG("rightnow");
       const SequenceNumber job_snapshot_seq =
           job_context_->GetJobSnapshotSequence();
       LOG("RemoteFlushJob::WriteLevel0Table: BuildTable");

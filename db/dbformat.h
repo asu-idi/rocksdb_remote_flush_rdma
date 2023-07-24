@@ -385,11 +385,12 @@ class InternalKey {
 
   void Clear() { rep_.clear(); }
   // Intended only for use by Pack() & UnPack() methods
-  void SharedSet(const std::string& now) { rep_ = now; }
+  void SharedSet(const std::string& now) { new (&rep_) std::string(now); }
 
   // The underlying representation.
   // Intended only to be used together with ConvertFromUserKey().
   std::string* rep() { return &rep_; }
+  std::string get_rep() const { return rep_; }
 
   // Assuming that *rep() contains a user key, this method makes internal key
   // out of it in-place. This saves a memcpy compared to Set()/SetFrom().

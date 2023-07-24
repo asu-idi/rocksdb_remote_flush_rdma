@@ -7,6 +7,7 @@
 
 #include <cassert>
 #include <cinttypes>
+#include <cstdint>
 #include <functional>
 #include <random>
 #include <vector>
@@ -25,6 +26,7 @@
 #include "rocksdb/env.h"
 #include "rocksdb/file_system.h"
 #include "rocksdb/listener.h"
+#include "rocksdb/options.h"
 #include "rocksdb/rate_limiter.h"
 #include "rocksdb/sst_file_manager.h"
 #include "rocksdb/statistics.h"
@@ -772,6 +774,53 @@ ImmutableDBOptions::ImmutableDBOptions(const DBOptions& options)
   clock = env->GetSystemClock().get();
   logger = info_log.get();
   stats = statistics.get();
+}
+
+void ImmutableDBOptions::PackLocal(int sockfd) const {
+  std::function<std::string()> gen = []() {
+    std::string ret = "/tmp/DBOptions-";
+    for (int i = 0; i < 10; i++) {
+      std::random_device rd;
+      std::mt19937 generator(rd());
+      ret += std::to_string(generator() % 10);
+    }
+    return ret;
+  };
+  std::string file_name = gen();
+  DBOptions dboptions = BuildDBOptions(*this, MutableDBOptions());
+  std::vector<std::string> cf_names_;
+  std::vector<ColumnFamilyOptions> cf_opts_;
+  cf_names_.push_back("default");
+  cf_opts_.push_back(ColumnFamilyOptions());
+  Status ret = PersistRocksDBOptions(dboptions, cf_names_, cf_opts_, file_name,
+                                     fs.get());
+  assert(ret.ok());
+  send(sockfd, file_name.c_str(), file_name.length(), 0);
+  LOG("Packaging ImmutableDBOptions to file:", file_name.c_str());
+  int64_t ret_val = 0;
+  read(sockfd, &ret_val, sizeof(int64_t));
+  LOG("Packaging ImmutableDBOptions");
+}
+
+void* ImmutableDBOptions::UnPackLocal(int sockfd) {
+  size_t recv_length = std::string("/tmp/DBOptions-").length() + 10;
+  void* mem = malloc(recv_length);
+  read(sockfd, mem, recv_length);
+  std::string file_name =
+      std::string(reinterpret_cast<char*>(mem)).substr(0, recv_length);
+  LOG("UnPackaging ImmutableDBOptions from file:", file_name.c_str());
+  DBOptions db_options;
+  ConfigOptions config_options;
+  std::vector<ColumnFamilyDescriptor> loaded_cf_descs;
+  Status ret = LoadOptionsFromFile(config_options, file_name, &db_options,
+                                   &loaded_cf_descs);
+  assert(ret.ok());
+  auto* immutable_dboptions = new ImmutableDBOptions();
+  *immutable_dboptions = BuildImmutableDBOptions(db_options);
+  LOG("UnPackaging ImmutableDBOptions");
+  int64_t ret_val = 0;
+  send(sockfd, &ret_val, sizeof(int64_t), 0);
+  return reinterpret_cast<void*>(immutable_dboptions);
 }
 
 void* ImmutableDBOptions::Pack() {

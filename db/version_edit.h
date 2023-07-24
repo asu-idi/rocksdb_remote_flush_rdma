@@ -9,7 +9,9 @@
 
 #pragma once
 #include <algorithm>
+#include <cassert>
 #include <cstddef>
+#include <cstdint>
 #include <set>
 #include <string>
 #include <utility>
@@ -120,6 +122,24 @@ extern uint64_t PackFileNumberAndPathId(uint64_t number, uint64_t path_id);
 // The behavior is undefined when a copied of the structure is used when the
 // file is not in any live version any more.
 struct FileDescriptor {
+ public:
+  void PackLocal(int sockfd) const {
+    send(sockfd, reinterpret_cast<const void*>(this), sizeof(FileDescriptor),
+         0);
+    int64_t ret_val = 0;
+    read(sockfd, &ret_val, sizeof(ret_val));
+  }
+  static void* UnPackLocal(int sockfd) {
+    void* mem = malloc(sizeof(FileDescriptor));
+    read(sockfd, mem, sizeof(FileDescriptor));
+    int64_t ret_val = 0;
+    send(sockfd, &ret_val, sizeof(ret_val), 0);
+    auto* ptr = reinterpret_cast<FileDescriptor*>(mem);
+    assert(ptr->table_reader == nullptr);
+    return mem;
+  }
+
+ public:
   // Table reader in table_reader_handle
   TableReader* table_reader;
   uint64_t packed_number_and_path_id;
@@ -192,6 +212,11 @@ struct FileSampledStats {
 };
 
 struct FileMetaData {
+ public:
+  void PackLocal(int sockfd) const;
+  static void* UnPackLocal(int sockfd);
+
+ public:
   FileDescriptor fd;
   InternalKey smallest;  // Smallest internal key served by table
   InternalKey largest;   // Largest internal key served by table
@@ -259,13 +284,6 @@ struct FileMetaData {
   // SST unique id
   UniqueId64x2 unique_id{};
 
-  bool is_packaged_ = false;
-  shm_std::shared_vector<std::pair<void*, size_t>> string_package_;
-
-  bool CHECKShared();
-  void Pack();
-  void UnPack();
-  void blockUnusedDataForTest();
   static FileMetaData* CreateSharedMetaData();
   static FileMetaData* CreateSharedMetaData(
       uint64_t file, uint32_t file_path_id, uint64_t file_size,
@@ -712,7 +730,7 @@ class VersionEdit {
   BlobFileGarbages blob_file_garbages_;    // TODO
 
   WalAdditions wal_additions_;  // TODO
-  WalDeletion wal_deletion_;//TODO
+  WalDeletion wal_deletion_;    // TODO
 
   // Each version edit record should have column_family_ set
   // If it's not set, it is default (0)
