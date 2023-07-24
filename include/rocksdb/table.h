@@ -671,7 +671,6 @@ struct BlockBasedTablePropertyNames {
 extern TableFactory* NewBlockBasedTableFactory(
     const BlockBasedTableOptions& table_options = BlockBasedTableOptions());
 
-
 enum EncodingType : char {
   // Always write full keys without any special encoding.
   kPlain,
@@ -827,7 +826,6 @@ struct CuckooTableOptions {
 extern TableFactory* NewCuckooTableFactory(
     const CuckooTableOptions& table_options = CuckooTableOptions());
 
-
 class RandomAccessFileReader;
 
 // A base class for table factories.
@@ -922,6 +920,5 @@ extern TableFactory* NewAdaptiveTableFactory(
     std::shared_ptr<TableFactory> block_based_table_factory = nullptr,
     std::shared_ptr<TableFactory> plain_table_factory = nullptr,
     std::shared_ptr<TableFactory> cuckoo_table_factory = nullptr);
-
 
 }  // namespace ROCKSDB_NAMESPACE

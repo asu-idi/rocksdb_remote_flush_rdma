@@ -5,6 +5,10 @@
 
 #pragma once
 
+#ifdef __linux__
+#include <sys/socket.h>
+#endif
+
 #include "rocksdb/table.h"
 #include "util/gflags_compat.h"
 #include "util/random.h"
@@ -51,6 +55,16 @@ class DbStressTablePropertiesCollector : public TablePropertiesCollector {
 // `DbStressTablePropertiesCollectorFactory`s.
 class DbStressTablePropertiesCollectorFactory
     : public TablePropertiesCollectorFactory {
+ public:
+  void PackLocal(int sockfd) const override {
+    size_t msg_len = sizeof(size_t) + sizeof(size_t) * 2 + sizeof(double);
+    char* msg = reinterpret_cast<char*>(malloc(msg_len));
+    *reinterpret_cast<size_t*>(msg) = 1;
+    send(sockfd, msg, msg_len, 0);
+    size_t ret_val = 0;
+    read(sockfd, &ret_val, sizeof(ret_val));
+  }
+
  public:
   virtual TablePropertiesCollector* CreateTablePropertiesCollector(
       TablePropertiesCollectorFactory::Context /* context */) override {

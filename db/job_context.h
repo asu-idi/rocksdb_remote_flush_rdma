@@ -265,6 +265,7 @@ struct JobContext {
 inline void JobContext::PackLocal(int sockfd) const {
   LOG("JobContext::PackLocal");
   send(sockfd, reinterpret_cast<const void*>(this), sizeof(JobContext), 0);
+  assert(job_snapshot.get() == nullptr);
   int64_t ret_val = 0;
   read(sockfd, &ret_val, sizeof(int64_t));
 }

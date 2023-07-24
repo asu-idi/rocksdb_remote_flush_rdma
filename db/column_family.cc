@@ -58,6 +58,7 @@
 #include "rocksdb/table.h"
 #include "rocksdb/write_buffer_manager.h"
 #include "table/merging_iterator.h"
+#include "table/table_properties_collector_pack_factory.h"
 #include "trace_replay/trace_replay.h"
 #include "util/autovector.h"
 #include "util/cast_util.h"
@@ -974,6 +975,18 @@ void* ColumnFamilyData::PackLocal(int sockfd) const {
   initial_cf_options_.PackLocal(sockfd);
   current_->PackLocal(sockfd);
   ioptions_.PackLocal(sockfd);
+  // int_tbl_prop_collector_factories_.PackLocal(sockfd);
+  size_t int_tbl_prop_collector_factories_size =
+      int_tbl_prop_collector_factories_.size();
+  send(sockfd, reinterpret_cast<void*>(&int_tbl_prop_collector_factories_size),
+       sizeof(size_t), 0);
+  size_t retval = 0;
+  read(sockfd, reinterpret_cast<void*>(&retval), sizeof(size_t));
+  LOG("server check int_tbl_prop_collector_factories_: ");
+  for (auto& factory : int_tbl_prop_collector_factories_) {
+    factory->PackLocal(sockfd);
+  }
+  LOG("server check int_tbl_prop_collector_factories_ done.");
 
   int64_t ret_val = name_.size();
   send(sockfd, reinterpret_cast<const void*>(&ret_val), sizeof(int64_t), 0);
@@ -999,6 +1012,21 @@ void* ColumnFamilyData::UnPackLocal(int sockfd) {
       ColumnFamilyOptions::UnPackLocal(sockfd));
   auto* worker_current_ =
       reinterpret_cast<Version*>(Version::UnPackLocal(sockfd));
+  auto* worker_ioptions_ = reinterpret_cast<ImmutableDBOptions*>(
+      ImmutableOptions::UnPackLocal(sockfd, *worker_initial_cf_options_));
+  size_t int_tbl_prop_collector_factories_size = 0;
+  read(sockfd, reinterpret_cast<void*>(&int_tbl_prop_collector_factories_size),
+       sizeof(size_t));
+  send(sockfd,
+       reinterpret_cast<const void*>(&int_tbl_prop_collector_factories_size),
+       sizeof(size_t), 0);
+
+  std::vector<IntTblPropCollectorFactory*> temp_factories;
+  for (size_t i = 0; i < int_tbl_prop_collector_factories_size; i++) {
+    auto* int_tbl_prop_factory = reinterpret_cast<IntTblPropCollectorFactory*>(
+        IntTblPropCollectorPackFactory::UnPackLocal(sockfd));
+    temp_factories.emplace_back(int_tbl_prop_factory);
+  }
 
   int64_t ret_val = 0;
   read(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t));
@@ -1015,19 +1043,26 @@ void* ColumnFamilyData::UnPackLocal(int sockfd) {
              &worker_cfd_->initial_cf_options_)),
          reinterpret_cast<void*>(worker_initial_cf_options_),
          sizeof(ColumnFamilyOptions));
+  memcpy(reinterpret_cast<void*>(
+             const_cast<ImmutableOptions*>(&worker_cfd_->ioptions_)),
+         reinterpret_cast<void*>(worker_ioptions_), sizeof(ImmutableOptions));
+
   LOG("retrieve Comparator:");
   auto worker_internal_comparator_ =
       new InternalKeyComparator(worker_initial_cf_options_->comparator);
-  LOG("checkpoint1");
-  LOG("checkpoint: ", worker_name_);
   new (&worker_cfd_->name_) std::string(worker_name_);
-  LOG("checkpoint2");
   memcpy(const_cast<void*>(
              reinterpret_cast<const void*>(&worker_cfd_->internal_comparator_)),
          reinterpret_cast<void*>(worker_internal_comparator_),
          sizeof(InternalKeyComparator));
   delete worker_internal_comparator_;
-
+  new (&worker_cfd_->int_tbl_prop_collector_factories_)
+      std::vector<std::unique_ptr<IntTblPropCollectorPackFactory>>();
+  worker_cfd_->int_tbl_prop_collector_factories_.resize(temp_factories.size());
+  for (auto factory : temp_factories) {
+    worker_cfd_->int_tbl_prop_collector_factories_.emplace_back(
+        std::unique_ptr<IntTblPropCollectorFactory>(factory));
+  }
   send(sockfd, reinterpret_cast<const void*>(&mem), sizeof(int64_t), 0);
   return mem;
 }
@@ -1041,7 +1076,7 @@ void ColumnFamilyData::Pack() {
     return;
   }
   // internal_comparator_.Pack();
-  ioptions_.Pack(const_cast<ColumnFamilyOptions&>(initial_cf_options_));
+  // ioptions_.Pack(const_cast<ColumnFamilyOptions&>(initial_cf_options_));
   is_packaged_ = true;
 }
 void ColumnFamilyData::UnPack() {
@@ -1051,7 +1086,6 @@ void ColumnFamilyData::UnPack() {
     return;
   }
   // internal_comparator_.UnPack();
-  ioptions_.UnPack(const_cast<ColumnFamilyOptions&>(initial_cf_options_));
   is_packaged_ = false;
 }
 

@@ -6,6 +6,8 @@
 // This file defines a collection of statistics collectors.
 #pragma once
 
+#include <unistd.h>
+
 #include <memory>
 #include <string>
 #include <vector>
@@ -40,6 +42,12 @@ class IntTblPropCollector {
 
 // Factory for internal table properties collector.
 class IntTblPropCollectorFactory {
+ public:
+  virtual void PackLocal(int sockfd) const {
+    LOG("IntTblPropCollectorFactory::PackLocal not implemented. Name: ",
+        Name());
+  }
+
  public:
   virtual ~IntTblPropCollectorFactory() {}
   // has to be thread-safe
@@ -89,6 +97,16 @@ class UserKeyTablePropertiesCollector : public IntTblPropCollector {
 
 class UserKeyTablePropertiesCollectorFactory
     : public IntTblPropCollectorFactory {
+ public:
+  void PackLocal(int sockfd) const override {
+    int64_t msg = 0;
+    msg += (0x01);
+    send(sockfd, &msg, sizeof(msg), 0);
+    int64_t ret_val = 0;
+    read(sockfd, &ret_val, sizeof(ret_val));
+    user_collector_factory_->PackLocal(sockfd);
+  }
+
  public:
   explicit UserKeyTablePropertiesCollectorFactory(
       std::shared_ptr<TablePropertiesCollectorFactory> user_collector_factory)

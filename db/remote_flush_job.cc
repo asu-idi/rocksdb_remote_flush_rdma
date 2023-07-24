@@ -161,6 +161,20 @@ void RemoteFlushJob::PackLocal(int server_socket_fd) const {
     send(server_socket_fd, full_history_ts_low_.data(), len, 0);
     read(server_socket_fd, &len, sizeof(size_t));
   }
+  size_t db_id_len = db_id_.size();
+  send(server_socket_fd, &db_id_len, sizeof(size_t), 0);
+  read(server_socket_fd, &db_id_len, sizeof(size_t));
+  if (!db_id_.empty()) {
+    send(server_socket_fd, db_id_.data(), db_id_len, 0);
+    read(server_socket_fd, &db_id_len, sizeof(size_t));
+  }
+  size_t db_session_id_len = db_session_id_.size();
+  send(server_socket_fd, &db_session_id_len, sizeof(size_t), 0);
+  read(server_socket_fd, &db_session_id_len, sizeof(size_t));
+  if (!db_session_id_.empty()) {
+    send(server_socket_fd, db_session_id_.data(), db_session_id_len, 0);
+    read(server_socket_fd, &db_session_id_len, sizeof(size_t));
+  }
 
   send(server_socket_fd, reinterpret_cast<const void*>(this),
        sizeof(RemoteFlushJob), 0);
@@ -216,6 +230,25 @@ void* RemoteFlushJob::UnPackLocal(int worker_socket_fd, DBImpl* remote_db) {
     read(worker_socket_fd, local_ts_low.data(), local_ts_low.size());
     send(worker_socket_fd, &ts_len, sizeof(size_t), 0);
   }
+  size_t db_id_len = 0;
+  read(worker_socket_fd, &db_id_len, sizeof(size_t));
+  send(worker_socket_fd, &db_id_len, sizeof(size_t), 0);
+  std::string local_db_id;
+  local_db_id.resize(db_id_len);
+  if (local_db_id.size()) {
+    read(worker_socket_fd, local_db_id.data(), local_db_id.size());
+    send(worker_socket_fd, &db_id_len, sizeof(size_t), 0);
+  }
+  size_t db_session_id_len = 0;
+  read(worker_socket_fd, &db_session_id_len, sizeof(size_t));
+  send(worker_socket_fd, &db_session_id_len, sizeof(size_t), 0);
+  std::string local_db_session_id;
+  local_db_session_id.resize(db_session_id_len);
+  if (local_db_session_id.size()) {
+    read(worker_socket_fd, local_db_session_id.data(),
+         local_db_session_id.size());
+    send(worker_socket_fd, &db_session_id_len, sizeof(size_t), 0);
+  }
 
   read(worker_socket_fd, mem, sizeof(RemoteFlushJob));
   LOG("worker recv ", std::hex, mem, std::dec);
@@ -250,6 +283,10 @@ void* RemoteFlushJob::UnPackLocal(int worker_socket_fd, DBImpl* remote_db) {
   local_handler->versions_ = reinterpret_cast<VersionSet*>(versions_ret);
   new (const_cast<std::string*>(&local_handler->full_history_ts_low_))
       std::string(local_ts_low);
+  new (const_cast<std::string*>(&local_handler->db_id_))
+      std::string(local_db_id);
+  new (const_cast<std::string*>(&local_handler->db_session_id_))
+      std::string(local_db_session_id);
   char* hack_dboption_ptr = reinterpret_cast<char*>(&local_handler->cfd_);
   hack_dboption_ptr += sizeof(ColumnFamilyData*);
   void* local_db_options = const_cast<void*>(
