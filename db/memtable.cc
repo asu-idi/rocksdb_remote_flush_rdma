@@ -605,7 +605,6 @@ class MemTableIterator : public InternalIterator {
         protection_bytes_per_key_(mem.moptions_.protection_bytes_per_key),
         status_(Status::OK()),
         logger_(mem.moptions_.info_log) {
-    LOG("");
     if (use_range_del_table) {
       LOG("error: uncheck branch");
       iter_ = mem.range_del_table_->GetIterator(arena);

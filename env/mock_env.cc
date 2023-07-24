@@ -625,19 +625,15 @@ IOStatus MockFileSystem::NewSequentialFile(
   MutexLock lock(&mutex_);
   if (file_map_.find(fn) == file_map_.end()) {
     *result = nullptr;
-    LOG("");
     return IOStatus::PathNotFound(fn);
   }
   auto* f = file_map_[fn];
   if (f->is_lock_file()) {
-    LOG("");
     return IOStatus::InvalidArgument(fn, "Cannot open a lock file.");
   } else if (file_opts.use_direct_reads && !supports_direct_io_) {
-    LOG("");
     return IOStatus::NotSupported("Direct I/O Not Supported");
   } else {
     result->reset(new MockSequentialFile(f, file_opts));
-    LOG("");
     return IOStatus::OK();
   }
 }

@@ -9,6 +9,8 @@
 
 #pragma once
 
+#include <unistd.h>
+
 #include <cassert>
 #include <cstdlib>
 #include <cstring>
@@ -265,12 +267,19 @@ struct JobContext {
 inline void JobContext::PackLocal(int sockfd) const {
   LOG("JobContext::PackLocal");
   send(sockfd, reinterpret_cast<const void*>(this), sizeof(JobContext), 0);
-  assert(job_snapshot.get() == nullptr);
+  assert(job_snapshot == nullptr);
   int64_t ret_val = 0;
   read(sockfd, &ret_val, sizeof(int64_t));
 }
 
 inline void* JobContext::UnPackLocal(int sockfd) {
+  size_t empty = 0;
+  read(sockfd, &empty, sizeof(size_t));
+  send(sockfd, &empty, sizeof(size_t), 0);
+  if (empty == 0) {
+    LOG("JobContext::UnPackLocal empty");
+    return nullptr;
+  }
   LOG("JobContext::UnPackLocal");
   void* mem = malloc(sizeof(JobContext));
   read(sockfd, mem, sizeof(JobContext));

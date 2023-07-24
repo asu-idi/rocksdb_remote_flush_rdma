@@ -48,22 +48,35 @@ void FileMetaData::PackLocal(int sockfd) const {
   assert(table_reader_handle == nullptr);
   assert(file_checksum == kUnknownFileChecksum);
   assert(file_checksum_func_name == kUnknownFileChecksumFuncName);
-
-  int64_t ret_val = 0;
+  void* mptr = reinterpret_cast<void*>(smallest.get_rep());
+  LOG("check data before PACK:", std::hex, *reinterpret_cast<int64_t*>(mptr),
+      ' ', *(reinterpret_cast<int64_t*>(mptr) + 1), ' ',
+      *(reinterpret_cast<int64_t*>(mptr) + 2), std::dec)
+  size_t ret_val = 0;
   ret_val = smallest.size();
-  send(sockfd, &ret_val, sizeof(int64_t), 0);
-  ret_val = 0;
-  read(sockfd, &ret_val, sizeof(int64_t));
-  send(sockfd, smallest.get_rep().data(), smallest.size(), 0);
-  ret_val = 0;
-  read(sockfd, &ret_val, sizeof(int64_t));
+  send(sockfd, &ret_val, sizeof(size_t), 0);
+  if (ret_val > 0) {
+    ret_val = 0;
+    read(sockfd, &ret_val, sizeof(size_t));
+    send(sockfd, smallest.get_rep(), smallest.size(), 0);
+    ret_val = 0;
+    read(sockfd, &ret_val, sizeof(size_t));
+  } else {
+    ret_val = 0;
+    read(sockfd, &ret_val, sizeof(size_t));
+  }
   ret_val = largest.size();
-  send(sockfd, &ret_val, sizeof(int64_t), 0);
-  ret_val = 0;
-  read(sockfd, &ret_val, sizeof(int64_t));
-  send(sockfd, largest.get_rep().data(), largest.size(), 0);
-  ret_val = 0;
-  read(sockfd, &ret_val, sizeof(int64_t));
+  send(sockfd, &ret_val, sizeof(size_t), 0);
+  if (ret_val > 0) {
+    ret_val = 0;
+    read(sockfd, &ret_val, sizeof(size_t));
+    send(sockfd, largest.get_rep(), largest.size(), 0);
+    ret_val = 0;
+    read(sockfd, &ret_val, sizeof(size_t));
+  } else {
+    ret_val = 0;
+    read(sockfd, &ret_val, sizeof(size_t));
+  }
 
   uint64_t uid[2] = {unique_id.at(0), unique_id.at(1)};
   send(sockfd, uid, sizeof(uint64_t) * 2, 0);
@@ -77,19 +90,24 @@ void FileMetaData::PackLocal(int sockfd) const {
 void* FileMetaData::UnPackLocal(int sockfd) {
   LOG("client FileMetaData::UnPackLocal");
   void* local_fd = FileDescriptor::UnPackLocal(sockfd);
-  int64_t len = 0, len2 = 0;
-  read(sockfd, &len, sizeof(int64_t));
-  send(sockfd, &len, sizeof(int64_t), 0);
-  void* data = malloc(len);
-  read(sockfd, data, len);
-  send(sockfd, &len, sizeof(int64_t), 0);
+  size_t len = 0, len2 = 0;
+  void *data = nullptr, *data2 = nullptr;
+  read(sockfd, &len, sizeof(size_t));
+  send(sockfd, &len, sizeof(size_t), 0);
+  if (len > 0) {
+    data = malloc(len);
+    read(sockfd, data, len);
+    send(sockfd, &len, sizeof(size_t), 0);
+  }
 
   len2 = 0;
-  read(sockfd, &len2, sizeof(int64_t));
-  send(sockfd, &len2, sizeof(int64_t), 0);
-  void* data2 = malloc(len2);
-  read(sockfd, data2, len2);
-  send(sockfd, &len2, sizeof(int64_t), 0);
+  read(sockfd, &len2, sizeof(size_t));
+  send(sockfd, &len2, sizeof(size_t), 0);
+  if (len2 > 0) {
+    data2 = malloc(len2);
+    read(sockfd, data2, len2);
+    send(sockfd, &len2, sizeof(size_t), 0);
+  }
 
   void* local_uid = malloc(2 * sizeof(uint64_t));
   read(sockfd, local_uid, 2 * sizeof(uint64_t));
@@ -102,10 +120,20 @@ void* FileMetaData::UnPackLocal(int sockfd) {
   new (&ptr->file_checksum) std::string(kUnknownFileChecksum);
   new (&ptr->file_checksum_func_name) std::string(kUnknownFileChecksumFuncName);
   // new (&ptr->smallest.SharedSet(const std::string &now)) InternalKey();
-  ptr->smallest.SharedSet(
-      std::string(reinterpret_cast<const char*>(data)).substr(0, len));
-  ptr->largest.SharedSet(
-      std::string(reinterpret_cast<const char*>(data2)).substr(0, len2));
+  if (len > 0) {
+    std::string* sptr = ptr->smallest.get_rep();
+    new (sptr) std::string(reinterpret_cast<const char*>(data), len);
+  } else {
+    std::string* sptr = ptr->smallest.get_rep();
+    new (sptr) std::string();
+  }
+  if (len2 > 0) {
+    std::string* sptr = ptr->largest.get_rep();
+    new (sptr) std::string(reinterpret_cast<const char*>(data2), len2);
+  } else {
+    std::string* sptr = ptr->largest.get_rep();
+    new (sptr) std::string();
+  }
 
   LOG("client FileMetaData::UnPackLocal unique_id");
   new (&ptr->unique_id) std::array<uint64_t, 2>();
@@ -155,14 +183,12 @@ Status FileMetaData::UpdateBoundaries(const Slice& key, const Slice& value,
       if (blob_index.file_number() == kInvalidBlobFileNumber) {
         return Status::Corruption("Invalid blob file number");
       }
-
       if (oldest_blob_file_number == kInvalidBlobFileNumber ||
           oldest_blob_file_number > blob_index.file_number()) {
         oldest_blob_file_number = blob_index.file_number();
       }
     }
   }
-
   if (smallest.size() == 0) {
     smallest.DecodeFrom(key);
   }
@@ -256,7 +282,7 @@ void VersionEdit::UnPack() {
     shm_package::Unpack(compact_cursors_package_[i + 1].first, second,
                         compact_cursors_package_[i + 1].second);
     compact_cursors_.push_back(std::make_pair(std::stoi(first), InternalKey()));
-    compact_cursors_.back().second.SharedSet(second);
+    // compact_cursors_.back().second.SharedSet(second);
   }
   compact_cursors_package_.clear();
 

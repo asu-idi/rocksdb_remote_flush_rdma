@@ -175,7 +175,7 @@ class RemoteFlushJob {
   Env::IOPriority GetRateLimiterPriorityForWrite();
   std::unique_ptr<FlushJobInfo> GetFlushJobInfo() const;
 
-  const std::string& dbname_;
+  const std::string dbname_;
   const std::string db_id_;
   const std::string db_session_id_;
   ColumnFamilyData* cfd_;

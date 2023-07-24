@@ -10,6 +10,7 @@
 #pragma once
 #include <stdint.h>
 
+#include <cstddef>
 #include <memory>
 #include <string>
 
@@ -45,6 +46,14 @@ class TailPrefetchStats {
 };
 
 class BlockBasedTableFactory : public TableFactory {
+ public:
+  void PackLocal(int sockfd) const override {
+    size_t msg = 1;
+    send(sockfd, &msg, sizeof(msg), 0);
+    msg = 0;
+    read(sockfd, &msg, sizeof(size_t));
+  }
+
  public:
   explicit BlockBasedTableFactory(
       const BlockBasedTableOptions& table_options = BlockBasedTableOptions());

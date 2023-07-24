@@ -4935,7 +4935,9 @@ std::string Version::DebugString(bool hex, bool print_stats) const {
 }
 
 void VersionSet::PackLocal(int sockfd) const {
+  LOG("VersionSet::PackLocal dump ImmutablDBOptions file");
   db_options_->PackLocal(sockfd);
+  LOG("VersionSet::PackLocal dump ImmutablDBOptions file done.");
   send(sockfd, reinterpret_cast<const void*>(this), sizeof(VersionSet), 0);
   int64_t ret_val = 0;
   read(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t));
