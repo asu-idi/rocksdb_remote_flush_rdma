@@ -793,7 +793,7 @@ void ImmutableDBOptions::PackLocal(int sockfd) const {
   cf_names_.push_back("default");
   cf_opts_.push_back(ColumnFamilyOptions());
   Status ret = PersistRocksDBOptions(dboptions, cf_names_, cf_opts_, file_name,
-                                     fs.get());
+                                     Env::Default()->GetFileSystem().get());
   assert(ret.ok());
   send(sockfd, file_name.c_str(), file_name.length(), 0);
   LOG("Packaging ImmutableDBOptions to file:", file_name.c_str());
@@ -809,7 +809,7 @@ void* ImmutableDBOptions::UnPackLocal(int sockfd) {
   std::string file_name =
       std::string(reinterpret_cast<char*>(mem)).substr(0, recv_length);
   LOG("UnPackaging ImmutableDBOptions from file:", file_name.c_str());
-  DBOptions db_options;
+  DBOptions db_options = DBOptions();
   ConfigOptions config_options;
   std::vector<ColumnFamilyDescriptor> loaded_cf_descs;
   Status ret = LoadOptionsFromFile(config_options, file_name, &db_options,

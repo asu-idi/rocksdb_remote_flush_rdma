@@ -135,12 +135,13 @@ struct MutableCFOptions {
     read(sockfd, &ret_val, sizeof(int64_t));
   }
   static void* UnPackLocal(int sockfd) {
-    // todo: just builtin
+    // todo(iaIm14): not use empty mutable_cf_options to avoid crash
     void* mem = new MutableCFOptions();
     read(sockfd, mem, sizeof(MutableCFOptions));
     int64_t ret_val = 0;
     send(sockfd, &ret_val, sizeof(int64_t), 0);
-    return mem;
+    void* mem2 = new MutableCFOptions();
+    return mem2;
   }
 
  public:

@@ -52,6 +52,14 @@ static inline uint64_t CuckooHash(
 // - Does not support prefix bloom filters.
 class CuckooTableFactory : public TableFactory {
  public:
+  void PackLocal(int sockfd) const override {
+    size_t msg = 2;
+    send(sockfd, &msg, sizeof(msg), 0);
+    msg = 0;
+    read(sockfd, &msg, sizeof(size_t));
+  }
+
+ public:
   explicit CuckooTableFactory(
       const CuckooTableOptions& table_option = CuckooTableOptions());
   ~CuckooTableFactory() {}

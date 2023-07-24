@@ -969,12 +969,10 @@ bool ColumnFamilyData::blockUnusedDataForTest() {
 }
 
 void* ColumnFamilyData::PackLocal(int sockfd) const {
-  void* shadow_ = malloc(sizeof(ColumnFamilyData));
-  memcpy(shadow_, reinterpret_cast<const void*>(this),
-         sizeof(ColumnFamilyData));
   initial_cf_options_.PackLocal(sockfd);
   current_->PackLocal(sockfd);
   ioptions_.PackLocal(sockfd);
+  mutable_cf_options_.PackLocal(sockfd);
   // int_tbl_prop_collector_factories_.PackLocal(sockfd);
   size_t int_tbl_prop_collector_factories_size =
       int_tbl_prop_collector_factories_.size();
@@ -1012,22 +1010,22 @@ void* ColumnFamilyData::UnPackLocal(int sockfd) {
       ColumnFamilyOptions::UnPackLocal(sockfd));
   auto* worker_current_ =
       reinterpret_cast<Version*>(Version::UnPackLocal(sockfd));
-  auto* worker_ioptions_ = reinterpret_cast<ImmutableDBOptions*>(
+  auto* worker_ioptions_ = reinterpret_cast<ImmutableOptions*>(
       ImmutableOptions::UnPackLocal(sockfd, *worker_initial_cf_options_));
+  auto* worker_mutable_cf_options_ = reinterpret_cast<MutableCFOptions*>(
+      MutableCFOptions::UnPackLocal(sockfd));
   size_t int_tbl_prop_collector_factories_size = 0;
   read(sockfd, reinterpret_cast<void*>(&int_tbl_prop_collector_factories_size),
        sizeof(size_t));
   send(sockfd,
        reinterpret_cast<const void*>(&int_tbl_prop_collector_factories_size),
        sizeof(size_t), 0);
-
   std::vector<IntTblPropCollectorFactory*> temp_factories;
   for (size_t i = 0; i < int_tbl_prop_collector_factories_size; i++) {
     auto* int_tbl_prop_factory = reinterpret_cast<IntTblPropCollectorFactory*>(
         IntTblPropCollectorPackFactory::UnPackLocal(sockfd));
     temp_factories.emplace_back(int_tbl_prop_factory);
   }
-
   int64_t ret_val = 0;
   read(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t));
   std::string worker_name_(ret_val, '\0');
@@ -1046,7 +1044,10 @@ void* ColumnFamilyData::UnPackLocal(int sockfd) {
   memcpy(reinterpret_cast<void*>(
              const_cast<ImmutableOptions*>(&worker_cfd_->ioptions_)),
          reinterpret_cast<void*>(worker_ioptions_), sizeof(ImmutableOptions));
-
+  memcpy(reinterpret_cast<void*>(
+             const_cast<MutableCFOptions*>(&worker_cfd_->mutable_cf_options_)),
+         reinterpret_cast<void*>(worker_mutable_cf_options_),
+         sizeof(MutableCFOptions));
   LOG("retrieve Comparator:");
   auto worker_internal_comparator_ =
       new InternalKeyComparator(worker_initial_cf_options_->comparator);

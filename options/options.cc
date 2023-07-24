@@ -10,6 +10,7 @@
 #include "rocksdb/options.h"
 
 #include <sys/socket.h>
+#include <unistd.h>
 
 #include <cassert>
 #include <cinttypes>
@@ -166,6 +167,24 @@ void ColumnFamilyOptions::PackLocal(int sockfd) const {
   LOG("Packaging ColumnFamilyOptions to file:", file_name.c_str());
   int64_t ret_val = 0;
   read(sockfd, &ret_val, sizeof(ret_val));
+  size_t cf_path_size = cf_paths.size();
+  send(sockfd, &cf_path_size, sizeof(cf_path_size), 0);
+  ret_val = 0;
+  read(sockfd, &ret_val, sizeof(ret_val));
+  for (auto& cf_path : cf_paths) {
+    send(sockfd, &cf_path.target_size, sizeof(uint64_t), 0);
+    ret_val = 0;
+    read(sockfd, &ret_val, sizeof(ret_val));
+    size_t path_len = cf_path.path.length();
+    send(sockfd, &path_len, sizeof(path_len), 0);
+    ret_val = 0;
+    read(sockfd, &ret_val, sizeof(ret_val));
+    send(sockfd, cf_path.path.c_str(), path_len, 0);
+    ret_val = 0;
+    read(sockfd, &ret_val, sizeof(ret_val));
+  }
+  // table_factory
+  table_factory->PackLocal(sockfd);
   LOG("Packaging ColumnFamilyOptions");
 }
 
@@ -191,6 +210,32 @@ void* ColumnFamilyOptions::UnPackLocal(int sockfd) {
   LOG("Unpackaging ColumnFamilyOptions");
   int64_t ret_val = 4321;
   send(sockfd, &ret_val, sizeof(int64_t), 0);
+  size_t cf_path_size = 0;
+  read(sockfd, &cf_path_size, sizeof(cf_path_size));
+  ret_val = 4321;
+  send(sockfd, &ret_val, sizeof(int64_t), 0);
+  for (size_t i = 0; i < cf_path_size; i++) {
+    uint64_t target_size = 0;
+    read(sockfd, &target_size, sizeof(uint64_t));
+    ret_val = 4321;
+    send(sockfd, &ret_val, sizeof(int64_t), 0);
+    size_t path_len = 0;
+    read(sockfd, &path_len, sizeof(path_len));
+    ret_val = 4321;
+    send(sockfd, &ret_val, sizeof(int64_t), 0);
+    void* path_mem = malloc(path_len);
+    read(sockfd, path_mem, path_len);
+    ret_val = 4321;
+    send(sockfd, &ret_val, sizeof(int64_t), 0);
+    std::string path =
+        std::string(static_cast<char*>(path_mem)).substr(0, path_len);
+    options->cf_paths.emplace_back(path, target_size);
+  }
+  // assert(options->table_factory == nullptr);
+  LOG("checkpoint TIME:", options->table_factory->Name());
+  auto* local_table_factory =
+      reinterpret_cast<TableFactory*>(TablePackFactory::UnPackLocal(sockfd));
+  options->table_factory.reset(local_table_factory);
   return reinterpret_cast<void*>(options);
 }
 
