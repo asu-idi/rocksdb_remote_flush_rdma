@@ -4934,8 +4934,25 @@ std::string Version::DebugString(bool hex, bool print_stats) const {
   return r;
 }
 
-void VersionSet::PackLocal(int sockfd) const { assert(false); }
-void* VersionSet::UnPackLocal(int sockfd) { assert(false); }
+void VersionSet::PackLocal(int sockfd) const {
+  db_options_->PackLocal(sockfd);
+  send(sockfd, reinterpret_cast<const void*>(this), sizeof(VersionSet), 0);
+  int64_t ret_val = 0;
+  read(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t));
+}
+void* VersionSet::UnPackLocal(int sockfd) {
+  void* local_db_options_ = ImmutableDBOptions::UnPackLocal(sockfd);
+  void* mem = malloc(sizeof(VersionSet));
+  auto ptr = reinterpret_cast<VersionSet*>(mem);
+  int64_t ret_val = 0;
+  read(sockfd, reinterpret_cast<void*>(ptr), sizeof(VersionSet));
+  memcpy(
+      const_cast<void*>(reinterpret_cast<const void* const>(&ptr->db_options_)),
+      &local_db_options_, sizeof(ImmutableDBOptions*));
+
+  send(sockfd, reinterpret_cast<const void*>(&ret_val), sizeof(int64_t), 0);
+  return mem;
+}
 
 // this is used to batch writes to the manifest file
 struct VersionSet::ManifestWriter {

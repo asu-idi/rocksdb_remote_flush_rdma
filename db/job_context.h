@@ -111,15 +111,11 @@ struct SuperVersionContext {
 };
 
 struct JobContext {
-  void Pack();
-  void UnPack();
-  void blockUnusedDataForTest();
-  void unblockUnusedDataForTest();
-  void CHECKShared();
-  bool is_packaged_ = false;
-  std::vector<std::pair<void*, size_t>> block_;
-  std::vector<std::pair<void*, size_t>> data_;
+ public:
+  void PackLocal(int sockfd) const;
+  static void* UnPackLocal(int sockfd);
 
+ public:
   inline bool HaveSomethingToDelete() const {
     return !(full_scan_candidate_files.empty() && sst_delete_files.empty() &&
              blob_delete_files.empty() && log_delete_files.empty() &&
@@ -266,43 +262,20 @@ struct JobContext {
   }
 };
 
-inline void JobContext::Pack() {
-  if (is_packaged_) {
-    LOG("JobContext::Pack() already packaged");
-    return;
-  }
-  // prefetch GetSnapShotSeqNum. job_id. shared memtables_to_free(retval)
-  SequenceNumber seqnum = this->GetJobSnapshotSequence();
-  void* mem = new SequenceNumber;
-  memcpy(mem, &seqnum, sizeof(SequenceNumber));
-  data_.emplace_back(mem, sizeof(SequenceNumber));
-  mem = new int(job_id);
-  data_.emplace_back(mem, sizeof(int));
-  for (auto v : memtables_to_free) {
-    mem = malloc(sizeof(MemTable*));
-    memcpy(mem, &v, sizeof(MemTable*));
-    data_.emplace_back(mem, sizeof(MemTable*));
-  }
-
-  is_packaged_ = true;
+inline void JobContext::PackLocal(int sockfd) const {
+  LOG("JobContext::PackLocal");
+  send(sockfd, reinterpret_cast<const void*>(this), sizeof(JobContext), 0);
+  int64_t ret_val = 0;
+  read(sockfd, &ret_val, sizeof(int64_t));
 }
 
-inline void JobContext::UnPack() {
-  if (!is_packaged_) {
-    LOG("JobContext::UnPack() not packaged");
-    return;
-  }
-  memcpy(&job_id, data_[1].first, data_[1].second);
-  assert(memtables_to_free.size() == 0);
-  memtables_to_free.resize(data_.size() - 2);
-  for (size_t i = 2; i < data_.size(); i++) {
-    memcpy(&memtables_to_free[i - 2], data_[i].first, data_[i].second);
-    free(data_[i].first);
-  }
-  is_packaged_ = false;
+inline void* JobContext::UnPackLocal(int sockfd) {
+  LOG("JobContext::UnPackLocal");
+  void* mem = malloc(sizeof(JobContext));
+  read(sockfd, mem, sizeof(JobContext));
+  auto ret_val = reinterpret_cast<int64_t>(mem);
+  send(sockfd, &ret_val, sizeof(int64_t), 0);
+  return mem;
 }
-inline void JobContext::blockUnusedDataForTest() {}
-inline void JobContext::unblockUnusedDataForTest() {}
-inline void JobContext::CHECKShared() {}
 
 }  // namespace ROCKSDB_NAMESPACE

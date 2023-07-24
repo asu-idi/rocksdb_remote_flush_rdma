@@ -335,8 +335,8 @@ void* MemTable::PackLocal(int sock_fd) const {
   range_del_table_->PackLocal(sock_fd);
   LOG("range_del_table_->PackLocal(sock_fd) done");
 
-  send(sock_fd, reinterpret_cast<const char*>(this), sizeof(MemTable), 0);
-  LOG("send MemTable", reinterpret_cast<const char*>(this));
+  send(sock_fd, reinterpret_cast<const void*>(this), sizeof(MemTable), 0);
+  LOG("send MemTable", reinterpret_cast<const void*>(this));
   int64_t ret_addr = 0;
   read(sock_fd, &ret_addr, sizeof(int64_t));
   LOG("recv MemTable", ret_addr);

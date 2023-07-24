@@ -973,8 +973,22 @@ void* ColumnFamilyData::PackLocal(int sockfd) const {
          sizeof(ColumnFamilyData));
   initial_cf_options_.PackLocal(sockfd);
   current_->PackLocal(sockfd);
+  ioptions_.PackLocal(sockfd);
+
+  int64_t ret_val = name_.size();
+  send(sockfd, reinterpret_cast<const void*>(&ret_val), sizeof(int64_t), 0);
+  ret_val = 0;
+  read(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t));
+  send(sockfd, reinterpret_cast<const void*>(name_.data()), name_.size(), 0);
+  read(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t));
+
   send(sockfd, reinterpret_cast<const void*>(this), sizeof(ColumnFamilyData),
        0);
+  //  todo: remove this
+  LOG("server CHECK cfd_ Comparator: ");
+  assert(internal_comparator_.user_comparator() ==
+         initial_cf_options_.comparator);
+
   int64_t ret_addr = 0;
   read(sockfd, reinterpret_cast<void*>(&ret_addr), sizeof(int64_t));
   return reinterpret_cast<void*>(ret_addr);
@@ -985,6 +999,15 @@ void* ColumnFamilyData::UnPackLocal(int sockfd) {
       ColumnFamilyOptions::UnPackLocal(sockfd));
   auto* worker_current_ =
       reinterpret_cast<Version*>(Version::UnPackLocal(sockfd));
+
+  int64_t ret_val = 0;
+  read(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t));
+  std::string worker_name_(ret_val, '\0');
+  send(sockfd, reinterpret_cast<const void*>(&ret_val), sizeof(int64_t), 0);
+  read(sockfd, reinterpret_cast<void*>(worker_name_.data()),
+       worker_name_.size());
+  send(sockfd, reinterpret_cast<const void*>(&ret_val), sizeof(int64_t), 0);
+
   void* mem = malloc(sizeof(ColumnFamilyData));
   read(sockfd, mem, sizeof(ColumnFamilyData));
   auto* worker_cfd_ = reinterpret_cast<ColumnFamilyData*>(mem);
@@ -992,6 +1015,19 @@ void* ColumnFamilyData::UnPackLocal(int sockfd) {
              &worker_cfd_->initial_cf_options_)),
          reinterpret_cast<void*>(worker_initial_cf_options_),
          sizeof(ColumnFamilyOptions));
+  LOG("retrieve Comparator:");
+  auto worker_internal_comparator_ =
+      new InternalKeyComparator(worker_initial_cf_options_->comparator);
+  LOG("checkpoint1");
+  LOG("checkpoint: ", worker_name_);
+  new (&worker_cfd_->name_) std::string(worker_name_);
+  LOG("checkpoint2");
+  memcpy(const_cast<void*>(
+             reinterpret_cast<const void*>(&worker_cfd_->internal_comparator_)),
+         reinterpret_cast<void*>(worker_internal_comparator_),
+         sizeof(InternalKeyComparator));
+  delete worker_internal_comparator_;
+
   send(sockfd, reinterpret_cast<const void*>(&mem), sizeof(int64_t), 0);
   return mem;
 }

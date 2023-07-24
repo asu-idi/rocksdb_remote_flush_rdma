@@ -95,6 +95,11 @@ struct ImmutableCFOptions {
 };
 
 struct ImmutableOptions : public ImmutableDBOptions, public ImmutableCFOptions {
+ public:
+  void PackLocal(int sockfd) const;
+  static void* UnPackLocal(int sockfd);
+
+ public:
   explicit ImmutableOptions();
   explicit ImmutableOptions(const Options& options);
 

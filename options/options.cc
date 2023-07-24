@@ -163,10 +163,10 @@ void ColumnFamilyOptions::PackLocal(int sockfd) const {
                             Env::Default()->GetFileSystem().get());
   assert(ret.ok());
   send(sockfd, file_name.c_str(), file_name.length(), 0);
-  LOG("Packaging ImmutableDBOptions to file:", file_name.c_str());
+  LOG("Packaging ColumnFamilyOptions to file:", file_name.c_str());
   int64_t ret_val = 0;
   read(sockfd, &ret_val, sizeof(ret_val));
-  LOG("Packaging ImmutableDBOptions");
+  LOG("Packaging ColumnFamilyOptions");
 }
 
 void* ColumnFamilyOptions::UnPackLocal(int sockfd) {
@@ -176,20 +176,19 @@ void* ColumnFamilyOptions::UnPackLocal(int sockfd) {
   LOG("read file name:", static_cast<char*>(mem));
   std::string file_name =
       std::string(static_cast<char*>(mem)).substr(0, recv_length);
-  LOG("Unpackaging ImmutableDBOptions from file:", file_name.c_str());
-  LOG("Unpackaging ImmutableDBOptions");
+  LOG("Unpackaging ColumnFamilyOptions from file:", file_name.c_str());
   DBOptions db_options = DBOptions();
   ConfigOptions config_options;
   std::vector<ColumnFamilyDescriptor> loaded_cf_descs;
 
   Status ret = LoadOptionsFromFile(config_options, file_name, &db_options,
                                    &loaded_cf_descs);
-  // assert(ret.ok());
+  assert(ret.ok());
   auto* options = new ColumnFamilyOptions();
-  LOG("Unpackaging ImmutableDBOptions");
+  LOG("Unpackaging ColumnFamilyOptions");
   assert(loaded_cf_descs.size() == 1);
   *options = loaded_cf_descs[0].options;
-  LOG("Unpackaging ImmutableDBOptions");
+  LOG("Unpackaging ColumnFamilyOptions");
   int64_t ret_val = 4321;
   send(sockfd, &ret_val, sizeof(int64_t), 0);
   return reinterpret_cast<void*>(options);

@@ -563,7 +563,7 @@ class ColumnFamilyData {
   std::vector<std::string> GetDbPaths() const;
 
   uint32_t id_;
-  const std::string name_;
+  std::string name_;
   Version* dummy_versions_;  // Head of circular doubly-linked list of versions.
   Version* current_;         // == dummy_versions->prev_
 
@@ -571,13 +571,11 @@ class ColumnFamilyData {
   std::atomic<bool> initialized_;
   std::atomic<bool> dropped_;  // true if client dropped it
 
-  // TODO: const
-  InternalKeyComparator internal_comparator_;
+  const InternalKeyComparator internal_comparator_;
   IntTblPropCollectorFactories int_tbl_prop_collector_factories_;
 
   const ColumnFamilyOptions initial_cf_options_;
-  // const
-  ImmutableOptions ioptions_;
+  const ImmutableOptions ioptions_;
   MutableCFOptions mutable_cf_options_;
 
   const bool is_delete_range_supported_;
