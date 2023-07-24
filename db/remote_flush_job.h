@@ -232,7 +232,7 @@ class RemoteFlushJob {
   SystemClock* clock_;
 
   const std::string full_history_ts_low_;
-  BlobFileCompletionCallback* blob_callback_;
+  // BlobFileCompletionCallback* blob_callback_;
 
   // reference to the seqno_time_mapping_ in db_impl.h, not safe to read without
   // db mutex

@@ -123,7 +123,6 @@ RemoteFlushJob::RemoteFlushJob(
       thread_pri_(thread_pri),
       clock_(db_options_.clock),
       full_history_ts_low_(std::move(full_history_ts_low)),
-      blob_callback_(blob_callback),
       db_impl_seqno_time_mapping_(seqno_time_mapping) {
   // Update the thread status to indicate flush.
   ReportStartedFlush();
@@ -1126,14 +1125,13 @@ Status RemoteFlushJob::WriteLevel0Table() {
           job_context_->GetJobSnapshotSequence();
       LOG("RemoteFlushJob::WriteLevel0Table: BuildTable");
       s = RemoteBuildTable(
-          dbname_, versions_, db_options_, tboptions, file_options_,
-          cfd_->table_cache(), iter.get(), std::move(range_del_iters), &meta_,
-          existing_snapshots_, earliest_write_conflict_snapshot_,
-          job_snapshot_seq, snapshot_checker_,
-          mutable_cf_options_.paranoid_file_checks, cfd_->internal_stats(),
-          &io_s, BlobFileCreationReason::kFlush, seqno_to_time_mapping_,
+          dbname_, versions_, db_options_, tboptions, file_options_, iter.get(),
+          std::move(range_del_iters), &meta_, existing_snapshots_,
+          earliest_write_conflict_snapshot_, job_snapshot_seq,
+          snapshot_checker_, mutable_cf_options_.paranoid_file_checks,
+          cfd_->internal_stats(), &io_s, seqno_to_time_mapping_,
           job_context_->job_id, io_priority, &table_properties_, write_hint,
-          full_history_ts_low, blob_callback_, base_, &num_input_entries,
+          full_history_ts_low, base_, &num_input_entries,
           &memtable_payload_bytes, &memtable_garbage_bytes);
       // TODO: Cleanup io_status in BuildTable and table builders
       assert(!s.ok() || io_s.ok());
