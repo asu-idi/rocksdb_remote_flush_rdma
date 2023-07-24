@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <unistd.h>
+
 #include <string>
 #include <vector>
 
@@ -96,8 +98,16 @@ struct ImmutableCFOptions {
 
 struct ImmutableOptions : public ImmutableDBOptions, public ImmutableCFOptions {
  public:
-  void PackLocal(int sockfd) const;
-  static void* UnPackLocal(int sockfd);
+  void PackLocal(int sockfd) const {
+    this->ImmutableDBOptions::PackLocal(sockfd);
+  }
+  static void* UnPackLocal(int sockfd, const ColumnFamilyOptions& cf_options) {
+    void* immutabe_dboptions_ = ImmutableDBOptions::UnPackLocal(sockfd);
+    auto* db_options_ =
+        reinterpret_cast<ImmutableDBOptions*>(immutabe_dboptions_);
+    auto* ret = new ImmutableOptions(*db_options_, cf_options);
+    return reinterpret_cast<void*>(ret);
+  }
 
  public:
   explicit ImmutableOptions();
@@ -114,22 +124,26 @@ struct ImmutableOptions : public ImmutableDBOptions, public ImmutableCFOptions {
 
   ImmutableOptions(const ImmutableDBOptions& db_options,
                    const ColumnFamilyOptions& cf_options);
-
-  void Pack(ColumnFamilyOptions& cf_options);
-  void UnPack(ColumnFamilyOptions& cf_options);
-  bool is_shared() const;
-  void blockUnusedDataForTest(const ColumnFamilyOptions& cf_options);
-  void unblockUnusedDataForTest();
-  bool CEHCKShared();
-  bool is_packaged_ = false;
-  void* dumped_cf_options_ = nullptr;
-  void* dumped_db_options_ = nullptr;
-  std::vector<std::pair<void*, size_t>> options_db_path_;
-
-  std::vector<std::pair<void*, size_t>> temp_block_;
 };
 
 struct MutableCFOptions {
+ public:
+  void PackLocal(int sockfd) const {
+    send(sockfd, reinterpret_cast<const void*>(this), sizeof(MutableCFOptions),
+         0);
+    int64_t ret_val = 0;
+    read(sockfd, &ret_val, sizeof(int64_t));
+  }
+  static void* UnPackLocal(int sockfd) {
+    // todo: just builtin
+    void* mem = new MutableCFOptions();
+    read(sockfd, mem, sizeof(MutableCFOptions));
+    int64_t ret_val = 0;
+    send(sockfd, &ret_val, sizeof(int64_t), 0);
+    return mem;
+  }
+
+ public:
   static const char* kName() { return "MutableCFOptions"; }
   explicit MutableCFOptions(const ColumnFamilyOptions& options)
       : write_buffer_size(options.write_buffer_size),

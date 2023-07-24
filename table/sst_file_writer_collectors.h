@@ -4,6 +4,7 @@
 //  (found in the LICENSE.Apache file in the root directory).
 
 #pragma once
+#include <cstdint>
 #include <string>
 
 #include "db/table_properties_collector.h"
@@ -73,6 +74,17 @@ class SstFileWriterPropertiesCollector : public IntTblPropCollector {
 
 class SstFileWriterPropertiesCollectorFactory
     : public IntTblPropCollectorFactory {
+ public:
+  void PackLocal(int sockfd) const override {
+    size_t msg_len = sizeof(size_t) + sizeof(int32_t);
+    char* msg = reinterpret_cast<char*>(malloc(msg_len));
+    *reinterpret_cast<size_t*>(msg) = version_;
+    *reinterpret_cast<size_t*>(msg + sizeof(int32_t)) = global_seqno_;
+    send(sockfd, msg, msg_len, 0);
+    size_t ret_val = 0;
+    read(sockfd, &ret_val, sizeof(size_t));
+  }
+
  public:
   explicit SstFileWriterPropertiesCollectorFactory(int32_t version,
                                                    SequenceNumber global_seqno)
