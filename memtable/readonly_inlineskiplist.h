@@ -19,6 +19,7 @@
 #include "rocksdb/utilities/object_registry.h"
 #include "rocksdb/utilities/options_type.h"
 #include "util/logger.hpp"
+#include "util/socket_api.hpp"
 #include "util/string_util.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -31,10 +32,16 @@ class ReadOnlySkipListRep : public MemTableRep {
     int64_t msg = 0;
     readonly_skiplistrep->PackLocal(sockfd);
     auto readonly_skiplistrep_ = new ReadOnlySkipListRep(readonly_skiplistrep);
-    send(sockfd, reinterpret_cast<void*>(readonly_skiplistrep_),
-         sizeof(ReadOnlySkipListRep), 0);
+    LOG("ReadOnlySkipListRep::PackLocal: after "
+        "ReadOnlyInlineSkiplist::PackLocal, start send len: ",
+        sizeof(ReadOnlySkipListRep));
+    write_data(sockfd, reinterpret_cast<void*>(readonly_skiplistrep_),
+               sizeof(ReadOnlySkipListRep));
+    LOG("ReadOnlySkipListRep::PackLocal: after send len: ",
+        sizeof(ReadOnlySkipListRep));
     int64_t ret_val = 0;
-    read(sockfd, &ret_val, sizeof(ret_val));
+    read_data(sockfd, &ret_val, sizeof(ret_val));
+    LOG("ReadOnlySkipListRep::PackLocal: after read ret_val:", ret_val);
   }
 
   static void* UnPackLocal(int sockfd) {
@@ -45,13 +52,18 @@ class ReadOnlySkipListRep : public MemTableRep {
     auto* local_readonly_skiplistrep = new ReadOnlySkipListRep(nullptr);
     void* mem = reinterpret_cast<void*>(local_readonly_skiplistrep);
     void* mem2 = malloc(sizeof(ReadOnlySkipListRep));
-    read(sockfd, mem2, sizeof(ReadOnlySkipListRep));
-
+    LOG("ReadOnlySkipListRep::UnPackLocal: after UnPackLocal ReadOnlyInlineSki"
+        "plist, start read len: ",
+        sizeof(ReadOnlySkipListRep));
+    read_data(sockfd, mem2, sizeof(ReadOnlySkipListRep));
+    LOG("ReadOnlySkipListRep::UnPackLocal: after read len: ",
+        sizeof(ReadOnlySkipListRep));
     local_readonly_skiplistrep->read_only_skip_list_ = reinterpret_cast<
         const ReadOnlyInlineSkipList<const MemTableRep::KeyComparator&>*>(
         readonly_inline_skiplistrep);
     int64_t ret_val = 0;
-    send(sockfd, &ret_val, sizeof(ret_val), 0);
+    write_data(sockfd, &ret_val, sizeof(ret_val));
+    LOG("ReadOnlySkipListRep::UnPackLocal: after send ret_val:", ret_val);
     free(mem2);
     return mem;
   }

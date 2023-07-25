@@ -59,34 +59,34 @@ void FileMetaData::PackLocal(int sockfd) const {
   send(sockfd, &ret_val, sizeof(size_t), 0);
   if (ret_val > 0) {
     ret_val = 0;
-    read(sockfd, &ret_val, sizeof(size_t));
+    read_data(sockfd, &ret_val, sizeof(size_t));
     send(sockfd, smallest.get_rep(), smallest.size(), 0);
     ret_val = 0;
-    read(sockfd, &ret_val, sizeof(size_t));
+    read_data(sockfd, &ret_val, sizeof(size_t));
   } else {
     ret_val = 0;
-    read(sockfd, &ret_val, sizeof(size_t));
+    read_data(sockfd, &ret_val, sizeof(size_t));
   }
   ret_val = largest.size();
   send(sockfd, &ret_val, sizeof(size_t), 0);
   if (ret_val > 0) {
     ret_val = 0;
-    read(sockfd, &ret_val, sizeof(size_t));
+    read_data(sockfd, &ret_val, sizeof(size_t));
     send(sockfd, largest.get_rep(), largest.size(), 0);
     ret_val = 0;
-    read(sockfd, &ret_val, sizeof(size_t));
+    read_data(sockfd, &ret_val, sizeof(size_t));
   } else {
     ret_val = 0;
-    read(sockfd, &ret_val, sizeof(size_t));
+    read_data(sockfd, &ret_val, sizeof(size_t));
   }
 
   uint64_t uid[2] = {unique_id.at(0), unique_id.at(1)};
   send(sockfd, uid, sizeof(uint64_t) * 2, 0);
   ret_val = 0;
-  read(sockfd, &ret_val, sizeof(int64_t));
+  read_data(sockfd, &ret_val, sizeof(int64_t));
   send(sockfd, reinterpret_cast<const char*>(this), sizeof(FileMetaData), 0);
   ret_val = 0;
-  read(sockfd, &ret_val, sizeof(int64_t));
+  read_data(sockfd, &ret_val, sizeof(int64_t));
 }
 
 void* FileMetaData::UnPackLocal(int sockfd) {
@@ -94,29 +94,29 @@ void* FileMetaData::UnPackLocal(int sockfd) {
   void* local_fd = FileDescriptor::UnPackLocal(sockfd);
   size_t len = 0, len2 = 0;
   void *data = nullptr, *data2 = nullptr;
-  read(sockfd, &len, sizeof(size_t));
+  read_data(sockfd, &len, sizeof(size_t));
   send(sockfd, &len, sizeof(size_t), 0);
   if (len > 0) {
     data = malloc(len);
-    read(sockfd, data, len);
+    read_data(sockfd, data, len);
     send(sockfd, &len, sizeof(size_t), 0);
   }
 
   len2 = 0;
-  read(sockfd, &len2, sizeof(size_t));
+  read_data(sockfd, &len2, sizeof(size_t));
   send(sockfd, &len2, sizeof(size_t), 0);
   if (len2 > 0) {
     data2 = malloc(len2);
-    read(sockfd, data2, len2);
+    read_data(sockfd, data2, len2);
     send(sockfd, &len2, sizeof(size_t), 0);
   }
 
   void* local_uid = malloc(2 * sizeof(uint64_t));
-  read(sockfd, local_uid, 2 * sizeof(uint64_t));
+  read_data(sockfd, local_uid, 2 * sizeof(uint64_t));
   send(sockfd, &local_uid, sizeof(int64_t), 0);
 
   void* mem = malloc(sizeof(FileMetaData));
-  read(sockfd, mem, sizeof(FileMetaData));
+  read_data(sockfd, mem, sizeof(FileMetaData));
   auto ptr = reinterpret_cast<FileMetaData*>(mem);
   ptr->fd = *reinterpret_cast<FileDescriptor*>(local_fd);
   new (&ptr->file_checksum) std::string(kUnknownFileChecksum);
@@ -283,26 +283,26 @@ Status FileMetaData::UpdateBoundaries(const Slice& key, const Slice& value,
 
 void* VersionEdit::UnPackLocal(int sockfd) {
   void* mem = malloc(sizeof(VersionEdit));
-  read(sockfd, mem, sizeof(VersionEdit));
+  read_data(sockfd, mem, sizeof(VersionEdit));
   send(sockfd, &mem, sizeof(size_t), 0);
   auto ret_version_edit_ = reinterpret_cast<VersionEdit*>(mem);
   size_t db_id_len_ = 0;
-  read(sockfd, &db_id_len_, sizeof(size_t));
+  read_data(sockfd, &db_id_len_, sizeof(size_t));
   send(sockfd, &db_id_len_, sizeof(size_t), 0);
   if (db_id_len_ > 0) {
     char* db_id_ = new char[db_id_len_];
-    read(sockfd, db_id_, db_id_len_);
+    read_data(sockfd, db_id_, db_id_len_);
     send(sockfd, &db_id_len_, sizeof(size_t), 0);
     new (&ret_version_edit_->db_id_) std::string(db_id_, db_id_len_);
     delete[] db_id_;
   }
 
   size_t comparator_len_ = 0;
-  read(sockfd, &comparator_len_, sizeof(size_t));
+  read_data(sockfd, &comparator_len_, sizeof(size_t));
   send(sockfd, &comparator_len_, sizeof(size_t), 0);
   if (comparator_len_ > 0) {
     char* comparator_ = new char[comparator_len_];
-    read(sockfd, comparator_, comparator_len_);
+    read_data(sockfd, comparator_, comparator_len_);
     send(sockfd, &comparator_len_, sizeof(size_t), 0);
     new (&ret_version_edit_->comparator_)
         std::string(comparator_, comparator_len_);
@@ -312,17 +312,17 @@ void* VersionEdit::UnPackLocal(int sockfd) {
   new (&ret_version_edit_->compact_cursors_)
       std::vector<std::pair<int, InternalKey>>();
   size_t compact_cursors_size_ = 0;
-  read(sockfd, &compact_cursors_size_, sizeof(size_t));
+  read_data(sockfd, &compact_cursors_size_, sizeof(size_t));
   send(sockfd, &compact_cursors_size_, sizeof(size_t), 0);
   for (size_t i = 0; i < compact_cursors_size_; i++) {
     int level = 0;
-    read(sockfd, &level, sizeof(int));
+    read_data(sockfd, &level, sizeof(int));
     send(sockfd, &level, sizeof(size_t), 0);
     size_t str_len_ = 0;
-    read(sockfd, &str_len_, sizeof(size_t));
+    read_data(sockfd, &str_len_, sizeof(size_t));
     send(sockfd, &str_len_, sizeof(size_t), 0);
     char* str_ = new char[str_len_];
-    read(sockfd, str_, str_len_);
+    read_data(sockfd, str_, str_len_);
     send(sockfd, &str_len_, sizeof(size_t), 0);
     InternalKey key;
     key.DecodeFrom(Slice(str_, str_len_));
@@ -333,14 +333,14 @@ void* VersionEdit::UnPackLocal(int sockfd) {
   new (&ret_version_edit_->deleted_files_)
       std::vector<std::pair<int, uint64_t>>();
   size_t deleted_files_size_ = 0;
-  read(sockfd, &deleted_files_size_, sizeof(size_t));
+  read_data(sockfd, &deleted_files_size_, sizeof(size_t));
   send(sockfd, &deleted_files_size_, sizeof(size_t), 0);
   for (size_t i = 0; i < deleted_files_size_; i++) {
     int level = 0;
-    read(sockfd, &level, sizeof(int));
+    read_data(sockfd, &level, sizeof(int));
     send(sockfd, &level, sizeof(size_t), 0);
     uint64_t file_number = 0;
-    read(sockfd, &file_number, sizeof(uint64_t));
+    read_data(sockfd, &file_number, sizeof(uint64_t));
     send(sockfd, &file_number, sizeof(size_t), 0);
     ret_version_edit_->deleted_files_.insert(
         std::make_pair(level, file_number));
@@ -349,11 +349,11 @@ void* VersionEdit::UnPackLocal(int sockfd) {
   new (&ret_version_edit_->new_files_)
       std::vector<std::pair<int, FileMetaData>>();
   size_t new_files_size_ = 0;
-  read(sockfd, &new_files_size_, sizeof(size_t));
+  read_data(sockfd, &new_files_size_, sizeof(size_t));
   send(sockfd, &new_files_size_, sizeof(size_t), 0);
   for (size_t i = 0; i < new_files_size_; i++) {
     int level = 0;
-    read(sockfd, &level, sizeof(int));
+    read_data(sockfd, &level, sizeof(int));
     send(sockfd, &level, sizeof(size_t), 0);
     auto local_file_meta_data =
         reinterpret_cast<FileMetaData*>(FileMetaData::UnPackLocal(sockfd));
@@ -368,11 +368,11 @@ void* VersionEdit::UnPackLocal(int sockfd) {
   new (&ret_version_edit_->wal_deletion_) WalDeletion();
 
   size_t column_family_name_len = 0;
-  read(sockfd, &column_family_name_len, sizeof(size_t));
+  read_data(sockfd, &column_family_name_len, sizeof(size_t));
   send(sockfd, &column_family_name_len, sizeof(size_t), 0);
   if (column_family_name_len > 0) {
     char* column_family_name_ = new char[column_family_name_len];
-    read(sockfd, column_family_name_, column_family_name_len);
+    read_data(sockfd, column_family_name_, column_family_name_len);
     send(sockfd, &column_family_name_len, sizeof(size_t), 0);
     new (&ret_version_edit_->column_family_name_)
         std::string(column_family_name_, column_family_name_len);
@@ -380,11 +380,11 @@ void* VersionEdit::UnPackLocal(int sockfd) {
   }
 
   size_t full_history_ts_low_size = 0;
-  read(sockfd, &full_history_ts_low_size, sizeof(size_t));
+  read_data(sockfd, &full_history_ts_low_size, sizeof(size_t));
   send(sockfd, &full_history_ts_low_size, sizeof(size_t), 0);
   if (full_history_ts_low_size > 0) {
     char* full_history_ts_low_ = new char[full_history_ts_low_size];
-    read(sockfd, full_history_ts_low_, full_history_ts_low_size);
+    read_data(sockfd, full_history_ts_low_, full_history_ts_low_size);
     send(sockfd, &full_history_ts_low_size, sizeof(size_t), 0);
     new (&ret_version_edit_->full_history_ts_low_)
         std::string(full_history_ts_low_, full_history_ts_low_size);
@@ -397,73 +397,73 @@ void VersionEdit::PackLocal(int sockfd) const {
   size_t ret_val = 0;
   send(sockfd, reinterpret_cast<const void*>(this), sizeof(VersionEdit), 0);
   ret_val = 0;
-  read(sockfd, &ret_val, sizeof(size_t));
+  read_data(sockfd, &ret_val, sizeof(size_t));
 
   size_t db_id_len_ = db_id_.size();
   send(sockfd, &db_id_len_, sizeof(size_t), 0);
-  read(sockfd, &ret_val, sizeof(size_t));
+  read_data(sockfd, &ret_val, sizeof(size_t));
   if (db_id_len_ > 0) {
     send(sockfd, db_id_.c_str(), db_id_len_, 0);
     ret_val = 0;
-    read(sockfd, &ret_val, sizeof(size_t));
+    read_data(sockfd, &ret_val, sizeof(size_t));
   }
 
   size_t comparator_len_ = 0;
   send(sockfd, &comparator_len_, sizeof(size_t), 0);
-  read(sockfd, &ret_val, sizeof(size_t));
+  read_data(sockfd, &ret_val, sizeof(size_t));
   if (comparator_.size() > 0) {
     send(sockfd, comparator_.c_str(), comparator_.size(), 0);
     ret_val = 0;
-    read(sockfd, &ret_val, sizeof(size_t));
+    read_data(sockfd, &ret_val, sizeof(size_t));
   }
 
   size_t compact_cursors_size_ = compact_cursors_.size();
   send(sockfd, &compact_cursors_size_, sizeof(size_t), 0);
-  read(sockfd, &ret_val, sizeof(size_t));
+  read_data(sockfd, &ret_val, sizeof(size_t));
   for (auto pr : compact_cursors_) {
     send(sockfd, &pr.first, sizeof(int), 0);
-    read(sockfd, &ret_val, sizeof(size_t));
+    read_data(sockfd, &ret_val, sizeof(size_t));
     auto string_ptr = pr.second.get_rep();
     size_t str_len_ = string_ptr->length();
     send(sockfd, &str_len_, sizeof(size_t), 0);
-    read(sockfd, &ret_val, sizeof(size_t));
+    read_data(sockfd, &ret_val, sizeof(size_t));
     send(sockfd, string_ptr->c_str(), str_len_, 0);
-    read(sockfd, &ret_val, sizeof(size_t));
+    read_data(sockfd, &ret_val, sizeof(size_t));
   }
 
   size_t deleted_files_size_ = deleted_files_.size();
   send(sockfd, &deleted_files_size_, sizeof(size_t), 0);
-  read(sockfd, &ret_val, sizeof(size_t));
+  read_data(sockfd, &ret_val, sizeof(size_t));
   for (auto pr : deleted_files_) {
     send(sockfd, &pr.first, sizeof(int), 0);
-    read(sockfd, &ret_val, sizeof(size_t));
+    read_data(sockfd, &ret_val, sizeof(size_t));
     send(sockfd, &pr.second, sizeof(uint64_t), 0);
-    read(sockfd, &ret_val, sizeof(size_t));
+    read_data(sockfd, &ret_val, sizeof(size_t));
   }
 
   size_t new_files_size_ = new_files_.size();
   send(sockfd, &new_files_size_, sizeof(size_t), 0);
-  read(sockfd, &ret_val, sizeof(size_t));
+  read_data(sockfd, &ret_val, sizeof(size_t));
   for (auto pr : new_files_) {
     send(sockfd, &pr.first, sizeof(int), 0);
-    read(sockfd, &ret_val, sizeof(size_t));
+    read_data(sockfd, &ret_val, sizeof(size_t));
     pr.second.PackLocal(sockfd);
   }
 
   size_t column_family_name_len = column_family_name_.size();
   send(sockfd, &column_family_name_len, sizeof(size_t), 0);
-  read(sockfd, &ret_val, sizeof(size_t));
+  read_data(sockfd, &ret_val, sizeof(size_t));
   if (column_family_name_len > 0) {
     send(sockfd, column_family_name_.c_str(), column_family_name_len, 0);
-    read(sockfd, &ret_val, sizeof(size_t));
+    read_data(sockfd, &ret_val, sizeof(size_t));
   }
 
   size_t full_history_ts_low_size = full_history_ts_low_.size();
   send(sockfd, &full_history_ts_low_size, sizeof(size_t), 0);
-  read(sockfd, &ret_val, sizeof(size_t));
+  read_data(sockfd, &ret_val, sizeof(size_t));
   if (full_history_ts_low_size > 0) {
     send(sockfd, full_history_ts_low_.c_str(), full_history_ts_low_size, 0);
-    read(sockfd, &ret_val, sizeof(size_t));
+    read_data(sockfd, &ret_val, sizeof(size_t));
   }
 }
 

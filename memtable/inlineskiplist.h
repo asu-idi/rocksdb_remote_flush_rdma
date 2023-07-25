@@ -44,13 +44,14 @@
 #include <assert.h>
 #include <stdlib.h>
 
+#include <chrono>
 #include <cstdlib>
+#include <thread>
 #ifdef __linux__
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
 #endif  //__linux__
-
 #include <cxxabi.h>
 
 #include <algorithm>
@@ -75,6 +76,7 @@
 #include "util/logger.hpp"
 #include "util/macro.hpp"
 #include "util/random.h"
+#include "util/socket_api.hpp"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -136,8 +138,6 @@ inline void ReadOnlyInlineSkipList<Comparator>::check_data() const {
     char* ptr = const_cast<char*>(iter.key());
     ptr -= sizeof(size_t);
     memcpy(&key_len, ptr, sizeof(size_t));
-    LOG("check_data:", key_len, ' ',
-        std::string(iter.key()).substr(0, key_len));
     iter.Next();
   }
 }
@@ -148,33 +148,29 @@ inline void* ReadOnlyInlineSkipList<Comparator>::UnPackLocal(int sockfd) {
   // void* local_cmp_ = MemTable::KeyComparator::UnPackLocal(sockfd);
   int64_t total_len = 0;
   int64_t ret_val = 0;
-  read(sockfd, &total_len, sizeof(total_len));
+  LOG("ReadOnlyInlineSkipList::UnPackLocal read tot_len start.");
+  assert(read_data(sockfd, &total_len, sizeof(total_len)) == sizeof(total_len));
+  LOG("ReadOnlyInlineSkipList::UnPackLocal read tot_len:", total_len);
   void* data = malloc(total_len);
-  send(sockfd, &ret_val, sizeof(ret_val), 0);
-  read(sockfd, data, total_len);
-  send(sockfd, &ret_val, sizeof(ret_val), 0);
+  assert(write_data(sockfd, &ret_val, sizeof(ret_val)) == sizeof(ret_val));
+  LOG("ReadOnlyInlineSkipList::UnPackLocal send ret_val:", ret_val);
+  ssize_t sbyte = read_data(sockfd, data, total_len);
+  LOG("ReadOnlyInlineSkipList::UnPackLocal read data len:", sbyte, ' ',
+      total_len);
+  assert(sbyte == total_len);
+  assert(write_data(sockfd, &ret_val, sizeof(ret_val)) == sizeof(ret_val));
+  LOG("ReadOnlyInlineSkipList::UnPackLocal send ret_val:", ret_val);
   void* mem = malloc(sizeof(ReadOnlyInlineSkipList));
   auto* local_readonly_skiplistrep =
       reinterpret_cast<ReadOnlyInlineSkipList*>(mem);
-  read(sockfd, mem, sizeof(ReadOnlyInlineSkipList));
-  // local_readonly_skiplistrep->compare_ =
-  //     *reinterpret_cast<Comparator>(local_cmp_);
-  // char* hack_ptr =
-  // reinterpret_cast<char*>(local_readonly_skiplistrep->data_); hack_ptr -=
-  // sizeof(int*); memcpy(hack_ptr, &local_cmp_,
-  // sizeof(MemTable::KeyComparator*));
-
-  // memcpy(const_cast<void*>(reinterpret_cast<const void*>(
-  //            &const_cast<Comparator>(local_readonly_skiplistrep->compare_))),
-  //        local_cmp_, sizeof(MemTable::KeyComparator));
-  LOG("checkpoint1");
-  // memcpy(reinterpret_cast<void*>(const_cast<NONE>(
-  //            const_cast<Comparator>(local_readonly_skiplistrep->compare_))),
-  //        reinterpret_cast<void*>(const_cast<Comparator>(local_cmp_)),
-  //        sizeof(Comparator));
+  assert(read_data(sockfd, mem, sizeof(ReadOnlyInlineSkipList)) ==
+         sizeof(ReadOnlyInlineSkipList));
+  LOG("ReadOnlyInlineSkipList::UnPackLocal read mem len:",
+      sizeof(ReadOnlyInlineSkipList));
   local_readonly_skiplistrep->data_ = data;
   local_readonly_skiplistrep->total_len_ = total_len;
-  send(sockfd, &ret_val, sizeof(ret_val), 0);
+  assert(write_data(sockfd, &ret_val, sizeof(ret_val)) == sizeof(ret_val));
+  LOG("ReadOnlyInlineSkipList::UnPackLocal send ret_val:", ret_val);
   LOG("unpack ReadOnlyInlineSkipList done");
   return mem;
 }
@@ -183,17 +179,29 @@ template <class Comparator>
 inline void ReadOnlyInlineSkipList<Comparator>::PackLocal(int sockfd) const {
   LOG("pack ReadOnlyInlineSkipList");
   // compare_.PackLocal(sockfd);
-  send(sockfd, &total_len_, sizeof(total_len_), 0);
+  LOG("ReadOnlyInlineSkipList::PackLocal send tot_len start:", total_len_);
+  assert(write_data(sockfd, reinterpret_cast<const void*>(&total_len_),
+                    sizeof(total_len_)) == sizeof(total_len_));
+  LOG("ReadOnlyInlineSkipList::PackLocal send tot_len:", total_len_);
   int64_t ret_val = 0;
-  read(sockfd, &ret_val, sizeof(ret_val));
-  send(sockfd, data_, total_len_, 0);
+  assert(read_data(sockfd, reinterpret_cast<void*>(&ret_val),
+                   sizeof(ret_val)) == sizeof(ret_val));
+  LOG("ReadOnlyInlineSkipList::PackLocal read ret_val:", ret_val);
+  ssize_t sent_byte = write_data(sockfd, data_, total_len_);
+  LOG("CHECK DEBUG: ", sent_byte, ' ', total_len_);
+  assert(sent_byte == total_len_);
   ret_val = 0;
-  read(sockfd, &ret_val, sizeof(ret_val));
-  send(sockfd, reinterpret_cast<const void*>(this),
-       sizeof(ReadOnlyInlineSkipList<Comparator>), 0);
+  assert(read_data(sockfd, &ret_val, sizeof(ret_val)) == sizeof(ret_val));
+  LOG("ReadOnlyInlineSkipList::PackLocal read_data ret_val:", ret_val);
+  assert(write_data(sockfd, reinterpret_cast<const void*>(this),
+                    sizeof(ReadOnlyInlineSkipList)) ==
+         sizeof(ReadOnlyInlineSkipList));
+  LOG("ReadOnlyInlineSkipList::PackLocal send data len:",
+      sizeof(ReadOnlyInlineSkipList));
   ret_val = 0;
-  read(sockfd, &ret_val, sizeof(ret_val));
-  LOG("pack ReadOnlyInlineSkipList::Comparator done");
+  assert(read_data(sockfd, &ret_val, sizeof(ret_val)) == sizeof(ret_val));
+  LOG("ReadOnlyInlineSkipList::PackLocal read_data ret_val:", ret_val);
+  LOG("pack ReadOnlyInlineSkipList done");
 }
 
 template <class Comparator>
@@ -334,9 +342,7 @@ ReadOnlyInlineSkipList<Comparator>::ReadOnlyInlineSkipList(
   iter.SeekToFirst();
   while (iter.Valid()) {
     const char* key_ptr = iter.key();
-    LOG("decode keylen");
     size_t key_len = cmp.decode_len(key_ptr);
-    LOG("decode keylen finish");
     memcpy(data_ptr, &key_len, sizeof(size_t));
     data_ptr += sizeof(size_t);
     memcpy(data_ptr, key_ptr, key_len);

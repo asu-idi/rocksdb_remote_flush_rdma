@@ -34,7 +34,7 @@ class FixedPrefixTransform : public SliceTransform {
     msg += (((int64_t)prefix_len_) << 8);
     send(sockfd, &msg, sizeof(msg), 0);
     int64_t ret = 0;
-    read(sockfd, &ret, sizeof(ret));
+    read_data(sockfd, &ret, sizeof(ret));
   }
   void PackLocal(char*& buf) const override {
     LOG("FixedPrefixTransform::PackLocal: rdma");
@@ -105,7 +105,7 @@ class CappedPrefixTransform : public SliceTransform {
     msg += (((int64_t)cap_len_) << 8);
     send(sockfd, &msg, sizeof(msg), 0);
     int64_t ret = 0;
-    read(sockfd, &ret, sizeof(ret));
+    read_data(sockfd, &ret, sizeof(ret));
   }
   void PackLocal(char*& buf) const override {
     LOG("CappedPrefixTransform::PackLocal");
@@ -172,7 +172,7 @@ class NoopTransform : public SliceTransform {
     msg += (0x03);
     send(sockfd, &msg, sizeof(msg), 0);
     int64_t ret = 0;
-    read(sockfd, &ret, sizeof(ret));
+    read_data(sockfd, &ret, sizeof(ret));
   }
   void PackLocal(char*& buf) const override {
     LOG("NoopTransform::PackLocal");

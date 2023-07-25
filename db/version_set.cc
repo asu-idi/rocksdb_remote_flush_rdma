@@ -1548,13 +1548,13 @@ void Version::PackLocal(int sockfd) const {
   storage_info_.PackLocal(sockfd);
   send(sockfd, reinterpret_cast<const void*>(this), sizeof(Version), 0);
   int64_t ret_val = 0;
-  read(sockfd, &ret_val, sizeof(int64_t));
+  read_data(sockfd, &ret_val, sizeof(int64_t));
 }
 void* Version::UnPackLocal(int sockfd) {
   void* mem = malloc(sizeof(Version));
   auto* mem_ptr = reinterpret_cast<Version*>(mem);
   void* worker_storage_info = VersionStorageInfo::UnPackLocal(sockfd);
-  read(sockfd, mem, sizeof(Version));
+  read_data(sockfd, mem, sizeof(Version));
   memcpy(reinterpret_cast<void*>(&mem_ptr->storage_info_), worker_storage_info,
          sizeof(VersionStorageInfo));
   send(sockfd, &mem_ptr, sizeof(int64_t), 0);
@@ -3292,12 +3292,12 @@ void VersionStorageInfo::PackLocal(int sockfd) const {
   send(sockfd, reinterpret_cast<const void*>(this), sizeof(VersionStorageInfo),
        0);
   int64_t ret = 0;
-  read(sockfd, reinterpret_cast<void*>(&ret), sizeof(int64_t));
+  read_data(sockfd, reinterpret_cast<void*>(&ret), sizeof(int64_t));
 }
 
 void* VersionStorageInfo::UnPackLocal(int sockfd) {
   void* mem = malloc(sizeof(VersionStorageInfo));
-  read(sockfd, mem, sizeof(VersionStorageInfo));
+  read_data(sockfd, mem, sizeof(VersionStorageInfo));
   int64_t ret = 0;
   send(sockfd, reinterpret_cast<void*>(&ret), sizeof(int64_t), 0);
   return mem;
@@ -4964,14 +4964,14 @@ void VersionSet::PackLocal(int sockfd) const {
   LOG("VersionSet::PackLocal dump ImmutablDBOptions file done.");
   send(sockfd, reinterpret_cast<const void*>(this), sizeof(VersionSet), 0);
   int64_t ret_val = 0;
-  read(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t));
+  read_data(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t));
 }
 void* VersionSet::UnPackLocal(int sockfd) {
   void* local_db_options_ = ImmutableDBOptions::UnPackLocal(sockfd);
   void* mem = malloc(sizeof(VersionSet));
   auto ptr = reinterpret_cast<VersionSet*>(mem);
   int64_t ret_val = 0;
-  read(sockfd, reinterpret_cast<void*>(ptr), sizeof(VersionSet));
+  read_data(sockfd, reinterpret_cast<void*>(ptr), sizeof(VersionSet));
   memcpy(
       const_cast<void*>(reinterpret_cast<const void* const>(&ptr->db_options_)),
       &local_db_options_, sizeof(ImmutableDBOptions*));

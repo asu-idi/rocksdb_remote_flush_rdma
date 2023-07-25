@@ -143,12 +143,12 @@ struct MutableCFOptions {
     send(sockfd, reinterpret_cast<const void*>(this), sizeof(MutableCFOptions),
          0);
     int64_t ret_val = 0;
-    read(sockfd, &ret_val, sizeof(int64_t));
+    read_data(sockfd, &ret_val, sizeof(int64_t));
   }
   static void* UnPackLocal(int sockfd) {
     // todo(iaIm14): not use empty mutable_cf_options to avoid crash
     void* mem = new MutableCFOptions();
-    read(sockfd, mem, sizeof(MutableCFOptions));
+    read_data(sockfd, mem, sizeof(MutableCFOptions));
     int64_t ret_val = 0;
     send(sockfd, &ret_val, sizeof(int64_t), 0);
     void* mem2 = new MutableCFOptions();

@@ -167,22 +167,22 @@ void ColumnFamilyOptions::PackLocal(int sockfd) const {
   send(sockfd, file_name.c_str(), file_name.length(), 0);
   LOG("Packaging ColumnFamilyOptions to file:", file_name.c_str());
   int64_t ret_val = 0;
-  read(sockfd, &ret_val, sizeof(ret_val));
+  read_data(sockfd, &ret_val, sizeof(ret_val));
   size_t cf_path_size = cf_paths.size();
   send(sockfd, &cf_path_size, sizeof(cf_path_size), 0);
   ret_val = 0;
-  read(sockfd, &ret_val, sizeof(ret_val));
+  read_data(sockfd, &ret_val, sizeof(ret_val));
   for (auto& cf_path : cf_paths) {
     send(sockfd, &cf_path.target_size, sizeof(uint64_t), 0);
     ret_val = 0;
-    read(sockfd, &ret_val, sizeof(ret_val));
+    read_data(sockfd, &ret_val, sizeof(ret_val));
     size_t path_len = cf_path.path.length();
     send(sockfd, &path_len, sizeof(path_len), 0);
     ret_val = 0;
-    read(sockfd, &ret_val, sizeof(ret_val));
+    read_data(sockfd, &ret_val, sizeof(ret_val));
     send(sockfd, cf_path.path.c_str(), path_len, 0);
     ret_val = 0;
-    read(sockfd, &ret_val, sizeof(ret_val));
+    read_data(sockfd, &ret_val, sizeof(ret_val));
   }
   // table_factory
   table_factory->PackLocal(sockfd);
@@ -192,7 +192,7 @@ void ColumnFamilyOptions::PackLocal(int sockfd) const {
 void* ColumnFamilyOptions::UnPackLocal(int sockfd) {
   size_t recv_length = std::string("/tmp/ColumnFamilyOptions-").length() + 10;
   void* mem = malloc(recv_length);
-  read(sockfd, mem, recv_length);
+  read_data(sockfd, mem, recv_length);
   LOG("read file name:", static_cast<char*>(mem));
   std::string file_name =
       std::string(static_cast<char*>(mem)).substr(0, recv_length);
@@ -212,20 +212,20 @@ void* ColumnFamilyOptions::UnPackLocal(int sockfd) {
   int64_t ret_val = 4321;
   send(sockfd, &ret_val, sizeof(int64_t), 0);
   size_t cf_path_size = 0;
-  read(sockfd, &cf_path_size, sizeof(cf_path_size));
+  read_data(sockfd, &cf_path_size, sizeof(cf_path_size));
   ret_val = 4321;
   send(sockfd, &ret_val, sizeof(int64_t), 0);
   for (size_t i = 0; i < cf_path_size; i++) {
     uint64_t target_size = 0;
-    read(sockfd, &target_size, sizeof(uint64_t));
+    read_data(sockfd, &target_size, sizeof(uint64_t));
     ret_val = 4321;
     send(sockfd, &ret_val, sizeof(int64_t), 0);
     size_t path_len = 0;
-    read(sockfd, &path_len, sizeof(path_len));
+    read_data(sockfd, &path_len, sizeof(path_len));
     ret_val = 4321;
     send(sockfd, &ret_val, sizeof(int64_t), 0);
     void* path_mem = malloc(path_len);
-    read(sockfd, path_mem, path_len);
+    read_data(sockfd, path_mem, path_len);
     ret_val = 4321;
     send(sockfd, &ret_val, sizeof(int64_t), 0);
     std::string path =

@@ -50,7 +50,7 @@ void ConcurrentArena::PackLocal(int sockfd) const {
   name.resize(15);
   send(sockfd, name.data(), name.size(), 0);
   int64_t ret = 0;
-  read(sockfd, &ret, sizeof(int64_t));
+  read_data(sockfd, &ret, sizeof(int64_t));
 }
 void* ConcurrentArena::UnPackLocal(int sockfd) {
   void* arena = reinterpret_cast<void*>(new ConcurrentArena());

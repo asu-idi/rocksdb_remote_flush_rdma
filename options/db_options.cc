@@ -798,14 +798,14 @@ void ImmutableDBOptions::PackLocal(int sockfd) const {
   send(sockfd, file_name.c_str(), file_name.length(), 0);
   LOG("Packaging ImmutableDBOptions to file:", file_name.c_str());
   int64_t ret_val = 0;
-  read(sockfd, &ret_val, sizeof(int64_t));
+  read_data(sockfd, &ret_val, sizeof(int64_t));
   LOG("Packaging ImmutableDBOptions");
 }
 
 void* ImmutableDBOptions::UnPackLocal(int sockfd) {
   size_t recv_length = std::string("/tmp/DBOptions-").length() + 10;
   void* mem = malloc(recv_length);
-  read(sockfd, mem, recv_length);
+  read_data(sockfd, mem, recv_length);
   std::string file_name =
       std::string(reinterpret_cast<char*>(mem)).substr(0, recv_length);
   LOG("UnPackaging ImmutableDBOptions from file:", file_name.c_str());
