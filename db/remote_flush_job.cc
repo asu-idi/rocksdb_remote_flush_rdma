@@ -151,6 +151,7 @@ void RemoteFlushJob::PackLocal(int server_socket_fd) const {
     memtable->PackLocal(server_socket_fd);
   }
   versions_->PackLocal(server_socket_fd);
+  edit_->PackLocal(server_socket_fd);
   if (job_context_ != nullptr) {
     LOG("jobcontext not null");
     size_t msg_ = 1;
@@ -257,6 +258,7 @@ void* RemoteFlushJob::UnPackLocal(int worker_socket_fd, DBImpl* remote_db) {
     mems_temp.emplace_back(reinterpret_cast<MemTable*>(local_mem_handler));
   }
   void* versions_ret = VersionSet::UnPackLocal(worker_socket_fd);
+  void* edit_ret = VersionEdit::UnPackLocal(worker_socket_fd);
   void* job_context_ret = JobContext::UnPackLocal(worker_socket_fd);
   void* db_impl_seqno_time_mapping_ret =
       SeqnoToTimeMapping::UnPackLocal(worker_socket_fd);
@@ -329,6 +331,8 @@ void* RemoteFlushJob::UnPackLocal(int worker_socket_fd, DBImpl* remote_db) {
   local_handler->db_mutex_->Unlock();
   local_handler->mems_ = autovector<MemTable*>();
   local_handler->job_context_ = reinterpret_cast<JobContext*>(job_context_ret);
+  local_handler->output_file_directory_ = nullptr;
+  local_handler->db_directory_ = nullptr;
   LOG("local_handler copy FileMetaData");
   new (&local_handler->meta_)
       FileMetaData(*reinterpret_cast<FileMetaData*>(meta_ret));
@@ -348,6 +352,7 @@ void* RemoteFlushJob::UnPackLocal(int worker_socket_fd, DBImpl* remote_db) {
   local_handler->cfd_ = reinterpret_cast<ColumnFamilyData*>(cfd_ret);
   local_handler->base_ = local_handler->cfd_->current();
   local_handler->versions_ = reinterpret_cast<VersionSet*>(versions_ret);
+  local_handler->edit_ = reinterpret_cast<VersionEdit*>(edit_ret);
   new (const_cast<std::string*>(&local_handler->full_history_ts_low_))
       std::string(local_ts_low);
   new (const_cast<std::string*>(&local_handler->db_id_))
@@ -406,7 +411,7 @@ void* RemoteFlushJob::UnPackRemote(int server_socket_fd) {
   LOG("server recv ", std::hex, &install_info_, std::dec);
   // unpack install_info
   send(server_socket_fd, &install_info_, sizeof(int64_t), 0);
-  LOG("server send ", std::hex, &install_info_, std::dec);
+  LOG("server send ", std::hex, install_info_, std::dec);
   LOG("RemoteFlushJob::UnPackRemote done");
   return install_info_;
 }
@@ -575,10 +580,6 @@ Status RemoteFlushJob::RunRemote(LogsWithPrepTracker* prep_tracker,
 
     void* local_install_handler = UnPackRemote(server_socket_fd_);
     assert(QuitRemoteWorker() == Status::OK());
-    int64_t signal_ret = 0;
-    read(server_socket_fd_, &signal_ret, sizeof(int64_t));
-    LOG("server Message received3: ", signal_ret, ' ', server_socket_fd_);
-    assert(signal_ret == signal);
     LOG("Run job: write l0table done");
   }
 
@@ -645,6 +646,9 @@ Status RemoteFlushJob::MatchRemoteWorker() {
 }
 
 Status RemoteFlushJob::QuitRemoteWorker() {
+  int64_t signal_ret = 0;
+  read(server_socket_fd_, &signal_ret, sizeof(int64_t));
+  LOG("server Message received3: ", signal_ret, ' ', server_socket_fd_);
   int64_t data = 1234;
   send(server_socket_fd_, &data, sizeof(int64_t), 0);
   LOG("server Message sent4: ", data, ' ', server_socket_fd_);
@@ -1278,7 +1282,7 @@ Status RemoteFlushJob::WriteLevel0Table() {
     TEST_SYNC_POINT_CALLBACK("RemoteFlushJob::WriteLevel0Table", &mems_);
     // db_mutex_->Lock();
   }
-  base_->Unref();
+  // base_->Unref();
 
   // Note that if file_size is zero, the file has been deleted and
   // should not be added to the manifest.

@@ -314,10 +314,10 @@ DBImpl::DBImpl(const DBOptions& options, const std::string& dbname,
 void DBImpl::BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri) {
   TEST_SYNC_POINT("DBImpl::BackgroundCallRemoteFlush:Start");
   int64_t magic = 0;
-  long long buffer = 0;
+  int64_t buffer = 0;
   char* buffer_ptr = reinterpret_cast<char*>(&buffer);
 
-  read(sockfd, buffer_ptr, sizeof(long long));
+  read(sockfd, buffer_ptr, sizeof(int64_t));
   LOG("worker Message received1 / JobHandle: ", std::hex, buffer, std::dec, ' ',
       sockfd);
 
@@ -346,7 +346,7 @@ void DBImpl::BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri) {
   assert(magic == 1234);
 
   buffer = 1234;
-  send(sockfd, &buffer, sizeof(int), 0);
+  send(sockfd, &buffer, sizeof(int64_t), 0);
   LOG("worker Message sent5: ", buffer, ' ', sockfd);
 
   close(sockfd);
