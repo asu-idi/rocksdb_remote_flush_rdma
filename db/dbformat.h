@@ -10,6 +10,7 @@
 #pragma once
 #include <stdio.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -252,9 +253,28 @@ class InternalKeyComparator
     final
 #endif
     : public CompareInterface {
+ public:
+  void PackLocal(int sockfd) const override {
+    user_comparator_.PackLocal(sockfd);
+    int64_t ret_val = 0;
+    send(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t), 0);
+    read(sockfd, &ret_val, sizeof(int64_t));
+  }
+  static void* UnPackLocal(int sockfd) {
+    void* ucmp = UserComparatorWrapper::UnPackLocal(sockfd);
+    int64_t ret = 0;
+    read(sockfd, &ret, sizeof(int64_t));
+    auto ptr = new InternalKeyComparator();
+    void* mem = reinterpret_cast<void*>(ptr);
+    memcpy(reinterpret_cast<void*>(&ptr->user_comparator_), ucmp,
+           sizeof(UserComparatorWrapper));
+    int ret_val = 1234;
+    send(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t), 0);
+    return mem;
+  }
+
  private:
   UserComparatorWrapper user_comparator_;
-  bool is_packaged_ = false;
 
  public:
   // `InternalKeyComparator`s constructed with the default constructor are not
@@ -267,10 +287,6 @@ class InternalKeyComparator
   //    overhead, set `named` to false. In that case, `Name()` will return a
   //    generic name that is non-specific to the underlying comparator.
   explicit InternalKeyComparator(const Comparator* c) : user_comparator_(c) {}
-
-  void Pack();
-  void UnPack();
-  bool is_shared();
 
   virtual ~InternalKeyComparator() {}
 
@@ -352,8 +368,8 @@ class InternalKey {
   void Set(const Slice& _user_key_with_ts, SequenceNumber s, ValueType t,
            const Slice& ts) {
     ParsedInternalKey pik = ParsedInternalKey(_user_key_with_ts, s, t);
-    // Should not call pik.SetTimestamp() directly as it overwrites the buffer
-    // containing _user_key.
+    // Should not call pik.SetTimestamp() directly as it overwrites the
+    // buffer containing _user_key.
     SetFrom(pik, ts);
   }
 
@@ -368,12 +384,11 @@ class InternalKey {
   }
 
   void Clear() { rep_.clear(); }
-  // Intended only for use by Pack() & UnPack() methods
-  void SharedSet(const std::string& now) { rep_ = now; }
 
   // The underlying representation.
   // Intended only to be used together with ConvertFromUserKey().
   std::string* rep() { return &rep_; }
+  std::string* get_rep() const { return const_cast<std::string*>(&rep_); }
 
   // Assuming that *rep() contains a user key, this method makes internal key
   // out of it in-place. This saves a memcpy compared to Set()/SetFrom().
@@ -491,7 +506,8 @@ class IterKey {
     size_t total_size = shared_len + non_shared_len;
 
     if (IsKeyPinned() /* key is not in buf_ */) {
-      // Copy the key from external memory to buf_ (copy shared_len bytes)
+      // Copy the key from external memory to buf_ (copy shared_len
+      // bytes)
       EnlargeBufferIfNeeded(total_size);
       memcpy(buf_, key_, shared_len);
     } else if (total_size > buf_size_) {
@@ -661,8 +677,8 @@ class IterKey {
   // allocated, until a larger key buffer is requested. In that case, we
   // reallocate buffer and delete the old one.
   void EnlargeBufferIfNeeded(size_t key_size) {
-    // If size is smaller than buffer size, continue using current buffer,
-    // or the static allocated one, as default
+    // If size is smaller than buffer size, continue using current
+    // buffer, or the static allocated one, as default
     if (key_size > buf_size_) {
       EnlargeBuffer(key_size);
     }
@@ -674,6 +690,18 @@ class IterKey {
 // Convert from a SliceTransform of user keys, to a SliceTransform of
 // internal keys.
 class InternalKeySliceTransform : public SliceTransform {
+ public:
+  void PackLocal(int sockfd) const override {
+    LOG("InternalKeySliceTransform::PackLocal");
+    int64_t info = 0;
+    info += (0x00);
+    send(sockfd, &info, sizeof(info), 0);
+    int64_t ret_val = 0;
+    read(sockfd, &ret_val, sizeof(ret_val));
+    transform_->PackLocal(sockfd);
+  }
+  static void* UnPackLocal(void* transform, int sockfd);
+
  public:
   explicit InternalKeySliceTransform(const SliceTransform* transform)
       : transform_(transform) {}
@@ -702,7 +730,12 @@ class InternalKeySliceTransform : public SliceTransform {
   // deletion of transform_
   const SliceTransform* const transform_;
 };
-
+inline void* InternalKeySliceTransform::UnPackLocal(void* transform,
+                                                    int sockfd) {
+  void* mem = reinterpret_cast<void*>(new InternalKeySliceTransform(
+      reinterpret_cast<SliceTransform*>(transform)));
+  return mem;
+}
 // Read the key of a record from a write batch.
 // if this record represent the default column family then cf_record
 // must be passed as false, otherwise it must be passed as true.
@@ -821,7 +854,8 @@ inline int InternalKeyComparator::CompareKeySeq(const Slice& akey,
   //    decreasing sequence number
   int r = user_comparator_.Compare(ExtractUserKey(akey), ExtractUserKey(bkey));
   if (r == 0) {
-    // Shift the number to exclude the last byte which contains the value type
+    // Shift the number to exclude the last byte which contains the value
+    // type
     const uint64_t anum =
         DecodeFixed64(akey.data() + akey.size() - kNumInternalBytes) >> 8;
     const uint64_t bnum =

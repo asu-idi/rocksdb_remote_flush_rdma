@@ -9,6 +9,7 @@
 
 #include "rocksdb/c.h"
 
+#include <cassert>
 #include <cstdlib>
 #include <map>
 #include <unordered_set>
@@ -482,6 +483,8 @@ struct rocksdb_env_t {
 };
 
 struct rocksdb_slicetransform_t : public SliceTransform {
+ public:
+  void PackLocal(int sockfd) const override { assert(false); }
   void* state_;
   void (*destructor_)(void*);
   const char* (*name_)(void*);

@@ -38,6 +38,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -45,6 +46,7 @@
 #include <unordered_set>
 
 #include "memory/concurrent_shared_arena.h"
+#include "memtable/skiplist.h"
 #include "rocksdb/customizable.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/status.h"
@@ -64,9 +66,21 @@ extern Slice GetLengthPrefixedSlice(const char* data);
 
 class MemTableRep {
  public:
+  virtual void PackLocal(int sockfd) const {
+    LOG("MemTableRep::PackLocal: error: not implemented");
+    assert(false);
+  }
+
+ public:
   // KeyComparator provides a means to compare keys, which are internal keys
   // concatenated with values.
   class KeyComparator {
+   public:
+    virtual void PackLocal(int sockfd) const {
+      LOG("MemTableRep::KeyComparator::PackLocal: error: not implemented");
+      assert(false);
+    }
+
    public:
     using DecodedType = ROCKSDB_NAMESPACE::Slice;
 
@@ -218,13 +232,9 @@ class MemTableRep {
 
   // Report an approximation of how much memory has been used other than memory
   // that was allocated through the allocator.  Safe to call from any thread.
-  virtual size_t ApproximateMemoryUsage() = 0;
-
-  virtual MemTableRep* CloneReadOnlyMemtableRep(
-      Allocator* allocator = ConSharedArena::CreateSharedConSharedArena()) {
-    LOG("[ERROR] default Clone Api.");
-    //  TODO: make this pure virtual
-    return nullptr;
+  virtual size_t ApproximateMemoryUsage() {
+    LOG("should not call this");
+    return 0;
   }
 
   virtual ~MemTableRep() {}
@@ -364,6 +374,9 @@ class MemTableRepFactory : public Customizable {
 //     steps). This is an optimization for the access pattern including many
 //     seeks with consecutive keys.
 class SkipListFactory : public MemTableRepFactory {
+ public:
+  static void* UnPackLocal(int sockfd);
+
  public:
   explicit SkipListFactory(size_t lookahead = 0);
 

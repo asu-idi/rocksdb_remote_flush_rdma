@@ -63,6 +63,10 @@ struct DbPath;
 using FileTypeSet = SmallEnumSet<FileType, FileType::kBlobFile>;
 
 struct ColumnFamilyOptions : public AdvancedColumnFamilyOptions {
+ public:
+  void PackLocal(int sockfd) const;
+  static void* UnPackLocal(int sockfd);
+
   // The function recovers options to a previous version. Only 4.6 or later
   // versions are supported.
   // NOT MAINTAINED: This function has not been and is not maintained.
@@ -330,6 +334,15 @@ struct ColumnFamilyOptions : public AdvancedColumnFamilyOptions {
   //
   // Default: nullptr
   std::shared_ptr<SstPartitionerFactory> sst_partitioner_factory = nullptr;
+
+  void* Pack(std::shared_ptr<FileSystem>);
+  ColumnFamilyOptions* Unpack(void* dumped_file);
+  void CHECKShared();
+  void is_shared();
+  void blockUnusedDataForTest();
+  void unblockUnusedDataForTest();
+  bool is_packaged_ = false;
+  void* option_dump_file = nullptr;
 
   // Create ColumnFamilyOptions with default values for all fields
   ColumnFamilyOptions();
@@ -1395,6 +1408,7 @@ struct DBOptions {
   bool enforce_single_del_contracts = true;
 
   size_t worker_use_remote_flush = 0;
+  size_t server_remote_flush = 0;
 };
 
 // Options to control the behavior of a database (passed to DB::Open)

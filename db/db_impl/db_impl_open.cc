@@ -13,6 +13,7 @@
 #include <thread>
 
 #include "db/builder.h"
+#include "db/column_family.h"
 #include "db/db_impl/db_impl.h"
 #include "db/error_handler.h"
 #include "db/periodic_task_scheduler.h"
@@ -547,7 +548,6 @@ Status DBImpl::Recover(
     return s;
   }
   if (s.ok() && !read_only) {
-    LOG("DEBUG");
     for (auto cfd : *versions_->GetColumnFamilySet()) {
       // Try to trivially move files down the LSM tree to start from bottommost
       // level when level_compaction_dynamic_level_bytes is enabled. This should
@@ -567,7 +567,6 @@ Status DBImpl::Recover(
               CompactionStyle::kCompactionStyleLevel &&
           cfd->ioptions()->level_compaction_dynamic_level_bytes &&
           !cfd->GetLatestMutableCFOptions()->disable_auto_compactions) {
-        LOG("DEBUG");
         int to_level = cfd->ioptions()->num_levels - 1;
         // last level is reserved
         if (cfd->ioptions()->allow_ingest_behind ||
@@ -592,7 +591,6 @@ Status DBImpl::Recover(
             if (!moved) {
               // lsm_state will look like "[1,2,3,4,5,6,0]" for an LSM with
               // 7 levels
-              LOG("DEBUG");
               std::string lsm_state = "[";
               for (int i = 0; i < cfd->ioptions()->num_levels; ++i) {
                 lsm_state += std::to_string(
@@ -615,11 +613,9 @@ Status DBImpl::Recover(
                 "[%s] Moving %zu files from from_level-%d to from_level-%d",
                 cfd->GetName().c_str(), level_files.size(), from_level,
                 to_level);
-            LOG("DEBUG");
             VersionEdit edit;
             edit.SetColumnFamily(cfd->GetID());
             for (const FileMetaData* f : level_files) {
-              LOG("DEBUG");
               edit.DeleteFile(from_level, f->fd.GetNumber());
               edit.AddFile(to_level, f->fd.GetNumber(), f->fd.GetPathId(),
                            f->fd.GetFileSize(), f->smallest, f->largest,
@@ -638,7 +634,6 @@ Status DBImpl::Recover(
                              cfd->GetName().c_str(), f->fd.GetNumber(),
                              from_level, to_level, f->fd.GetFileSize());
             }
-            LOG("DEBUG");
             recovery_ctx->UpdateVersionEdits(cfd, edit);
           }
           --to_level;
@@ -646,13 +641,11 @@ Status DBImpl::Recover(
       }
     }
   }
-  LOG("DEBUG");
   s = SetupDBId(read_only, recovery_ctx);
   ROCKS_LOG_INFO(immutable_db_options_.info_log, "DB ID: %s\n", db_id_.c_str());
   if (s.ok() && !read_only) {
     s = DeleteUnreferencedSstFiles(recovery_ctx);
   }
-  LOG("DEBUG");
   if (immutable_db_options_.paranoid_checks && s.ok()) {
     s = CheckConsistency();
   }
@@ -666,7 +659,6 @@ Status DBImpl::Recover(
       }
     }
   }
-  LOG("DEBUG");
   std::vector<std::string> files_in_wal_dir;
   if (s.ok()) {
     // Initial max_total_in_memory_state_ before recovery wals. Log recovery
@@ -789,7 +781,6 @@ Status DBImpl::Recover(
       }
     }
   }
-  LOG("DEBUG");
   if (read_only) {
     // If we are opening as read-only, we need to update options_file_number_
     // to reflect the most recent OPTIONS file. It does not matter for regular
@@ -829,7 +820,6 @@ Status DBImpl::Recover(
       versions_->options_file_size_ = options_file_size;
     }
   }
-  LOG("DEBUG");
   return s;
 }
 // ********************************************
@@ -1504,7 +1494,7 @@ Status DBImpl::RecoverLogFiles(const std::vector<uint64_t>& wal_numbers,
 
   event_logger_.Log() << "job" << job_id << "event"
                       << "recovery_finished";
-  LOG("");
+
   return status;
 }
 
@@ -1730,9 +1720,13 @@ Status DBImpl::WriteLevel0TableForRecovery(int job_id, ColumnFamilyData* cfd,
 Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
   DBOptions db_options(options);
   ColumnFamilyOptions cf_options(options);
-  // note: server_use_remote_flush bind to cf_options
-  LOG("DB::Open server remote_flush:",
+  if (db_options.server_remote_flush) {
+    cf_options.server_use_remote_flush = true;
+  }
+  LOG("DB::Open server cf_option remote_flush:",
       cf_options.server_use_remote_flush ? "true" : "false");
+  LOG("DB::Open server db_option remote_flush:",
+      db_options.server_remote_flush ? "true" : "false");
   std::vector<ColumnFamilyDescriptor> column_families;
   column_families.push_back(
       ColumnFamilyDescriptor(kDefaultColumnFamilyName, cf_options));
@@ -1742,7 +1736,6 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
   }
   std::vector<ColumnFamilyHandle*> handles;
   Status s = DB::Open(db_options, dbname, column_families, &handles, dbptr);
-  LOG("FINISH DB OPEN");
   if (s.ok()) {
     if (db_options.persist_stats_to_disk) {
       assert(handles.size() == 2);
@@ -1752,13 +1745,10 @@ Status DB::Open(const Options& options, const std::string& dbname, DB** dbptr) {
     // i can delete the handle since DBImpl is always holding a reference to
     // default column family
     if (db_options.persist_stats_to_disk && handles[1] != nullptr) {
-      LOG("FINISH DB OPEN 0");
       delete handles[1];
     }
-    LOG("FINISH DB OPEN 1");
     delete handles[0];
   }
-  LOG("FINISH DB OPEN 2");
   return s;
 }
 
@@ -1907,8 +1897,7 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
         std::max(max_write_buffer_size, cf.options.write_buffer_size);
   }
   LOG("BEGIN IMPL CONSTRUCT");
-  DBImpl* impl = new DBImpl(column_families.begin()->options, db_options,
-                            dbname, seq_per_batch, batch_per_txn);
+  DBImpl* impl = new DBImpl(db_options, dbname, seq_per_batch, batch_per_txn);
   LOG("FINISH IMPL CONSTRUCT");
   if (!impl->immutable_db_options_.info_log) {
     s = impl->init_logger_creation_s_;
@@ -2226,12 +2215,12 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
     *dbptr = nullptr;
   }
 
-  if (db_options.worker_use_remote_flush) {
-    for (size_t thn = 0; thn < db_options.worker_use_remote_flush; ++thn) {
-      std::function<void()> func = &DBImpl::RemoteFlushListener;
-      std::thread(func).detach();
-    }
-  }
+  // if (db_options.worker_use_remote_flush) {
+  //   for (size_t thn = 0; thn < db_options.worker_use_remote_flush; ++thn) {
+  //     std::function<void()> func = &DBImpl::RemoteFlushListener;
+  //     std::thread(func).detach();
+  //   }
+  // }
 
   return s;
 }

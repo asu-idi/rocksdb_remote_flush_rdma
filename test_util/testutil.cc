@@ -22,6 +22,7 @@
 #include "file/random_access_file_reader.h"
 #include "file/sequence_file_reader.h"
 #include "file/writable_file_writer.h"
+#include "memory/shared_mem_basic.h"
 #include "port/port.h"
 #include "rocksdb/convenience.h"
 #include "rocksdb/system_clock.h"
@@ -554,6 +555,12 @@ namespace {
 // A hacky skip list mem table that triggers flush after number of entries.
 class SpecialMemTableRep : public MemTableRep {
  public:
+  void PackLocal(int sockfd) const override {
+    assert(false);
+    memtable_->PackLocal(sockfd);
+  }
+
+ public:
   explicit SpecialMemTableRep(Allocator* allocator, MemTableRep* memtable,
                               int num_entries_flush)
       : MemTableRep(allocator),
@@ -638,10 +645,24 @@ class SpecialSkipListFactory : public MemTableRepFactory {
   virtual MemTableRep* CreateMemTableRep(
       const MemTableRep::KeyComparator& compare, Allocator* allocator,
       const SliceTransform* transform, Logger* /*logger*/) override {
+    LOG("create rep from local mem: ", allocator->name());
     return new SpecialMemTableRep(
         allocator,
         factory_.CreateMemTableRep(compare, allocator, transform, nullptr),
         num_entries_flush_);
+  }
+  using MemTableRepFactory::CreateMemtableRepFromShm;
+  virtual MemTableRep* CreateMemtableRepFromShm(
+      const MemTableRep::KeyComparator& compare, Allocator* allocator,
+      const SliceTransform* transform, Logger* /*logger*/) override {
+    void* mem = shm_alloc(sizeof(SpecialMemTableRep));
+    LOG("create rep from remote mem: ", allocator->name(), ' ', std::hex, mem,
+        std::dec);
+    return new (mem)
+        SpecialMemTableRep(allocator,
+                           factory_.CreateMemtableRepFromShm(
+                               compare, allocator, transform, nullptr),
+                           num_entries_flush_);
   }
   static const char* kClassName() { return "SpecialSkipListFactory"; }
   virtual const char* Name() const override { return kClassName(); }
@@ -665,6 +686,7 @@ class SpecialSkipListFactory : public MemTableRepFactory {
 
 MemTableRepFactory* NewSpecialSkipListFactory(int num_entries_per_flush) {
   RegisterTestLibrary();
+  LOG("create factory checkpoint");
   return new SpecialSkipListFactory(num_entries_per_flush);
 }
 
@@ -709,7 +731,6 @@ int RegisterTestObjects(ObjectLibrary& library, const std::string& arg) {
       });
   return static_cast<int>(library.GetFactoryCount(&num_types));
 }
-
 
 void RegisterTestLibrary(const std::string& arg) {
   static bool registered = false;

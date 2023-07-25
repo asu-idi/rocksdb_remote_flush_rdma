@@ -4,7 +4,8 @@
 //  (found in the LICENSE.Apache file in the root directory).
 //
 
-// #ifdef GFLAGS
+
+#ifdef GFLAGS
 #ifdef NUMA
 #include <numa.h>
 #endif
@@ -1925,4 +1926,4 @@ int trace_analyzer_tool(int argc, char** argv) {
 
 }  // namespace ROCKSDB_NAMESPACE
 
-// #endif  // Endif of Gflag
+#endif  // Endif of Gflag

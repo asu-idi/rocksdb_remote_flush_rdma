@@ -12,12 +12,14 @@ if [[ "$1" == "1" ]]; then
     rm -rf .cmake
 fi
 cmake ..
-make flush_job_test -j 18
+make remote_flush_worker -j 18
+make db_remote_flush_test -j 18
 cd $PROJECT_ROOT/dev
-
+rm Log-???????????????\.log
 # cp ../build/trace_analyzer ./
 # cp ../build/trace_query_test ./
-cp ../build/flush_job_test ./
+cp ../build/db_remote_flush_test ./
+cp ../build/remote_flush_worker ./
 # cp ../build/shared_std_test ./
 # cp ../build/memtable_list_test ./
 # cp ../build/memtable_tracer_parser ./
@@ -57,3 +59,8 @@ chown -R $(whoami) ../
 # #   -print_top_k_access=3 \
 # #   -output_prefix=test \
 # #   -trace_path=/data/rocksdb/dev/trace
+sysctl -w kernel.shmmni=32768
+val=$(ipcs | tail -5 | awk 'NR==1{print $2}')
+val2=$(ipcs | wc -l)
+echo $val
+python3 reset_shm.py $val $val2

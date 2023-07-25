@@ -118,8 +118,8 @@ class Repairer {
                                     /*io_tracer=*/nullptr, db_session_id_)),
         wb_(db_options_.db_write_buffer_size),
         wc_(db_options_.delayed_write_rate),
-        vset_(ColumnFamilyOptions(), dbname_, &immutable_db_options_,
-              file_options_, raw_table_cache_.get(), &wb_, &wc_,
+        vset_(dbname_, &immutable_db_options_, file_options_,
+              raw_table_cache_.get(), &wb_, &wc_,
               /*block_cache_tracer=*/nullptr, /*io_tracer=*/nullptr,
               /*db_id=*/"", db_session_id_),
         next_file_number_(1),
@@ -199,7 +199,8 @@ class Repairer {
         ArchiveFile(dbname_ + "/" + manifests_[i]);
       }
       // Just create a DBImpl temporarily so we can reuse NewDB()
-      db_impl = new DBImpl(ColumnFamilyOptions(), db_options_, dbname_);
+      // TODO(iaIm14): remove ColumnFamilyOptions()
+      db_impl = new DBImpl(db_options_, dbname_);
       status = db_impl->NewDB(/*new_filenames=*/nullptr);
     }
     delete db_impl;

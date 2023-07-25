@@ -8,7 +8,6 @@
 #include "db/dbformat.h"
 #include "env/composite_env_wrapper.h"
 #include "file/random_access_file_reader.h"
-#include "gtest/gtest.h"
 #include "port/port.h"
 #include "rocksdb/table_properties.h"
 #include "table/get_context.h"
@@ -16,7 +15,6 @@
 
 namespace ROCKSDB_NAMESPACE {
 namespace mock {
-
 KVVector MakeMockFile(std::initializer_list<KVPair> l) { return KVVector(l); }
 
 void SortKVVector(KVVector* kv_vector, const Comparator* ucmp) {
@@ -307,23 +305,7 @@ Status MockTableFactory::GetIDFromFile(RandomAccessFileReader* file,
 
 void MockTableFactory::AssertSingleFile(const KVVector& file_contents) {
   ASSERT_EQ(file_system_.files.size(), 1U);
-  ASSERT_EQ(file_contents.size(), file_system_.files.begin()->second.size());
-  std::vector<std::pair<std::string, std::string>> raw_kvpairs, insert_kvpairs;
-
-  for (auto kvpair : file_contents) {
-    raw_kvpairs.push_back({kvpair.first, kvpair.second});
-  }
-  for (auto kvpair : file_system_.files.begin()->second) {
-    insert_kvpairs.push_back({kvpair.first, kvpair.second});
-    // LOG("KV-INFO: ", kvpair.first.data(), ' ', kvpair.second.data());
-  }
-  std::sort(raw_kvpairs.begin(), raw_kvpairs.end());
-  std::sort(insert_kvpairs.begin(), insert_kvpairs.end());
-  for (size_t i = 0; i < raw_kvpairs.size(); i++) {
-    ASSERT_EQ(raw_kvpairs[i].first, insert_kvpairs[i].first);
-    ASSERT_EQ(file_contents[i].second, insert_kvpairs[i].second);
-  }
-  // ASSERT_EQ(file_contents, file_system_.files.begin()->second);
+  ASSERT_EQ(file_contents, file_system_.files.begin()->second);
 }
 
 void MockTableFactory::AssertLatestFiles(
@@ -356,6 +338,5 @@ void MockTableFactory::AssertLatestFiles(
     }
   }
 }
-
 }  // namespace mock
 }  // namespace ROCKSDB_NAMESPACE

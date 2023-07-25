@@ -9,6 +9,7 @@
 
 #pragma once
 #include <atomic>
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -42,6 +43,23 @@ class MergeContext;
 class SystemClock;
 
 struct ImmutableMemTableOptions {
+ public:
+  void PackLocal(int sockfd) const {
+    LOG("ImmutableMemTableOptions::PackLocal");
+    send(sockfd, reinterpret_cast<const void*>(this), sizeof(*this), 0);
+    int64_t ret_val = 0;
+    read(sockfd, &ret_val, sizeof(int64_t));
+  }
+  static void* UnPackLocal(int sockfd) {
+    LOG("ImmutableMemTableOptions::UnPackLocal");
+    void* mem = malloc(sizeof(ImmutableMemTableOptions));
+    read(sockfd, mem, sizeof(ImmutableMemTableOptions));
+    auto* ptr = reinterpret_cast<ImmutableMemTableOptions*>(mem);
+    ptr->info_log = nullptr;  // todo(iaIm14)
+    send(sockfd, &mem, sizeof(mem), 0);
+    return mem;
+  }
+
   explicit ImmutableMemTableOptions(const ImmutableOptions& ioptions,
                                     const MutableCFOptions& mutable_cf_options);
   size_t arena_block_size;
@@ -60,7 +78,6 @@ struct ImmutableMemTableOptions {
   Logger* info_log;
   bool allow_data_in_errors;
   uint32_t protection_bytes_per_key;
-  bool server_use_remtoe_flush;
 };
 
 // Batched counters to updated when inserting keys in one write batch.
@@ -88,7 +105,38 @@ using MultiGetRange = MultiGetContext::Range;
 // written to (aka the 'immutable memtables').
 class MemTable {
  public:
+  static void* UnPackLocal(int sock_fd);
+  void* PackLocal(int sock_fd) const;
+
+ public:
   struct KeyComparator : public MemTableRep::KeyComparator {
+   public:
+    void PackLocal(int sockfd) const override {
+      LOG("KeyComparator::PackLocal");
+      comparator.PackLocal(sockfd);
+      int64_t ret_val = 0;
+      send(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t), 0);
+      LOG("send KeyComparator");
+      read(sockfd, &ret_val, sizeof(int64_t));
+      LOG("read KeyComparator");
+    }
+    static void* UnPackLocal(int sockfd) {
+      LOG("KeyComparator::UnPackLocal");
+      void* internal_key_comparator =
+          InternalKeyComparator::UnPackLocal(sockfd);
+      void* mem = new KeyComparator(InternalKeyComparator());
+      auto* kcmp = reinterpret_cast<KeyComparator*>(mem);
+      int64_t ret_val = 0;
+      read(sockfd, &ret_val, sizeof(int64_t));
+      LOG("read KeyComparator");
+      memcpy(reinterpret_cast<void*>(
+                 const_cast<InternalKeyComparator*>(&kcmp->comparator)),
+             internal_key_comparator, sizeof(InternalKeyComparator));
+      send(sockfd, &kcmp, sizeof(int64_t), 0);
+      LOG("send KeyComparator");
+      return mem;
+    }
+
     const InternalKeyComparator comparator;
     explicit KeyComparator(const InternalKeyComparator& c) : comparator(c) {}
     virtual int operator()(const char* prefix_len_key1,
@@ -540,6 +588,8 @@ class MemTable {
   static Status VerifyEntryChecksum(const char* entry,
                                     size_t protection_bytes_per_key,
                                     bool allow_data_in_errors = false);
+  // TODO(iaIm14): remove is_shared(), dup with IsSharedMemtable() and may cause
+  // delete problem.
   bool IsSharedMemtable() {
     if (strcmp(arena_->name(), "ConcurrentSharedArena") == 0) {
       return true;

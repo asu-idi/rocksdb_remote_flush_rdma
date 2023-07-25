@@ -4,6 +4,9 @@
 //  (found in the LICENSE.Apache file in the root directory).
 //
 #include <cassert>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <random>
 
 #include "db/memtable.h"
@@ -12,9 +15,11 @@
 #include "memory/concurrent_shared_arena.h"
 #include "memory/shared_mem_basic.h"
 #include "memtable/inlineskiplist.h"
-#include "memtable/readonly_skiplisrep.h"
+#include "memtable/readonly_inlineskiplist.h"
+#include "rocksdb/comparator.h"
 #include "rocksdb/memtablerep.h"
 #include "rocksdb/slice_transform.h"
+#include "rocksdb/slice_transform_factory.h"
 #include "rocksdb/utilities/options_type.h"
 #include "util/logger.hpp"
 #include "util/string_util.h"
@@ -22,6 +27,13 @@
 namespace ROCKSDB_NAMESPACE {
 namespace {
 class SkipListRep : public MemTableRep {
+  friend SkipListFactory;
+  friend ReadOnlySkipListRep;
+
+ public:
+  void PackLocal(int sockfd) const override;
+
+ private:
   InlineSkipList<const MemTableRep::KeyComparator&> skip_list_;
   const MemTableRep::KeyComparator& cmp_;
   const SliceTransform* transform_;
@@ -175,8 +187,6 @@ class SkipListRep : public MemTableRep {
     }
   }
 
-  MemTableRep* CloneReadOnlyMemtableRep(
-      Allocator* allocator = new ConSharedArena) override;
   ~SkipListRep() override {}
 
   // Iteration over the contents of a skip list
@@ -354,12 +364,37 @@ class SkipListRep : public MemTableRep {
     }
   }
 };
-MemTableRep* SkipListRep::CloneReadOnlyMemtableRep(Allocator* allocator) {
-  LOG("Clone from memtableRep");
-  void* mem = allocator->AllocateAligned(sizeof(ReadOnlySkipListRep));
-  MemTableRep* ret =
-      new (mem) ReadOnlySkipListRep(cmp_, allocator_, this->skip_list_.Clone());
-  return ret;
+
+void SkipListRep::PackLocal(int sockfd) const {
+  // cmp_.PackLocal(sockfd);
+  // if (transform_ != nullptr)
+  //   transform_->PackLocal(sockfd);
+  // else {
+  //   msg = 0;
+  //   msg += (0xff);
+  //   send(sockfd, &msg, sizeof(msg), 0);
+  //   ret_val = 0;
+  //   read(sockfd, &ret_val, sizeof(int64_t));
+  // }
+  // skip_list_.PackLocal(sockfd);
+  // send(sockfd, reinterpret_cast<const void*>(this), sizeof(*this), 0);
+  // ret_val = 0;
+  // read(sockfd, &ret_val, sizeof(int64_t));
+  LOG("SkipListRep::PackLocal sockfd=", sockfd);
+  int64_t msg = 0;
+  msg += (0x01);
+  send(sockfd, &msg, sizeof(msg), 0);
+  int64_t ret_val = 0;
+  read(sockfd, &ret_val, sizeof(int64_t));
+  ret_val = 0;
+  ReadOnlyInlineSkipList<const MemTableRep::KeyComparator&>* ptr =
+      skip_list_.Clone();
+  LOG("server clone readonly skiplistrep: check data:");
+  ptr->check_data();
+  LOG("server clone readonly skiplistrep: check data finish");
+
+  ReadOnlySkipListRep::PackLocal(sockfd, ptr);
+  LOG("SkipListRep::PackLocal sockfd=", sockfd, " finish");
 }
 
 // TODO: ptr: compare transform
@@ -397,6 +432,26 @@ SkipListFactory::SkipListFactory(size_t lookahead) : lookahead_(lookahead) {
                   &skiplist_factory_info);
 }
 
+void* SkipListFactory::UnPackLocal(int sockfd) {
+  LOG("SkipListFactory::UnPackLocal ");
+  void* local_cmp_ = MemTable::KeyComparator::UnPackLocal(sockfd);
+  void* local_transform_ = SliceTransformFactory::UnPackLocal(sockfd);
+  void* local_skip_list_ = nullptr;
+  // InlineSkipList<MemTable::KeyComparator>::UnPackLocal(sockfd);
+  void* local_skiplistrep = malloc(sizeof(SkipListRep));
+  read(sockfd, local_skiplistrep, sizeof(SkipListRep));
+  auto* ptr = reinterpret_cast<SkipListRep*>(local_skiplistrep);
+  memcpy(reinterpret_cast<void*>(
+             const_cast<MemTableRep::KeyComparator*>(&ptr->cmp_)),
+         local_cmp_, sizeof(MemTable::KeyComparator));
+  ptr->transform_ = reinterpret_cast<const SliceTransform*>(local_transform_);
+  memcpy(
+      reinterpret_cast<void*>(&ptr->skip_list_), local_skip_list_,
+      sizeof(InlineSkipList<MemTable::KeyComparator>));  // todo: check sizeof
+  send(sockfd, reinterpret_cast<void*>(&local_skiplistrep), sizeof(int64_t), 0);
+  return nullptr;
+}
+
 std::string SkipListFactory::GetId() const {
   std::string id = Name();
   if (lookahead_ > 0) {
@@ -419,7 +474,7 @@ MemTableRep* SkipListFactory::CreateMemTableRep(
 MemTableRep* SkipListFactory::CreateMemtableRepFromShm(
     const MemTableRep::KeyComparator& compare, Allocator* allocator,
     const SliceTransform* transform, Logger* logger) {
-  LOG("allocator->name() ", allocator->name());
+  LOG("SkipListFactory::CreateMemtableRepFromShm ", allocator->name());
   assert(strcmp(allocator->name(), "ConcurrentSharedArena") == 0);
   auto* ret = SkipListRep::CreateSharedSkipListRep(compare, allocator,
                                                    transform, lookahead_);

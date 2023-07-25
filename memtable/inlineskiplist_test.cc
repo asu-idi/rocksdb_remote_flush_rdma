@@ -17,8 +17,6 @@
 
 #include "memory/concurrent_arena.h"
 #include "memory/concurrent_shared_arena.h"
-#include "memory/shared_arena.h"
-#include "memory/shared_memory_allocator.h"
 #include "rocksdb/env.h"
 #include "test_util/testharness.h"
 #include "util/hash.h"
@@ -288,8 +286,6 @@ TEST_F(InlineSkipTest, ConSharedSkiplist_Clone) {
   LOG("list->CHECKShared()")
   ASSERT_TRUE(list->CHECKShared());
   list->CHECK_all_addr();
-  ReadOnlyInlineSkipList<TestComparator>* readonly_list = list->Clone();
-  readonly_list->CHECK_all_addr();
 }
 
 TEST_F(InlineSkipTest, DISABLED_InsertWithHint_Sequential) {

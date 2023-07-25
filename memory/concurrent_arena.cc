@@ -9,6 +9,8 @@
 
 #include "memory/concurrent_arena.h"
 
+#include <sys/socket.h>
+
 #include <thread>
 
 #include "port/port.h"
@@ -40,6 +42,19 @@ ConcurrentArena::Shard* ConcurrentArena::Repick() {
   // have repicked
   tls_cpuid = shard_and_index.second | shards_.Size();
   return shard_and_index.first;
+}
+
+void ConcurrentArena::PackLocal(int sockfd) const {
+  std::string name = "ConcurrentArena";
+  name.resize(15);
+  send(sockfd, name.data(), name.size(), 0);
+  int64_t ret = 0;
+  read(sockfd, &ret, sizeof(int64_t));
+}
+void* ConcurrentArena::UnPackLocal(int sockfd) {
+  void* arena = reinterpret_cast<void*>(new ConcurrentArena());
+  send(sockfd, &arena, sizeof(void*), 0);
+  return arena;
 }
 
 }  // namespace ROCKSDB_NAMESPACE

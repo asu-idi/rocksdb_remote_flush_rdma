@@ -8,10 +8,13 @@
 
 #pragma once
 
+#include <cstdint>
+
 #include "memory/shared_mem_basic.h"
 #include "memory/shared_std.hpp"
 #include "monitoring/perf_context_imp.h"
 #include "rocksdb/comparator.h"
+#include "rocksdb/comparator_factory.h"
 #include "util/logger.hpp"
 
 namespace ROCKSDB_NAMESPACE {
@@ -19,6 +22,23 @@ namespace ROCKSDB_NAMESPACE {
 // Wrapper of user comparator, with auto increment to
 // perf_context.user_key_comparison_count.
 class UserComparatorWrapper {
+ public:
+  void PackLocal(int sockfd) const {
+    user_comparator_->PackLocal(sockfd);
+    send(sockfd, reinterpret_cast<const void*>(this), sizeof(*this), 0);
+    int64_t ret_val = 0;
+    read(sockfd, &ret_val, sizeof(int64_t));
+  }
+  static void* UnPackLocal(int sockfd) {
+    void* ucmp = ComparatorFactory::UnPackLocal(sockfd);
+    void* mem = malloc(sizeof(UserComparatorWrapper));
+    read(sockfd, mem, sizeof(UserComparatorWrapper));
+    auto* ret = reinterpret_cast<UserComparatorWrapper*>(mem);
+    ret->user_comparator_ = reinterpret_cast<Comparator*>(ucmp);
+    send(sockfd, &ret, sizeof(void*), 0);
+    return ret;
+  }
+
  public:
   // `UserComparatorWrapper`s constructed with the default constructor are not
   // usable and will segfault on any attempt to use them for comparisons.
@@ -60,55 +80,8 @@ class UserComparatorWrapper {
     return user_comparator_->EqualWithoutTimestamp(a, b);
   }
 
-  // shared
-  bool is_packaged_ = false;
-  void Pack();
-  void UnPack();
-  bool is_shared();
-  const char* shm_name_ = nullptr;
-
  private:
-  // const
-  Comparator* user_comparator_;
+  const Comparator* user_comparator_;
 };
-
-inline bool UserComparatorWrapper::is_shared() {
-  return singleton<SharedContainer>::Instance().find(
-      reinterpret_cast<void*>(this), sizeof(UserComparatorWrapper));
-}
-inline void UserComparatorWrapper::Pack() {
-  assert(is_shared());
-  if (is_packaged_) {
-    LOG("UserComparatorWrapper is already packaged");
-    return;
-  }
-  // TODO(copy): construct a new comparator
-
-  LOG("UserComparatorWrapper::Pack() data: ", user_comparator_->Name());
-  shm_name_ = user_comparator_->Pack();
-
-  is_packaged_ = true;
-}
-
-inline void UserComparatorWrapper::UnPack() {
-  assert(is_shared());
-  if (!is_packaged_) {
-    LOG("UserComparatorWrapper is already unpackaged");
-    return;
-  }
-  // TODO(copy): construct a new comparator
-  if (strcmp(shm_name_, "leveldb.BytewiseComparator") == 0) {
-    auto* cmp = BytewiseComparator();
-    user_comparator_ = static_cast<Comparator*>(const_cast<Comparator*>(cmp));
-  } else if (strcmp(shm_name_, "rocksdb.ReverseBytewiseComparator") == 0) {
-    auto* cmp = ReverseBytewiseComparator();
-    user_comparator_ = static_cast<Comparator*>(const_cast<Comparator*>(cmp));
-  } else {
-    LOG("UserComparatorWrapper::UnPack() is unimplemented: ", shm_name_);
-    assert(false);
-  }
-  user_comparator_->UnPack(shm_name_);
-  is_packaged_ = false;
-}
 
 }  // namespace ROCKSDB_NAMESPACE

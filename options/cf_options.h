@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <unistd.h>
+
 #include <string>
 #include <vector>
 
@@ -95,6 +97,19 @@ struct ImmutableCFOptions {
 };
 
 struct ImmutableOptions : public ImmutableDBOptions, public ImmutableCFOptions {
+ public:
+  void PackLocal(int sockfd) const {
+    this->ImmutableDBOptions::PackLocal(sockfd);
+  }
+  static void* UnPackLocal(int sockfd, const ColumnFamilyOptions& cf_options) {
+    void* immutabe_dboptions_ = ImmutableDBOptions::UnPackLocal(sockfd);
+    auto* db_options_ =
+        reinterpret_cast<ImmutableDBOptions*>(immutabe_dboptions_);
+    auto* ret = new ImmutableOptions(*db_options_, cf_options);
+    return reinterpret_cast<void*>(ret);
+  }
+
+ public:
   explicit ImmutableOptions();
   explicit ImmutableOptions(const Options& options);
 
@@ -109,18 +124,27 @@ struct ImmutableOptions : public ImmutableDBOptions, public ImmutableCFOptions {
 
   ImmutableOptions(const ImmutableDBOptions& db_options,
                    const ColumnFamilyOptions& cf_options);
-
-  void Pack();
-  void UnPack();
-  bool is_shared() const;
-  void blockUnusedDataForTest();
-  void unblockUnusedDataForTest();
-  bool CEHCKShared();
-  bool is_packaged_ = false;
-  std::vector<std::pair<void*, size_t>> temp_block_;
 };
 
 struct MutableCFOptions {
+ public:
+  void PackLocal(int sockfd) const {
+    send(sockfd, reinterpret_cast<const void*>(this), sizeof(MutableCFOptions),
+         0);
+    int64_t ret_val = 0;
+    read(sockfd, &ret_val, sizeof(int64_t));
+  }
+  static void* UnPackLocal(int sockfd) {
+    // todo(iaIm14): not use empty mutable_cf_options to avoid crash
+    void* mem = new MutableCFOptions();
+    read(sockfd, mem, sizeof(MutableCFOptions));
+    int64_t ret_val = 0;
+    send(sockfd, &ret_val, sizeof(int64_t), 0);
+    void* mem2 = new MutableCFOptions();
+    return mem2;
+  }
+
+ public:
   static const char* kName() { return "MutableCFOptions"; }
   explicit MutableCFOptions(const ColumnFamilyOptions& options)
       : write_buffer_size(options.write_buffer_size),
@@ -187,8 +211,7 @@ struct MutableCFOptions {
             options.memtable_protection_bytes_per_key),
         sample_for_compression(
             options.sample_for_compression),  // TODO: is 0 fine here?
-        compression_per_level(options.compression_per_level),
-        server_use_remote_flush(options.server_use_remote_flush) {
+        compression_per_level(options.compression_per_level) {
     RefreshDerivedOptions(options.num_levels, options.compaction_style);
   }
 
@@ -236,8 +259,7 @@ struct MutableCFOptions {
         bottommost_compression(kDisableCompressionOption),
         last_level_temperature(Temperature::kUnknown),
         memtable_protection_bytes_per_key(0),
-        sample_for_compression(0),
-        server_use_remote_flush(false) {}
+        sample_for_compression(0) {}
 
   explicit MutableCFOptions(const Options& options);
 
@@ -334,7 +356,6 @@ struct MutableCFOptions {
   // Derived options
   // Per-level target file size.
   std::vector<uint64_t> max_file_size;
-  bool server_use_remote_flush;
 };
 
 uint64_t MultiplyCheckOverflow(uint64_t op1, double op2);

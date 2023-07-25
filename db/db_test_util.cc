@@ -9,6 +9,8 @@
 
 #include "db/db_test_util.h"
 
+#include <cassert>
+
 #include "cache/cache_reservation_manager.h"
 #include "db/forward_iterator.h"
 #include "env/mock_env.h"
@@ -63,21 +65,17 @@ SpecialEnv::SpecialEnv(Env* base, bool time_elapse_only_sleep)
   non_writable_count_ = 0;
   table_write_callback_ = nullptr;
 }
-DBTestBase::DBTestBase(const std::string path, bool env_do_fsync)
+DBTestBase::DBTestBase(const std::string path, bool env_do_fsync,
+                       bool remote_enable)
     : mem_env_(nullptr), encrypted_env_(nullptr), option_config_(kDefault) {
-  LOG("TestBase Init");
   Env* base_env = Env::Default();
-  LOG("TestBase base_env get");
   ConfigOptions config_options;
   EXPECT_OK(test::CreateEnvFromSystem(config_options, &base_env, &env_guard_));
-  LOG("TestBase CreateEnv finish");
   EXPECT_NE(nullptr, base_env);
   if (getenv("MEM_ENV")) {
     mem_env_ = MockEnv::Create(base_env, base_env->GetSystemClock());
-    LOG("TestBase MEM_ENV finish");
   }
   if (getenv("ENCRYPTED_ENV")) {
-    LOG("TestBase ENCRYPTED_ENV");
     std::shared_ptr<EncryptionProvider> provider;
     std::string provider_id = getenv("ENCRYPTED_ENV");
     if (provider_id.find("=") == std::string::npos &&
@@ -88,20 +86,20 @@ DBTestBase::DBTestBase(const std::string path, bool env_do_fsync)
                                                    &provider));
     encrypted_env_ = NewEncryptedEnv(mem_env_ ? mem_env_ : base_env, provider);
   }
-  LOG("NewSpecial Env");
   env_ = new SpecialEnv(encrypted_env_ ? encrypted_env_
                                        : (mem_env_ ? mem_env_ : base_env));
-  LOG("NewSpecial Env finish");
   env_->SetBackgroundThreads(1, Env::LOW);
   env_->SetBackgroundThreads(1, Env::HIGH);
   env_->skip_fsync_ = !env_do_fsync;
   dbname_ = test::PerThreadDBPath(env_, path);
   alternative_wal_dir_ = dbname_ + "/wal";
   alternative_db_log_dir_ = dbname_ + "/db_log_dir";
-  LOG("Option create");
-  auto options = CurrentOptions();
-  options.server_use_remote_flush = true;  // trigger remote flush
-  LOG("Option create finish");
+  Options options;
+  if (remote_enable) {
+    options = CurrentRemoteOptions();
+  } else {
+    options = CurrentOptions();
+  }
   options.env = env_;
   auto delete_options = options;
   delete_options.wal_dir = alternative_wal_dir_;
@@ -110,30 +108,29 @@ DBTestBase::DBTestBase(const std::string path, bool env_do_fsync)
   EXPECT_OK(DestroyDB(dbname_, options));
   db_ = nullptr;
   LOG("Reopen");
-  assert(options.server_use_remote_flush == true);
   Reopen(options);
   LOG("Reopen finish");
   Random::GetTLSInstance()->Reset(0xdeadbeef);
 }
 
 DBTestBase::~DBTestBase() {
-  // ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->DisableProcessing();
-  // ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->LoadDependency({});
-  // ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->ClearAllCallBacks();
-  // Close();
-  // Options options;
-  // options.db_paths.emplace_back(dbname_, 0);
-  // options.db_paths.emplace_back(dbname_ + "_2", 0);
-  // options.db_paths.emplace_back(dbname_ + "_3", 0);
-  // options.db_paths.emplace_back(dbname_ + "_4", 0);
-  // options.env = env_;
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->DisableProcessing();
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->LoadDependency({});
+  ROCKSDB_NAMESPACE::SyncPoint::GetInstance()->ClearAllCallBacks();
+  Close();
+  Options options;
+  options.db_paths.emplace_back(dbname_, 0);
+  options.db_paths.emplace_back(dbname_ + "_2", 0);
+  options.db_paths.emplace_back(dbname_ + "_3", 0);
+  options.db_paths.emplace_back(dbname_ + "_4", 0);
+  options.env = env_;
 
-  // if (getenv("KEEP_DB")) {
-  //   printf("DB is still at %s\n", dbname_.c_str());
-  // } else {
-  //   EXPECT_OK(DestroyDB(dbname_, options));
-  // }
-  // delete env_;
+  if (getenv("KEEP_DB")) {
+    printf("DB is still at %s\n", dbname_.c_str());
+  } else {
+    EXPECT_OK(DestroyDB(dbname_, options));
+  }
+  delete env_;
 }
 
 bool DBTestBase::ShouldSkipOptions(int option_config, int skip_mask) {
@@ -324,9 +321,22 @@ Options DBTestBase::CurrentOptions(
   return GetOptions(option_config_, GetDefaultOptions(), options_override);
 }
 
+Options DBTestBase::CurrentRemoteOptions(
+    const anon::OptionsOverride& options_override) const {
+  return GetOptions(option_config_, GetRemoteEnabledOptions(),
+                    options_override);
+}
+
 Options DBTestBase::CurrentOptions(
     const Options& default_options,
     const anon::OptionsOverride& options_override) const {
+  return GetOptions(option_config_, default_options, options_override);
+}
+
+Options DBTestBase::CurrentRemoteOptions(
+    const Options& default_options,
+    const anon::OptionsOverride& options_override) const {
+  assert(default_options.server_remote_flush != 0);
   return GetOptions(option_config_, default_options, options_override);
 }
 
@@ -338,6 +348,24 @@ Options DBTestBase::GetDefaultOptions() const {
   options.max_open_files = 5000;
   options.wal_recovery_mode = WALRecoveryMode::kTolerateCorruptedTailRecords;
   options.compaction_pri = CompactionPri::kByCompensatedSize;
+  options.env = env_;
+  if (!env_->skip_fsync_) {
+    options.track_and_verify_wals_in_manifest = true;
+  }
+  return options;
+}
+
+Options DBTestBase::GetRemoteEnabledOptions() const {
+  Options options;
+  options.write_buffer_size = 4090 * 4096;
+  options.target_file_size_base = 2 * 1024 * 1024;
+  options.max_bytes_for_level_base = 10 * 1024 * 1024;
+  options.max_open_files = 5000;
+  options.wal_recovery_mode = WALRecoveryMode::kTolerateCorruptedTailRecords;
+  options.compaction_pri = CompactionPri::kByCompensatedSize;
+  options.server_remote_flush = 1;
+  options.server_use_remote_flush = true;
+  // options.worker_use_remote_flush = true;
   options.env = env_;
   if (!env_->skip_fsync_) {
     options.track_and_verify_wals_in_manifest = true;
@@ -681,23 +709,17 @@ void DBTestBase::Close() {
     EXPECT_OK(db_->DestroyColumnFamilyHandle(h));
   }
   handles_.clear();
-  LOG("DEBUG", std::hex, (long long)db_, std::dec);
-  if (db_ && db_->GetOptions().server_use_remote_flush == true) {
-    LOG("DEBUG", "destroying db remote flush");
-    db_->~DB();
-    shm_delete(reinterpret_cast<char*>(db_));
-  } else {
-    LOG("DEBUG", "destroying db local flush or nullptr");
-    delete db_;
-  }
-  LOG("DEBUG");
+  LOG("DBTestBase::Close");
+  delete db_;
   db_ = nullptr;
+  LOG("DBTestBase::Close finish");
 }
 
 void DBTestBase::DestroyAndReopen(const Options& options) {
   // Destroy using last options
-  LOG("destroy and reopen");
+  LOG("Destroy");
   Destroy(last_options_);
+  LOG("Reopen");
   Reopen(options);
 }
 
@@ -720,7 +742,8 @@ Status DBTestBase::ReadOnlyReopen(const Options& options) {
 }
 
 Status DBTestBase::TryReopen(const Options& options) {
-  LOG("reopen");
+  LOG("reopen: table_factory", options.table_factory->Name(), ' ',
+      options.memtable_factory->Name());
   Close();
   LOG("reopen 1");
   last_options_.table_factory.reset();

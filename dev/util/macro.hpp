@@ -1,7 +1,10 @@
 #pragma once
+#include <unistd.h>
+
 #include <fstream>
 #include <iostream>
 #include <mutex>
+#include <sstream>
 #include <utility>
 
 namespace Noncopyable {
@@ -33,4 +36,5 @@ class Singleton : public Noncopyable::Noncopyable {
 }  // namespace Singleton
 #define LOG(...)                                                     \
   Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output( \
-      __FILE__, __LINE__, __FUNCTION__, __VA_ARGS__);
+      std::this_thread::get_id(), __FILE__, __LINE__, __FUNCTION__,  \
+      __VA_ARGS__);

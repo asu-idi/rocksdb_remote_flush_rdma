@@ -38,6 +38,7 @@
 #include "db/pre_release_callback.h"
 #include "db/range_del_aggregator.h"
 #include "db/read_callback.h"
+#include "db/remote_flush_job.h"
 #include "db/seqno_to_time_mapping.h"
 #include "db/snapshot_checker.h"
 #include "db/snapshot_impl.h"
@@ -174,9 +175,9 @@ class Directories {
 // divided in several db_impl_*.cc files, besides db_impl.cc.
 class DBImpl : public DB {
  public:
-  DBImpl(const ColumnFamilyOptions& cf_options, const DBOptions& options,
-         const std::string& dbname, const bool seq_per_batch = false,
-         const bool batch_per_txn = true, bool read_only = false);
+  DBImpl(const DBOptions& options, const std::string& dbname,
+         const bool seq_per_batch = false, const bool batch_per_txn = true,
+         bool read_only = false);
   // No copying allowed
   DBImpl(const DBImpl&) = delete;
   void operator=(const DBImpl&) = delete;
@@ -187,6 +188,12 @@ class DBImpl : public DB {
 
   using DB::Resume;
   Status Resume() override;
+
+  using DB::ListenAndScheduleFlushJob;
+  Status ListenAndScheduleFlushJob() override;
+
+  using DB::TEST_RemoteFlushListener;
+  void TEST_RemoteFlushListener() override;
 
   using DB::Put;
   Status Put(const WriteOptions& options, ColumnFamilyHandle* column_family,
@@ -1701,6 +1708,11 @@ class DBImpl : public DB {
 
     Env::Priority thread_pri_;
   };
+  struct RemoteFlushThreadArg {
+    DBImpl* db_;
+    Env::Priority thread_pri_;
+    int sockfd_;
+  };
 
   // Information for a manual compaction
   struct ManualCompactionState {
@@ -2040,7 +2052,6 @@ class DBImpl : public DB {
   ColumnFamilyData* GetColumnFamilyDataByName(const std::string& cf_name);
 
   void MaybeScheduleFlushOrCompaction();
-  static void RemoteFlushListener();
 
   struct FlushRequest {
     FlushReason flush_reason;
@@ -2068,8 +2079,12 @@ class DBImpl : public DB {
   static void BGWorkBottomCompaction(void* arg);
   static void BGWorkFlush(void* arg);
   static void BGWorkPurge(void* arg);
+  static void BGWorkRemoteFlush(void* arg);
+  static void TEST_BGWorkRemoteFlush(void* arg);
+  static void UnscheduleRemoteFlushCallback(void* arg);
   static void UnscheduleCompactionCallback(void* arg);
   static void UnscheduleFlushCallback(void* arg);
+  void BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri);
   void BackgroundCallCompaction(PrepickedCompaction* prepicked_compaction,
                                 Env::Priority thread_pri);
   void BackgroundCallFlush(Env::Priority thread_pri);

@@ -9,6 +9,11 @@
 
 #pragma once
 
+#include <unistd.h>
+
+#include <cassert>
+#include <cstdlib>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -16,6 +21,7 @@
 #include "db/log_writer.h"
 #include "db/version_set.h"
 #include "memory/shared_mem_basic.h"
+#include "rocksdb/types.h"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -95,6 +101,7 @@ struct SuperVersionContext {
       delete s;
     }
     superversions_to_free.clear();
+    LOG("SuperVersionContext::Clean() done 2");
   }
 
   ~SuperVersionContext() {
@@ -106,6 +113,11 @@ struct SuperVersionContext {
 };
 
 struct JobContext {
+ public:
+  void PackLocal(int sockfd) const;
+  static void* UnPackLocal(int sockfd);
+
+ public:
   inline bool HaveSomethingToDelete() const {
     return !(full_scan_candidate_files.empty() && sst_delete_files.empty() &&
              blob_delete_files.empty() && log_delete_files.empty() &&
@@ -213,17 +225,29 @@ struct JobContext {
   // doing potentially slow Clean() with locked DB mutex.
   void Clean() {
     // free superversions
+    LOG("JobContext::Clean()");
     for (auto& sv_context : superversion_contexts) {
       sv_context.Clean();
     }
     // free pending memtables
     for (auto m : memtables_to_free) {
       if (m->IsSharedMemtable()) {
-        shm_delete(reinterpret_cast<char*>(m));
+        LOG("JobContext::Clean() shm_delete ", std::hex,
+            reinterpret_cast<void*>(m), std::dec);
+        if (singleton<SharedContainer>::Instance().find(
+                reinterpret_cast<char*>(m), sizeof(MemTable))) {
+          m->~MemTable();
+          shm_delete(reinterpret_cast<char*>(m));
+        }
       } else {
+        LOG("JobContext::Clean() delete ", std::hex, reinterpret_cast<void*>(m),
+            std::dec);
+        assert(!singleton<SharedContainer>::Instance().find(
+            reinterpret_cast<char*>(m), sizeof(MemTable)));
         delete m;
       }
     }
+    LOG("JobContext::Clean() done");
     for (auto l : logs_to_free) {
       delete l;
     }
@@ -231,6 +255,7 @@ struct JobContext {
     memtables_to_free.clear();
     logs_to_free.clear();
     job_snapshot.reset();
+    LOG("JobContext::Clean() done 4");
   }
 
   ~JobContext() {
@@ -238,5 +263,29 @@ struct JobContext {
     assert(logs_to_free.size() == 0);
   }
 };
+
+inline void JobContext::PackLocal(int sockfd) const {
+  LOG("JobContext::PackLocal");
+  send(sockfd, reinterpret_cast<const void*>(this), sizeof(JobContext), 0);
+  assert(job_snapshot == nullptr);
+  int64_t ret_val = 0;
+  read(sockfd, &ret_val, sizeof(int64_t));
+}
+
+inline void* JobContext::UnPackLocal(int sockfd) {
+  size_t empty = 0;
+  read(sockfd, &empty, sizeof(size_t));
+  send(sockfd, &empty, sizeof(size_t), 0);
+  if (empty == 0) {
+    LOG("JobContext::UnPackLocal empty");
+    return nullptr;
+  }
+  LOG("JobContext::UnPackLocal");
+  void* mem = malloc(sizeof(JobContext));
+  read(sockfd, mem, sizeof(JobContext));
+  auto ret_val = reinterpret_cast<int64_t>(mem);
+  send(sockfd, &ret_val, sizeof(int64_t), 0);
+  return mem;
+}
 
 }  // namespace ROCKSDB_NAMESPACE
