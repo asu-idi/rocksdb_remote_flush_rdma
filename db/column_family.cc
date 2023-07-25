@@ -1064,6 +1064,10 @@ void* ColumnFamilyData::UnPackLocal(int sockfd) {
     worker_cfd_->int_tbl_prop_collector_factories_.emplace_back(
         std::unique_ptr<IntTblPropCollectorFactory>(factory));
   }
+  new (&worker_cfd_->internal_stats_)
+      std::unique_ptr<InternalStats>(std::make_unique<InternalStats>(
+          worker_cfd_->ioptions_.num_levels, worker_cfd_->ioptions_.clock,
+          worker_cfd_));
   send(sockfd, reinterpret_cast<const void*>(&mem), sizeof(int64_t), 0);
   return mem;
 }

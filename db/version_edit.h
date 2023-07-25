@@ -423,6 +423,10 @@ struct LevelFilesBrief {
 // to the MANIFEST file.
 class VersionEdit {
  public:
+  void PackLocal(int sockfd) const;
+  static void* UnPackLocal(int sockfd);
+
+ public:
   void Clear();
 
   void SetDBId(const std::string& db_id) {
@@ -721,16 +725,16 @@ class VersionEdit {
   bool has_last_sequence_ = false;
 
   // Compaction cursors for round-robin compaction policy
-  CompactCursors compact_cursors_;  // TODO
+  CompactCursors compact_cursors_;
 
-  DeletedFiles deleted_files_;  // TODO
-  NewFiles new_files_;          // TODO
+  DeletedFiles deleted_files_;
+  NewFiles new_files_;
 
-  BlobFileAdditions blob_file_additions_;  // TODO
-  BlobFileGarbages blob_file_garbages_;    // TODO
+  BlobFileAdditions blob_file_additions_;
+  BlobFileGarbages blob_file_garbages_;
 
-  WalAdditions wal_additions_;  // TODO
-  WalDeletion wal_deletion_;    // TODO
+  WalAdditions wal_additions_;
+  WalDeletion wal_deletion_;
 
   // Each version edit record should have column_family_ set
   // If it's not set, it is default (0)
@@ -746,24 +750,6 @@ class VersionEdit {
   uint32_t remaining_entries_ = 0;
 
   std::string full_history_ts_low_;
-
-  // shared
-  bool is_packaged_ = false;
-  shm_std::shared_vector<std::pair<void*, size_t>> string_package_;
-  shm_std::shared_vector<std::pair<void*, size_t>> compact_cursors_package_;
-  shm_std::shared_vector<std::pair<void*, size_t>> deleted_files_package_;
-  shm_std::shared_vector<std::pair<void*, size_t>> new_files_package_;
-
- public:
-  static VersionEdit* CreateSharedVersionEdit();
-  bool CHECKShared();
-  [[nodiscard]] bool is_shared() const {
-    return singleton<SharedContainer>::Instance().find(
-        reinterpret_cast<void*>(const_cast<VersionEdit*>(this)),
-        sizeof(VersionEdit));
-  }
-  void Pack();
-  void UnPack();
 };
 
 }  // namespace ROCKSDB_NAMESPACE

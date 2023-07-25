@@ -240,7 +240,7 @@ bool MemTable::CHECKShared() {
   ret = ret && singleton<SharedContainer>::Instance().find(
                    arena_, sizeof(ConSharedArena));
   ret = ret && table_->CHECKShared() && range_del_table_->CHECKShared();
-  ret = ret && edit_.CHECKShared();
+  // ret = ret && edit_.CHECKShared();
   // TODO: maybe check after remote RunLocal() or other occation?
   if (flush_job_info_ != nullptr) ret = ret && flush_job_info_->CHECKShared();
   return ret;
@@ -250,7 +250,7 @@ void MemTable::Pack() {
   // table_.Pack();
   // range_del_table_.Pack();
   LOG("start MemTable::VersionEdit::Pack()");
-  edit_.Pack();
+  // edit_.Pack();
   LOG("finish MemTable::VersionEdit::Pack()");
   if (flush_job_info_ != nullptr) {
     LOG("start MemTable::flush_job_info_->Pack()");
@@ -262,7 +262,7 @@ void MemTable::Pack() {
 void MemTable::UnPack() {
   // table_.Unpack();
   // range_del_table_.Unpack();
-  edit_.UnPack();
+  // edit_.UnPack();
   // TODO: check if a shared std::unique_ptr could work
   if (flush_job_info_ != nullptr) flush_job_info_->UnPack();
 }
