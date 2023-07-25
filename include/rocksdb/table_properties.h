@@ -6,6 +6,7 @@
 
 #include <stdint.h>
 
+#include <cassert>
 #include <cstddef>
 #include <map>
 #include <memory>
@@ -144,6 +145,13 @@ class TablePropertiesCollector {
 // because RocksDB is not exception-safe. This could cause undefined behavior
 // including data loss, unreported corruption, deadlocks, and more.
 class TablePropertiesCollectorFactory : public Customizable {
+ public:
+  virtual void PackLocal(int sockfd) const {
+    LOG("TablePropertiesCollectorFactory::PackLocal not implemented. Name: ",
+        Name());
+    assert(false);
+  }
+
  public:
   struct Context {
     uint32_t column_family_id;

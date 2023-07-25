@@ -128,6 +128,10 @@ enum EpochNumberRequirement {
 // compaction, blob files, etc.
 class VersionStorageInfo {
  public:
+  void PackLocal(int sockfd) const;
+  static void* UnPackLocal(int sockfd);
+
+ public:
   VersionStorageInfo(const InternalKeyComparator* internal_comparator,
                      const Comparator* user_comparator, int num_levels,
                      CompactionStyle compaction_style,
@@ -820,6 +824,10 @@ using MultiGetRange = MultiGetContext::Range;
 // the column family at a certain point in time.
 class Version {
  public:
+  void PackLocal(int sockfd) const;
+  static void* UnPackLocal(int sockfd);
+
+ public:
   // Append to *iters a sequence of iterators that will
   // yield the contents of this Version when merged together.
   // @param read_options Must outlive any iterator built by
@@ -994,6 +1002,15 @@ class Version {
       const ReadOptions& read_options, MergeIteratorBuilder* merge_iter_builder,
       int level, bool allow_unprepared_value);
 
+  void Pack();
+  void UnPack();
+  void blockUnusedDataForTest();
+  void unblockUnusedDataForTest();
+  void CEHCKShared();
+  bool is_shared();
+  bool is_packaged_ = false;
+  std::vector<std::pair<void*, size_t>> block_;
+
  private:
   Env* env_;
   SystemClock* clock_;
@@ -1117,8 +1134,11 @@ class AtomicGroupReadBuffer {
 // column families via ColumnFamilySet, i.e. set of the column families.
 class VersionSet {
  public:
-  VersionSet(const ColumnFamilyOptions& dummy_cf_options,
-             const std::string& dbname, const ImmutableDBOptions* db_options,
+  void PackLocal(int sockfd) const;
+  static void* UnPackLocal(int sockfd);
+
+ public:
+  VersionSet(const std::string& dbname, const ImmutableDBOptions* db_options,
              const FileOptions& file_options, Cache* table_cache,
              WriteBufferManager* write_buffer_manager,
              WriteController* write_controller,
@@ -1544,13 +1564,12 @@ class VersionSet {
 
   // Protected by DB mutex.
   WalSet wals_;
-  const ColumnFamilyOptions dummy_cf_options_;
-  std::unique_ptr<ColumnFamilySet> column_family_set_;
+  std::unique_ptr<ColumnFamilySet> column_family_set_;  // TODO
   Cache* table_cache_;
   Env* const env_;
   FileSystemPtr const fs_;
   SystemClock* const clock_;
-  const std::string dbname_;
+  const std::string dbname_;  // TODO
   std::string db_id_;
   const ImmutableDBOptions* const db_options_;
   std::atomic<uint64_t> next_file_number_;
@@ -1608,6 +1627,16 @@ class VersionSet {
   std::shared_ptr<IOTracer> io_tracer_;
 
   std::string db_session_id_;
+
+ public:
+  void Pack();
+  void UnPack();
+  void blockUnusedDataForTest();
+  void unblockUnusedDataForTest();
+  void CHECKShared();
+  bool is_shared();
+  bool is_packaged_ = false;
+  std::vector<std::pair<void*, size_t>> block_;
 
  private:
   // REQUIRES db mutex at beginning. may release and re-acquire db mutex

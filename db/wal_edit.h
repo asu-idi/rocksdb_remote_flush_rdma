@@ -99,7 +99,7 @@ class WalAddition {
 std::ostream& operator<<(std::ostream& os, const WalAddition& wal);
 JSONWriter& operator<<(JSONWriter& jw, const WalAddition& wal);
 
-using WalAdditions = shm_std::shared_vector<WalAddition>;
+using WalAdditions = std::vector<WalAddition>;
 
 // Records the event of deleting WALs before the specified log number.
 class WalDeletion {

@@ -18,6 +18,7 @@
 
 #pragma once
 
+#include <cassert>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -671,7 +672,6 @@ struct BlockBasedTablePropertyNames {
 extern TableFactory* NewBlockBasedTableFactory(
     const BlockBasedTableOptions& table_options = BlockBasedTableOptions());
 
-
 enum EncodingType : char {
   // Always write full keys without any special encoding.
   kPlain,
@@ -827,11 +827,16 @@ struct CuckooTableOptions {
 extern TableFactory* NewCuckooTableFactory(
     const CuckooTableOptions& table_options = CuckooTableOptions());
 
-
 class RandomAccessFileReader;
 
 // A base class for table factories.
 class TableFactory : public Customizable {
+ public:
+  virtual void PackLocal(int sockfd) const {
+    LOG("TableFactory::PackLocal not implemented");
+    assert(false);
+  }
+
  public:
   virtual ~TableFactory() override {}
 
@@ -923,5 +928,38 @@ extern TableFactory* NewAdaptiveTableFactory(
     std::shared_ptr<TableFactory> plain_table_factory = nullptr,
     std::shared_ptr<TableFactory> cuckoo_table_factory = nullptr);
 
+class TablePackFactory {
+ public:
+  static void* UnPackLocal(int sockfd);
+
+ public:
+  TablePackFactory& operator=(const TablePackFactory&) = delete;
+  TablePackFactory& operator=(TablePackFactory&&) = delete;
+  TablePackFactory(const TablePackFactory&) = delete;
+
+ private:
+  TablePackFactory() = default;
+  ~TablePackFactory() = default;
+};
+
+inline void* TablePackFactory::UnPackLocal(int sockfd) {
+  size_t msg = 0;
+  read(sockfd, &msg, sizeof(msg));
+  if (msg == 0) {
+    LOG("TablePackFactory::UnPackLocal: msg == 0 : nullptr");
+    return nullptr;
+  }
+  send(sockfd, &msg, sizeof(msg), 0);
+  if (msg == 0x01) {
+    return NewBlockBasedTableFactory();
+  } else if (msg == 0x02) {
+    return NewCuckooTableFactory();
+  } else if (msg == 0x03) {
+    return NewPlainTableFactory();
+  } else {
+    LOG("TablePackFactory::UnPackLocal: msg: ", msg);
+    assert(false);
+  }
+}
 
 }  // namespace ROCKSDB_NAMESPACE

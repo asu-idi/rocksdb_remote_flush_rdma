@@ -24,6 +24,10 @@ namespace ROCKSDB_NAMESPACE {
 
 class Arena : public BasicArena {
  public:
+  void PackLocal(int sockfd) const override;
+  static void* UnPackLocal(int sockfd);
+
+ public:
   // No copying allowed
   Arena(const Arena&) = delete;
   void operator=(const Arena&) = delete;

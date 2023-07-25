@@ -17,9 +17,12 @@
 #pragma once
 
 #include <stdint.h>
+#include <unistd.h>
 
+#include <cassert>
 #include <chrono>
 #include <cstdarg>
+#include <cstddef>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -84,6 +87,32 @@ enum class IOType : uint8_t {
 // honored. More hints can be added here in the future to indicate things like
 // storage media (HDD/SSD) to be used, replication level etc.
 struct IOOptions {
+ public:
+  void PackLocal(int sockfd) const {
+    assert(property_bag.empty());
+    // assert(timeout.count() >= 0);
+    size_t timeout_ = timeout.count();
+    send(sockfd, reinterpret_cast<const void*>(&timeout_), sizeof(size_t), 0);
+    timeout_ = 0;
+    read(sockfd, &timeout_, sizeof(size_t));
+
+    send(sockfd, reinterpret_cast<const void*>(this), sizeof(IOOptions), 0);
+    size_t ret_val = 0;
+    read(sockfd, &ret_val, sizeof(size_t));
+  }
+  static void* UnPackLocal(int sockfd) {
+    void* mem = malloc(sizeof(IOOptions));
+    size_t timeout_ = 0;
+    read(sockfd, &timeout_, sizeof(size_t));
+    send(sockfd, &timeout_, sizeof(size_t), 0);
+
+    read(sockfd, mem, sizeof(IOOptions));
+    auto ptr = reinterpret_cast<IOOptions*>(mem);
+    new (&ptr->timeout) std::chrono::microseconds(timeout_);
+    size_t ret_val = 0;
+    send(sockfd, &ret_val, sizeof(size_t), 0);
+    return mem;
+  }
   // Timeout for the operation in microseconds
   std::chrono::microseconds timeout;
 
@@ -150,6 +179,32 @@ struct DirFsyncOptions {
 // while its open. We may add more options here in the future such as
 // redundancy level, media to use etc.
 struct FileOptions : EnvOptions {
+ public:
+  void PackLocal(int sockfd) const {
+    EnvOptions::PackLocal(sockfd);
+    io_options.PackLocal(sockfd);
+    send(sockfd, reinterpret_cast<const void*>(this), sizeof(FileOptions), 0);
+    int64_t ret_val = 0;
+    read(sockfd, &ret_val, sizeof(int64_t));
+  }
+  static void* UnPackLocal(int sockfd) {
+    auto* local_env_options_ =
+        reinterpret_cast<EnvOptions*>(EnvOptions::UnPackLocal(sockfd));
+    auto* local_io_options =
+        reinterpret_cast<IOOptions*>(IOOptions::UnPackLocal(sockfd));
+    void* mem = new FileOptions(*local_env_options_);
+    void* mem2 = malloc(sizeof(FileOptions));
+    read(sockfd, mem2, sizeof(FileOptions));
+    auto ptr = reinterpret_cast<FileOptions*>(mem2);
+    auto local_file_options = reinterpret_cast<FileOptions*>(mem);
+    new (&local_file_options->io_options) IOOptions(*local_io_options);
+    local_file_options->temperature = ptr->temperature;
+    local_file_options->handoff_checksum_type = ptr->handoff_checksum_type;
+    int64_t ret_val = 0;
+    send(sockfd, &ret_val, sizeof(int64_t), 0);
+    free(mem2);
+    return mem;
+  }
   // Embedded IOOptions to control the parameters for any IOs that need
   // to be issued for the file open/creation
   IOOptions io_options;

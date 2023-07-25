@@ -20,8 +20,7 @@ extern bool SaveValue(void* arg, const ParsedInternalKey& parsed_key,
 
 CompactedDBImpl::CompactedDBImpl(const DBOptions& options,
                                  const std::string& dbname)
-    : DBImpl(ColumnFamilyOptions(), options, dbname, /*seq_per_batch*/ false,
-             +/*batch_per_txn*/ true,
+    : DBImpl(options, dbname, /*seq_per_batch*/ false, +/*batch_per_txn*/ true,
              /*read_only*/ true),
       cfd_(nullptr),
       version_(nullptr),

@@ -10,10 +10,26 @@
 
 #include <stdint.h>
 
+#include <atomic>
+#include <cassert>
+#include <cstdint>
+#include <functional>
+#include <thread>
+
+#include "db/remote_flush_job.h"
 #include "rocksdb/configurable.h"
 #ifdef OS_SOLARIS
 #include <alloca.h>
 #endif
+
+// for socket API
+#ifdef __linux
+#include <netinet/in.h>
+#include <pthread.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif  //__linux
+
 #include <algorithm>
 #include <cinttypes>
 #include <cstdio>
@@ -153,10 +169,9 @@ void DumpSupportInfo(Logger* logger) {
 }
 }  // namespace
 
-// TODO: cf_options from DB::Open use cfs.begin().options
-DBImpl::DBImpl(const ColumnFamilyOptions& cf_options, const DBOptions& options,
-               const std::string& dbname, const bool seq_per_batch,
-               const bool batch_per_txn, bool read_only)
+DBImpl::DBImpl(const DBOptions& options, const std::string& dbname,
+               const bool seq_per_batch, const bool batch_per_txn,
+               bool read_only)
     : dbname_(dbname),
       own_info_log_(options.info_log == nullptr),
       init_logger_creation_s_(),
@@ -275,10 +290,10 @@ DBImpl::DBImpl(const ColumnFamilyOptions& cf_options, const DBOptions& options,
       PeriodicTaskType::kRecordSeqnoTime,
       [this]() { this->RecordSeqnoToTimeMapping(); });
 
-  versions_.reset(new VersionSet(
-      cf_options, dbname_, &immutable_db_options_, file_options_,
-      table_cache_.get(), write_buffer_manager_, &write_controller_,
-      &block_cache_tracer_, io_tracer_, db_id_, db_session_id_));
+  versions_.reset(new VersionSet(dbname_, &immutable_db_options_, file_options_,
+                                 table_cache_.get(), write_buffer_manager_,
+                                 &write_controller_, &block_cache_tracer_,
+                                 io_tracer_, db_id_, db_session_id_));
   LOG("Open ColumnFamilyMemTablesImpl");
   column_family_memtables_.reset(
       new ColumnFamilyMemTablesImpl(versions_->GetColumnFamilySet()));
@@ -294,6 +309,207 @@ DBImpl::DBImpl(const ColumnFamilyOptions& cf_options, const DBOptions& options,
   if (write_buffer_manager_) {
     wbm_stall_.reset(new WBMStallInterface());
   }
+}
+
+void DBImpl::BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri) {
+  TEST_SYNC_POINT("DBImpl::BackgroundCallRemoteFlush:Start");
+  int64_t magic = 0;
+  int64_t buffer = 0;
+  char* buffer_ptr = reinterpret_cast<char*>(&buffer);
+
+  read(sockfd, buffer_ptr, sizeof(int64_t));
+  LOG("worker Message received1 / JobHandle: ", std::hex, buffer, std::dec, ' ',
+      sockfd);
+
+  magic = 4321;
+  send(sockfd, &magic, sizeof(size_t), 0);
+  LOG("worker Message sent1: ", magic, ' ', sockfd);
+
+  auto* flush_job =
+      reinterpret_cast<RemoteFlushJob*>(malloc(sizeof(RemoteFlushJob)));
+  flush_job->worker_socket_fd_ = sockfd;
+  auto* local_handler = reinterpret_cast<RemoteFlushJob*>(
+      flush_job->UnPackLocal(flush_job->worker_socket_fd_, this));
+  int64_t signal_verify = 0;
+  read(sockfd, &signal_verify, sizeof(int64_t));
+  LOG("worker Message received2: ", signal_verify, ' ', sockfd);
+  local_handler->worker_socket_fd_ = sockfd;
+  local_handler->RunLocal();
+
+  auto signal = reinterpret_cast<int64_t>(local_handler);
+  send(sockfd, &signal, sizeof(int64_t), 0);
+  LOG("worker Message sent3: ", signal, ' ', sockfd);
+
+  magic = 0;
+  read(sockfd, &magic, sizeof(int64_t));
+  LOG("worker Message received4: ", magic, ' ', sockfd);
+  assert(magic == 1234);
+
+  buffer = 1234;
+  send(sockfd, &buffer, sizeof(int64_t), 0);
+  LOG("worker Message sent5: ", buffer, ' ', sockfd);
+
+  close(sockfd);
+  bg_flush_scheduled_--;
+  TEST_SYNC_POINT("DBImpl::BackgroundCallRemoteFlush:Finish");
+}
+
+void DBImpl::UnscheduleRemoteFlushCallback(void* arg) {
+  LOG("DBImpl::UnscheduleRemoteFlushCallback");
+}
+
+void DBImpl::BGWorkRemoteFlush(void* arg) {
+  RemoteFlushThreadArg fta = *(reinterpret_cast<RemoteFlushThreadArg*>(arg));
+  delete reinterpret_cast<RemoteFlushThreadArg*>(arg);
+
+  IOSTATS_SET_THREAD_POOL_ID(fta.thread_pri_);
+  TEST_SYNC_POINT("DBImpl::BGWorkRemoteFlush:Start");
+  LOG("Remote flush job started: ", fta.sockfd_);
+  static_cast_with_check<DBImpl>(fta.db_)->BackgroundCallRemoteFlush(
+      fta.sockfd_, fta.thread_pri_);
+  LOG("Remote flush job finished: ", fta.sockfd_);
+  TEST_SYNC_POINT("DBImpl::BGWorkRemoteFlush:Finish");
+}
+
+void DBImpl::TEST_BGWorkRemoteFlush(void* arg) {
+  RemoteFlushThreadArg fta = *(reinterpret_cast<RemoteFlushThreadArg*>(arg));
+  delete reinterpret_cast<RemoteFlushThreadArg*>(arg);
+  int valread;
+  size_t magic = 0;
+  size_t buffer = 0;
+  char* buffer_ptr = reinterpret_cast<char*>(&buffer);
+
+  valread = read(fta.sockfd_, buffer_ptr, sizeof(size_t));
+  LOG("Received RemoteFlushJob ptr: ", std::hex,
+      reinterpret_cast<void*>(buffer), std::dec, ' ', valread,
+      " bytes in total");
+  auto* flush_job = reinterpret_cast<RemoteFlushJob*>(buffer);
+  flush_job->worker_socket_fd_ = fta.sockfd_;
+  Status ret = flush_job->RunLocal();
+  if (ret.ok()) {
+    magic = 1234;
+  } else {
+    magic = 4321;
+  }
+  send(fta.sockfd_, &magic, sizeof(size_t), 0);
+  close(fta.sockfd_);
+}
+void DBImpl::TEST_RemoteFlushListener() {
+  std::function<void()> func = [this]() {
+    int server_fd, new_socket;
+    struct sockaddr_in address;
+    int opt = 1;
+    int addrlen = sizeof(address);
+    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
+      LOG("socket failed");
+      assert(false);
+    }
+    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt,
+                   sizeof(opt))) {
+      LOG("setsockopt failed");
+      assert(false);
+    }
+    address.sin_family = AF_INET;
+    address.sin_addr.s_addr = INADDR_ANY;
+    address.sin_port = htons(8080);
+    if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
+      LOG("bind failed");
+      assert(false);
+    }
+    if (listen(server_fd, 3) < 0) {
+      LOG("listen failed");
+      assert(false);
+    }
+    while (true) {
+      if ((new_socket = accept(server_fd, (struct sockaddr*)&address,
+                               (socklen_t*)&addrlen)) < 0) {
+        LOG("accept failed");
+        assert(false);
+      }
+      auto* fta = new RemoteFlushThreadArg();
+      fta->thread_pri_ = Env::Priority::HIGH;
+      fta->db_ = this;
+      fta->sockfd_ = new_socket;
+      std::thread thr(&DBImpl::TEST_BGWorkRemoteFlush, fta);
+      thr.detach();
+      LOG("Scheduled worker thread for remote flush job: ", new_socket);
+    }
+  };
+  std::thread thr(func);
+  thr.detach();
+}
+Status DBImpl::ListenAndScheduleFlushJob() {
+  mutex_.Lock();
+  if (!opened_successfully_ || bg_work_paused_ > 0 ||
+      (error_handler_.IsBGWorkStopped() &&
+       !error_handler_.IsRecoveryInProgress()) ||
+      shutting_down_.load(std::memory_order_acquire)) {
+    mutex_.Unlock();
+    return Status::Aborted("DB is not working");
+  }
+  mutex_.Unlock();
+
+  int server_fd, new_socket;
+  struct sockaddr_in address;
+  int opt = 1;
+  int addrlen = sizeof(address);
+  if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
+    LOG("socket failed");
+    return Status::IOError("socket failed");
+  }
+  if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt,
+                 sizeof(opt))) {
+    LOG("setsockopt failed");
+    return Status::IOError("setsockopt failed");
+  }
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = INADDR_ANY;
+  address.sin_port = htons(8080);
+  if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
+    LOG("bind failed");
+    return Status::IOError("bind failed");
+  }
+  if (listen(server_fd, 3) < 0) {
+    LOG("listen failed");
+    return Status::IOError("listen failed");
+  }
+  while (true) {
+    if ((new_socket = accept(server_fd, (struct sockaddr*)&address,
+                             (socklen_t*)&addrlen)) < 0) {
+      LOG("accept failed");
+      return Status::IOError("accept failed");
+    }
+    mutex_.Lock();
+    if (!opened_successfully_ || bg_work_paused_ > 0 ||
+        (error_handler_.IsBGWorkStopped() &&
+         !error_handler_.IsRecoveryInProgress()) ||
+        shutting_down_.load(std::memory_order_acquire)) {
+      mutex_.Unlock();
+      return Status::Aborted("DB is not working");
+    }
+    Status s = Status::OK();
+    auto bg_job_limits = GetBGJobLimits();
+    bool is_flush_pool_empty =
+        env_->GetBackgroundThreads(Env::Priority::HIGH) == 0;
+    if (!is_flush_pool_empty &&
+        bg_flush_scheduled_ < bg_job_limits.max_flushes) {
+      bg_flush_scheduled_++;
+      auto* fta = new RemoteFlushThreadArg();
+      fta->thread_pri_ = Env::Priority::HIGH;
+      fta->db_ = this;
+      fta->sockfd_ = new_socket;
+      env_->Schedule(&DBImpl::BGWorkRemoteFlush, fta, Env::Priority::HIGH, this,
+                     &DBImpl::UnscheduleRemoteFlushCallback);
+      LOG("Scheduled worker thread for remote flush job: ", new_socket);
+    } else {
+      LOG("worker pool is full:", is_flush_pool_empty, " ",
+          unscheduled_flushes_, " ", bg_flush_scheduled_, " ",
+          bg_job_limits.max_flushes);
+    }
+    mutex_.Unlock();
+  }
+
+  return Status::OK();
 }
 
 Status DBImpl::Resume() {
@@ -421,6 +637,7 @@ Status DBImpl::ResumeImpl(DBRecoverContext context) {
   if (job_context.HaveSomethingToDelete()) {
     PurgeObsoleteFiles(job_context);
   }
+  LOG("traccking test");
   job_context.Clean();
 
   if (s.ok()) {
@@ -605,27 +822,20 @@ Status DBImpl::CloseHelper() {
     auto cfd = PopFirstFromCompactionQueue();
     cfd->UnrefAndTryDelete();
   }
-  LOG("DEBUG");
+
   if (default_cf_handle_ != nullptr || persist_stats_cf_handle_ != nullptr) {
-    LOG("DEBUG");
     // we need to delete handle outside of lock because it does its own locking
     mutex_.Unlock();
     if (default_cf_handle_) {
-      LOG("DEBUG");
       delete default_cf_handle_;
-      LOG("DEBUG");
       default_cf_handle_ = nullptr;
     }
     if (persist_stats_cf_handle_) {
-      LOG("DEBUG");
       delete persist_stats_cf_handle_;
-      LOG("DEBUG");
       persist_stats_cf_handle_ = nullptr;
     }
-    LOG("DEBUG");
     mutex_.Lock();
   }
-  LOG("DEBUG");
   // Clean up obsolete files due to SuperVersion release.
   // (1) Need to delete to obsolete files before closing because RepairDB()
   // scans all existing files in the file system and builds manifest file.
@@ -635,6 +845,7 @@ Status DBImpl::CloseHelper() {
   // manifest file), it is not able to identify live files correctly. As a
   // result, all "live" files can get deleted by accident. However, corrupted
   // manifest is recoverable by RepairDB().
+  LOG("DB close checkpoint 1");
   if (opened_successfully_) {
     JobContext job_context(next_job_id_.fetch_add(1));
     FindObsoleteFiles(&job_context, true);
@@ -645,9 +856,12 @@ Status DBImpl::CloseHelper() {
     if (job_context.HaveSomethingToDelete()) {
       PurgeObsoleteFiles(job_context);
     }
+    LOG("traccking test");
     job_context.Clean();
+    LOG("traccking test finish");
     mutex_.Lock();
   }
+  LOG("DB close checkpoint 2");
   {
     InstrumentedMutexLock lock(&log_write_mutex_);
     for (auto l : logs_to_free_) {
@@ -668,6 +882,7 @@ Status DBImpl::CloseHelper() {
         }
       }
     }
+    LOG("DB close checkpoint 3");
     logs_.clear();
   }
 
@@ -685,21 +900,21 @@ Status DBImpl::CloseHelper() {
   // we can guarantee that after versions_.reset(), table cache is empty
   // so the cache can be safely destroyed.
   table_cache_->EraseUnRefEntries();
-  LOG("DEBUG");
+
   for (auto& txn_entry : recovered_transactions_) {
     delete txn_entry.second;
   }
-
+  LOG("DB close checkpoint 4");
   // versions need to be destroyed before table_cache since it can hold
   // references to table_cache.
   versions_.reset();
-  LOG("DEBUG");
+  LOG("DB close checkpoint 5");
   mutex_.Unlock();
   if (db_lock_ != nullptr) {
     // TODO: Check for unlock error
     env_->UnlockFile(db_lock_).PermitUncheckedError();
   }
-  LOG("DEBUG");
+
   ROCKS_LOG_INFO(immutable_db_options_.info_log, "Shutdown complete");
   LogFlush(immutable_db_options_.info_log);
 
@@ -711,18 +926,18 @@ Status DBImpl::CloseHelper() {
         immutable_db_options_.sst_file_manager.get());
     sfm->Close();
   }
-  LOG("DEBUG");
+
   if (immutable_db_options_.info_log && own_info_log_) {
     Status s = immutable_db_options_.info_log->Close();
     if (!s.ok() && !s.IsNotSupported() && ret.ok()) {
       ret = s;
     }
   }
-  LOG("DEBUG");
+  LOG("DB close checkpoint 6");
   if (write_buffer_manager_ && wbm_stall_) {
     write_buffer_manager_->RemoveDBFromQueue(wbm_stall_.get());
   }
-  LOG("DEBUG");
+  LOG("DB close checkpoint 7");
   IOStatus io_s = directories_.Close(IOOptions(), nullptr /* dbg */);
   if (!io_s.ok()) {
     ret = io_s;
@@ -733,17 +948,16 @@ Status DBImpl::CloseHelper() {
     // retry. In this case, we wrap this exception to something else.
     return Status::Incomplete(ret.ToString());
   }
-  LOG("DEBUG");
+  LOG("CloseHelper finish");
   return ret;
 }
 
 Status DBImpl::CloseImpl() { return CloseHelper(); }
 
 DBImpl::~DBImpl() {
-  LOG("DEBUG");
   // TODO: remove this.
   init_logger_creation_s_.PermitUncheckedError();
-  LOG("DEBUG");
+
   InstrumentedMutexLock closing_lock_guard(&closing_mutex_);
   if (closed_) {
     return;
@@ -753,12 +967,10 @@ DBImpl::~DBImpl() {
 
   {
     const Status s = MaybeReleaseTimestampedSnapshotsAndCheck();
-    LOG("DEBUG");
     s.PermitUncheckedError();
   }
 
   closing_status_ = CloseImpl();
-  LOG("DEBUG");
   closing_status_.PermitUncheckedError();
 }
 
@@ -1828,6 +2040,7 @@ static void CleanupSuperVersionHandle(void* arg1, void* /*arg2*/) {
       sv_handle->db->PurgeObsoleteFiles(job_context,
                                         sv_handle->background_purge);
     }
+    LOG("traccking test");
     job_context.Clean();
   }
 
@@ -2114,7 +2327,6 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
   bool done = false;
   std::string* timestamp =
       ucmp->timestamp_size() > 0 ? get_impl_options.timestamp : nullptr;
-  LOG("");
   if (!skip_memtable) {
     // Get value associated with key
     if (get_impl_options.get_value) {
@@ -2126,7 +2338,6 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
               &max_covering_tombstone_seq, read_options,
               false /* immutable_memtable */, get_impl_options.callback,
               get_impl_options.is_blob_index)) {
-        LOG("");
         done = true;
 
         if (get_impl_options.value) {
@@ -2143,7 +2354,6 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
                               &merge_context, &max_covering_tombstone_seq,
                               read_options, get_impl_options.callback,
                               get_impl_options.is_blob_index)) {
-        LOG("");
         done = true;
 
         if (get_impl_options.value) {
@@ -2160,20 +2370,17 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
                        &max_covering_tombstone_seq, read_options,
                        false /* immutable_memtable */, nullptr, nullptr,
                        false)) {
-        LOG("");
         done = true;
         RecordTick(stats_, MEMTABLE_HIT);
       } else if ((s.ok() || s.IsMergeInProgress()) &&
                  sv->imm->GetMergeOperands(lkey, &s, &merge_context,
                                            &max_covering_tombstone_seq,
                                            read_options)) {
-        LOG("");
         done = true;
         RecordTick(stats_, MEMTABLE_HIT);
       }
     }
     if (!done && !s.ok() && !s.IsMergeInProgress()) {
-      LOG("");
       ReturnAndCleanupSuperVersion(cfd, sv);
       return s;
     }
@@ -2183,7 +2390,6 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
   PinnedIteratorsManager pinned_iters_mgr;
   if (!done) {
     PERF_TIMER_GUARD(get_from_output_files_time);
-    LOG("");
     sv->current->Get(
         read_options, lkey, get_impl_options.value, get_impl_options.columns,
         timestamp, &s, &merge_context, &max_covering_tombstone_seq,
@@ -2195,14 +2401,13 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
         get_impl_options.get_value);
     RecordTick(stats_, MEMTABLE_MISS);
   }
-  LOG("");
+
   {
     PERF_TIMER_GUARD(get_post_process_time);
 
     RecordTick(stats_, NUMBER_KEYS_READ);
     size_t size = 0;
     if (s.ok()) {
-      LOG("");
       if (get_impl_options.get_value) {
         if (get_impl_options.value) {
           size = get_impl_options.value->size();
@@ -2277,9 +2482,9 @@ Status DBImpl::GetImpl(const ReadOptions& read_options, const Slice& key,
       RecordTick(stats_, BYTES_READ, size);
       PERF_COUNTER_ADD(get_read_bytes, size);
     }
-    LOG("");
+
     ReturnAndCleanupSuperVersion(cfd, sv);
-    LOG("");
+
     RecordInHistogram(stats_, BYTES_PER_READ, size);
   }
   return s;
@@ -4289,6 +4494,7 @@ Status DBImpl::DeleteFile(std::string name) {
     if (!status.ok()) {
       ROCKS_LOG_WARN(immutable_db_options_.info_log,
                      "DeleteFile %s failed. File not found\n", name.c_str());
+      LOG("traccking test");
       job_context.Clean();
       return Status::InvalidArgument("File not found");
     }
@@ -4299,6 +4505,7 @@ Status DBImpl::DeleteFile(std::string name) {
       ROCKS_LOG_INFO(immutable_db_options_.info_log,
                      "DeleteFile %s Skipped. File about to be compacted\n",
                      name.c_str());
+      LOG("traccking test");
       job_context.Clean();
       return Status::OK();
     }
@@ -4312,6 +4519,7 @@ Status DBImpl::DeleteFile(std::string name) {
         ROCKS_LOG_WARN(immutable_db_options_.info_log,
                        "DeleteFile %s FAILED. File not in last level\n",
                        name.c_str());
+        LOG("traccking test");
         job_context.Clean();
         return Status::InvalidArgument("File not in last level");
       }
@@ -4323,6 +4531,7 @@ Status DBImpl::DeleteFile(std::string name) {
                      "DeleteFile %s failed ---"
                      " target file in level 0 must be the oldest.",
                      name.c_str());
+      LOG("traccking test");
       job_context.Clean();
       return Status::InvalidArgument("File in level 0, but not oldest");
     }
@@ -4344,6 +4553,7 @@ Status DBImpl::DeleteFile(std::string name) {
     // Call PurgeObsoleteFiles() without holding mutex.
     PurgeObsoleteFiles(job_context);
   }
+  LOG("traccking test");
   job_context.Clean();
   return status;
 }
@@ -4411,6 +4621,7 @@ Status DBImpl::DeleteFilesInRanges(ColumnFamilyHandle* column_family,
       }
     }
     if (edit.GetDeletedFiles().empty()) {
+      LOG("traccking test");
       job_context.Clean();
       return status;
     }
@@ -4435,6 +4646,7 @@ Status DBImpl::DeleteFilesInRanges(ColumnFamilyHandle* column_family,
     // Call PurgeObsoleteFiles() without holding mutex.
     PurgeObsoleteFiles(job_context);
   }
+  LOG("traccking test");
   job_context.Clean();
   return status;
 }
@@ -4651,9 +4863,7 @@ Status DB::DestroyColumnFamilyHandle(ColumnFamilyHandle* column_family) {
     return Status::InvalidArgument(
         "Cannot destroy the handle returned by DefaultColumnFamily()");
   }
-  LOG("DEBUG");
   delete column_family;
-  LOG("DEBUG");
   return Status::OK();
 }
 
@@ -5828,9 +6038,6 @@ void DBImpl::NotifyOnExternalFileIngested(
 
 Status DBImpl::StartTrace(const TraceOptions& trace_options,
                           std::unique_ptr<TraceWriter>&& trace_writer) {
-  using std::cout;
-  using std::endl;
-  cout << "Info: call DBImpl StartTrace" << endl;
   InstrumentedMutexLock lock(&trace_mutex_);
   tracer_.reset(new Tracer(immutable_db_options_.clock, trace_options,
                            std::move(trace_writer)));

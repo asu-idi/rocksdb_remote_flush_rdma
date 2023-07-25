@@ -14,7 +14,6 @@
 #include "db/memtable_list.h"
 #include "db/merge_context.h"
 #include "db/range_tombstone_fragmenter.h"
-#include "db/remote_flush_job.h"
 #include "db/version_edit.h"
 #include "db/version_set.h"
 #include "file/file_util.h"

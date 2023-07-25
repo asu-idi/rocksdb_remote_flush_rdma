@@ -11,7 +11,6 @@
 #include <stdint.h>
 #include <stdio.h>
 
-#include <iostream>
 #include <map>
 #include <memory>
 #include <string>
@@ -177,15 +176,6 @@ class DB {
                      const std::vector<ColumnFamilyDescriptor>& column_families,
                      std::vector<ColumnFamilyHandle*>* handles, DB** dbptr);
 
-  static Status OpenForFlushOnly(const Options& options,
-                                 const std::string& name, DB** bptr,
-                                 bool err_if_wal_file_exist = false);
-
-  static Status OpenForFlushOnly(
-      const DBOptions& db_options, const std::string& name,
-      const std::vector<ColumnFamilyDescriptor>& column_families,
-      std::vector<ColumnFamilyHandle*>* handles, DB** dbptr,
-      bool error_if_wal_file_exists = false);
   // OpenForReadOnly() creates a Read-only instance that supports reads
   // alone.
   //
@@ -400,6 +390,14 @@ class DB {
   // a DB.
   virtual Status DestroyColumnFamilyHandle(ColumnFamilyHandle* column_family);
 
+  virtual Status ListenAndScheduleFlushJob() {
+    LOG("ListenAndScheduleFlushJob not supported");
+    return Status::NotSupported();
+  }
+  virtual void TEST_RemoteFlushListener() {
+    LOG("RemoteFlushListener not supported");
+  }
+
   // Set the database entry for "key" to "value".
   // If "key" already exists, it will be overwritten.
   // Returns OK on success, and a non-OK status on error.
@@ -538,13 +536,10 @@ class DB {
     assert(value != nullptr);
     PinnableSlice pinnable_val(value);
     assert(!pinnable_val.IsPinned());
-    LOG("");
     auto s = Get(options, column_family, key, &pinnable_val);
-    LOG("");
     if (s.ok() && pinnable_val.IsPinned()) {
       value->assign(pinnable_val.data(), pinnable_val.size());
     }  // else value is already assigned
-    LOG("");
     return s;
   }
   virtual Status Get(const ReadOptions& options,
@@ -1827,9 +1822,6 @@ class DB {
   // Trace DB operations. Use EndTrace() to stop tracing.
   virtual Status StartTrace(const TraceOptions& /*options*/,
                             std::unique_ptr<TraceWriter>&& /*trace_writer*/) {
-    using std::cout;
-    using std::endl;
-    cout << "ERROR: call Default virtual StartTrace" << endl;
     return Status::NotSupported("StartTrace() is not implemented.");
   }
 

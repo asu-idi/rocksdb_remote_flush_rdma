@@ -34,6 +34,10 @@ constexpr uint64_t kUnknownSeqnoTime = 0;
 //  synchronized by caller.
 class SeqnoToTimeMapping {
  public:
+  void* PackLocal(int sockfd) const;
+  static void* UnPackLocal(int sockfd);
+
+ public:
   // Maximum number of entries can be encoded into SST. The data is delta encode
   // so the maximum data usage for each SST is < 0.3K
   static constexpr uint64_t kMaxSeqnoTimePairsPerSST = 100;

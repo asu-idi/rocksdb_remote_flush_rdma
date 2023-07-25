@@ -1,11 +1,15 @@
 #pragma once
+#include <unistd.h>
+
 #include <chrono>
+#include <cstdint>
 #include <cstring>
 #include <fstream>
 #include <iostream>
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 
 #include "macro.hpp"
@@ -26,7 +30,8 @@ namespace LocalLogger {
 
 template <typename OUT, typename T>
 void LOG_INFO(OUT &&stream, T arg) {
-  stream << arg << ' ' << std::endl;
+  stream << arg << ' ' << getpid() << ":" << std::this_thread::get_id()
+         << std::endl;
 }
 template <typename OUT, typename U, typename... T>
 void LOG_INFO(OUT &&stream, U arg, T... Args) {
@@ -36,21 +41,25 @@ void LOG_INFO(OUT &&stream, U arg, T... Args) {
 
 class LocalLogger {
   std::mutex mtx;
+  std::string path_ = "/root/code/rocksdb_remote_flush/dev/";
   std::fstream _stream_;
 
  public:
-  LocalLogger()
-      : _stream_("/root/code/rocksdb_remote_flush/dev/Log.log",
-                 std::ios::out | std::ios::app) {}
+  LocalLogger() : _stream_(path_ + "Log.log", std::ios::out | std::ios::app) {}
   LocalLogger(std::string &logfile) : _stream_(logfile.c_str()) {}
   template <typename... Args>
-  void output(const char *filename, const int &line, const char *function_name,
-              Args &&...args);
+  void output(const std::thread::id &thread_id, const char *filename,
+              const int &line, const char *function_name, Args &&...args);
 };
 
 template <typename... Args>
-void LocalLogger::output(const char *filename, const int &line,
-                         const char *function_name, Args &&...args) {
+void LocalLogger::output(const std::thread::id &thread_id, const char *filename,
+                         const int &line, const char *function_name,
+                         Args &&...args) {
+  std::stringstream id_stream;
+  id_stream << thread_id;
+  int64_t id;
+  id_stream >> id;
   std::stringstream stream;
   auto time =
       std::chrono::steady_clock::time_point(std::chrono::steady_clock::now());
@@ -64,6 +73,9 @@ void LocalLogger::output(const char *filename, const int &line,
   stream.read(buffer, 10000);
   {
     std::lock_guard<std::mutex> lock(mtx);
+    _stream_.close();
+    _stream_.open(path_ + "Log-" + std::to_string(id) + ".log",
+                  std::ios::out | std::ios::app);
     _stream_ << buffer;
     _stream_.flush();
   }

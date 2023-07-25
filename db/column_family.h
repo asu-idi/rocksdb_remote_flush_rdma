@@ -272,6 +272,10 @@ class ColumnFamilySet;
 // Most methods require DB mutex held, unless otherwise noted
 class ColumnFamilyData {
  public:
+  void* PackLocal(int sockfd) const;
+  static void* UnPackLocal(int sockfd);
+
+ public:
   ~ColumnFamilyData();
 
   // thread-safe
@@ -545,19 +549,21 @@ class ColumnFamilyData {
 
  private:
   friend class ColumnFamilySet;
-  ColumnFamilyData(
-      uint32_t id, const std::string& name, Version* dummy_versions,
-      Cache* table_cache, WriteBufferManager* write_buffer_manager,
-      const ColumnFamilyOptions& options, const ImmutableDBOptions& db_options,
-      const FileOptions* file_options, ColumnFamilySet* column_family_set,
-      BlockCacheTracer* const block_cache_tracer,
-      const std::shared_ptr<IOTracer>& io_tracer, const std::string& db_id,
-      const std::string& db_session_id, bool is_shared = false);
+  ColumnFamilyData(uint32_t id, const std::string& name,
+                   Version* dummy_versions, Cache* table_cache,
+                   WriteBufferManager* write_buffer_manager,
+                   const ColumnFamilyOptions& options,
+                   const ImmutableDBOptions& db_options,
+                   const FileOptions* file_options,
+                   ColumnFamilySet* column_family_set,
+                   BlockCacheTracer* const block_cache_tracer,
+                   const std::shared_ptr<IOTracer>& io_tracer,
+                   const std::string& db_id, const std::string& db_session_id);
 
   std::vector<std::string> GetDbPaths() const;
 
   uint32_t id_;
-  const std::string name_;
+  std::string name_;
   Version* dummy_versions_;  // Head of circular doubly-linked list of versions.
   Version* current_;         // == dummy_versions->prev_
 
@@ -565,13 +571,11 @@ class ColumnFamilyData {
   std::atomic<bool> initialized_;
   std::atomic<bool> dropped_;  // true if client dropped it
 
-  // TODO: const
-  InternalKeyComparator internal_comparator_;
+  const InternalKeyComparator internal_comparator_;
   IntTblPropCollectorFactories int_tbl_prop_collector_factories_;
 
   const ColumnFamilyOptions initial_cf_options_;
-  // const
-  ImmutableOptions ioptions_;
+  const ImmutableOptions ioptions_;
   MutableCFOptions mutable_cf_options_;
 
   const bool is_delete_range_supported_;
@@ -714,9 +718,7 @@ class ColumnFamilySet {
                   WriteController* _write_controller,
                   BlockCacheTracer* const block_cache_tracer,
                   const std::shared_ptr<IOTracer>& io_tracer,
-                  const std::string& db_id, const std::string& db_session_id,
-                  const ColumnFamilyOptions& cf_options,
-                  bool is_shared = false);
+                  const std::string& db_id, const std::string& db_session_id);
   ~ColumnFamilySet();
 
   ColumnFamilyData* GetDefault() const;
@@ -744,7 +746,6 @@ class ColumnFamilySet {
   WriteBufferManager* write_buffer_manager() { return write_buffer_manager_; }
 
   WriteController* write_controller() { return write_controller_; }
-  FileOptions GetFileOptions() { return file_options_; }
 
  private:
   friend class ColumnFamilyData;

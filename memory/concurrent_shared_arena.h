@@ -25,6 +25,10 @@ namespace ROCKSDB_NAMESPACE {
 
 class ConSharedArena : public BasicArena {
  public:
+  void PackLocal(int sockfd) const override;
+  static void* UnPackLocal(int sockfd);
+
+ public:
   // No copying allowed
   ConSharedArena(const ConSharedArena&) = delete;
   void operator=(const ConSharedArena&) = delete;
@@ -89,11 +93,6 @@ class ConSharedArena : public BasicArena {
 
   bool IsInInlineBlock() const override { return blocks_.empty(); }
 
-  // check and adjust the block_size so that the return value is
-  //  1. in the range of [kMinBlockSize, kMaxBlockSize].
-  //  2. the multiple of align unit.
-  static size_t OptimizeBlockSize(size_t block_size);
-
  private:
   // alignas(std::max_align_t) char* inline_block_[kInlineSize];
   alignas(std::max_align_t) char* inline_block_;
@@ -101,23 +100,14 @@ class ConSharedArena : public BasicArena {
   const size_t kBlockSize;
   // Allocated memory blocks
   shm_std::shared_deque<std::unique_ptr<char, void (*)(char*)>> blocks_;
-  // Huge page allocations
-  // std::deque<MemMapping> huge_blocks_;
+
   size_t irregular_block_num = 0;
 
-  // Stats for current active block.
-  // For each block, we allocate aligned memory chucks from one end and
-  // allocate unaligned memory chucks from the other end. Otherwise the
-  // memory waste for alignment will be higher if we allocate both types of
-  // memory from one direction.
   char* unaligned_alloc_ptr_ = nullptr;
   char* aligned_alloc_ptr_ = nullptr;
   // How many bytes left in currently active block?
   size_t alloc_bytes_remaining_ = 0;
 
-  size_t hugetlb_size_ = 0;
-
-  char* AllocateFromHugePage(size_t bytes);
   char* AllocateFallback(size_t bytes, bool aligned);
   char* AllocateNewBlock(size_t block_bytes);
 

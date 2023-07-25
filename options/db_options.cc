@@ -7,6 +7,9 @@
 
 #include <cassert>
 #include <cinttypes>
+#include <cstdint>
+#include <functional>
+#include <random>
 #include <vector>
 
 #include "file/filename.h"
@@ -23,6 +26,7 @@
 #include "rocksdb/env.h"
 #include "rocksdb/file_system.h"
 #include "rocksdb/listener.h"
+#include "rocksdb/options.h"
 #include "rocksdb/rate_limiter.h"
 #include "rocksdb/sst_file_manager.h"
 #include "rocksdb/statistics.h"
@@ -763,30 +767,81 @@ ImmutableDBOptions::ImmutableDBOptions(const DBOptions& options)
       checksum_handoff_file_types(options.checksum_handoff_file_types),
       lowest_used_cache_tier(options.lowest_used_cache_tier),
       compaction_service(options.compaction_service),
-      enforce_single_del_contracts(options.enforce_single_del_contracts) {
+      enforce_single_del_contracts(options.enforce_single_del_contracts),
+      worker_use_remote_flush(options.worker_use_remote_flush),
+      server_remote_flush(options.server_remote_flush) {
   fs = env->GetFileSystem();
   clock = env->GetSystemClock().get();
   logger = info_log.get();
   stats = statistics.get();
 }
 
-std::string generate_option_file_name() {
-  std::string ret = "/tmp/rocksdb_options_dir/OPTION-";
-  for (int i = 0; i < 10; i++) {
-    ret += std::to_string(rand() % 10);
-  }
-  return ret;
+void ImmutableDBOptions::PackLocal(int sockfd) const {
+  std::function<std::string()> gen = []() {
+    std::string ret = "/tmp/DBOptions-";
+    for (int i = 0; i < 10; i++) {
+      std::random_device rd;
+      std::mt19937 generator(rd());
+      ret += std::to_string(generator() % 10);
+    }
+    return ret;
+  };
+  std::string file_name = gen();
+  DBOptions dboptions = BuildDBOptions(*this, MutableDBOptions());
+  std::vector<std::string> cf_names_;
+  std::vector<ColumnFamilyOptions> cf_opts_;
+  cf_names_.push_back("default");
+  cf_opts_.push_back(ColumnFamilyOptions());
+  Status ret = PersistRocksDBOptions(dboptions, cf_names_, cf_opts_, file_name,
+                                     Env::Default()->GetFileSystem().get());
+  assert(ret.ok());
+  send(sockfd, file_name.c_str(), file_name.length(), 0);
+  LOG("Packaging ImmutableDBOptions to file:", file_name.c_str());
+  int64_t ret_val = 0;
+  read(sockfd, &ret_val, sizeof(int64_t));
+  LOG("Packaging ImmutableDBOptions");
 }
-void ImmutableDBOptions::Pack() {
-  if (is_pacakged) return;
-  std::string file_name = generate_option_file_name();
+
+void* ImmutableDBOptions::UnPackLocal(int sockfd) {
+  size_t recv_length = std::string("/tmp/DBOptions-").length() + 10;
+  void* mem = malloc(recv_length);
+  read(sockfd, mem, recv_length);
+  std::string file_name =
+      std::string(reinterpret_cast<char*>(mem)).substr(0, recv_length);
+  LOG("UnPackaging ImmutableDBOptions from file:", file_name.c_str());
+  DBOptions db_options = DBOptions();
+  ConfigOptions config_options;
+  std::vector<ColumnFamilyDescriptor> loaded_cf_descs;
+  Status ret = LoadOptionsFromFile(config_options, file_name, &db_options,
+                                   &loaded_cf_descs);
+  assert(ret.ok());
+  auto* immutable_dboptions = new ImmutableDBOptions();
+  *immutable_dboptions = BuildImmutableDBOptions(db_options);
+  LOG("UnPackaging ImmutableDBOptions");
+  int64_t ret_val = 0;
+  send(sockfd, &ret_val, sizeof(int64_t), 0);
+  return reinterpret_cast<void*>(immutable_dboptions);
+}
+
+void* ImmutableDBOptions::Pack() {
+  if (is_pacakged) return option_file_path;
+  std::function<std::string()> gen = []() {
+    std::random_device rd;
+    std::string now = "/tmp/rocksdb_options_dir/ImmutableDBOptions-";
+    std::mt19937 generator(rd());
+    std::uniform_int_distribution<> dis(0, 9);
+    for (int i = 1; i <= 10; i++) {
+      now += std::to_string(dis(generator));
+    }
+    return now;
+  };
+  std::string file_name = gen();
   void* mem = shm_alloc(file_name.length());
   memcpy(mem, file_name.c_str(), file_name.length());
   option_file_path = reinterpret_cast<char*>(mem);
-  LOG("option file path is ", option_file_path);
+  LOG("option file path is ", reinterpret_cast<char*>(mem));
   DBOptions db_options = BuildDBOptions(*this, MutableDBOptions());
   std::vector<std::string> cf_names_;
-  // TODO: remove this
   std::vector<ColumnFamilyOptions> cf_opts_;
   cf_names_.push_back("default");
   cf_opts_.push_back(ColumnFamilyOptions());
@@ -794,10 +849,12 @@ void ImmutableDBOptions::Pack() {
                                      fs.get());
   assert(ret.ok());
   is_pacakged = true;
+  return option_file_path;
 }
-void ImmutableDBOptions::UnPack() {
-  if (!is_pacakged) return;
-  std::string file_name = option_file_path;
+ImmutableDBOptions* ImmutableDBOptions::UnPack(void* dumped_file) {
+  if (!is_pacakged) return this;
+  assert(dumped_file == option_file_path);
+  std::string file_name = reinterpret_cast<char*>(option_file_path);
   DBOptions db_options;
   ConfigOptions config_options;
   std::vector<ColumnFamilyDescriptor> loaded_cf_descs;
@@ -806,10 +863,12 @@ void ImmutableDBOptions::UnPack() {
 
   assert(ret.ok());
   *this = BuildImmutableDBOptions(db_options);
-  shm_delete(const_cast<char*>(option_file_path));
+  shm_delete(reinterpret_cast<char*>(option_file_path));
   option_file_path = nullptr;
   is_pacakged = false;
+  return this;
 }
+
 bool ImmutableDBOptions::is_shared() {
   return singleton<SharedContainer>::Instance().find(
       reinterpret_cast<void*>(this), sizeof(ImmutableDBOptions));

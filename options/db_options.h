@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -14,14 +15,19 @@ namespace ROCKSDB_NAMESPACE {
 class SystemClock;
 
 struct ImmutableDBOptions {
+ public:
+  void PackLocal(int sockfd) const;
+  static void* UnPackLocal(int sockfd);
+
+ public:
   static const char* kName() { return "ImmutableDBOptions"; }
   ImmutableDBOptions();
   explicit ImmutableDBOptions(const DBOptions& options);
 
   void Dump(Logger* log) const;
 
-  void Pack();
-  void UnPack();
+  void* Pack();
+  ImmutableDBOptions* UnPack(void* dumped_file);
   bool is_shared();
   void blockUnusedDataForTest();
   void unblockUnusedDataForTest();
@@ -113,8 +119,9 @@ struct ImmutableDBOptions {
   bool enforce_single_del_contracts;
 
   size_t worker_use_remote_flush = 0;
+  size_t server_remote_flush = 0;
 
-  const char* option_file_path = nullptr;
+  void* option_file_path = nullptr;
   bool is_pacakged = false;
 
   bool IsWalDirSameAsDBPath() const;

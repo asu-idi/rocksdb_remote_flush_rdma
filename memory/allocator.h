@@ -11,6 +11,7 @@
 // when the allocator object is destroyed. See the Arena class for more info.
 
 #pragma once
+#include <cassert>
 #include <cerrno>
 #include <cstddef>
 
@@ -33,6 +34,9 @@ class Allocator {
 };
 
 class BasicArena : public Allocator {
+ public:
+  virtual void PackLocal(int sockfd) const = 0;
+
  public:
   virtual size_t ApproximateMemoryUsage() const = 0;
   virtual size_t MemoryAllocatedBytes() const = 0;

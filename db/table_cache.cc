@@ -404,7 +404,6 @@ Status TableCache::Get(
     const std::shared_ptr<const SliceTransform>& prefix_extractor,
     HistogramImpl* file_read_hist, bool skip_filters, int level,
     size_t max_file_size_for_l0_meta_pin) {
-  LOG("");
   auto& fd = file_meta.fd;
   std::string* row_cache_entry = nullptr;
   bool done = false;
@@ -425,7 +424,6 @@ Status TableCache::Get(
   Status s;
   TableReader* t = fd.table_reader;
   TypedHandle* handle = nullptr;
-  LOG("");
   if (!done) {
     assert(s.ok());
     if (t == nullptr) {
@@ -439,7 +437,6 @@ Status TableCache::Get(
         t = cache_.Value(handle);
       }
     }
-    LOG("");
     SequenceNumber* max_covering_tombstone_seq =
         get_context->max_covering_tombstone_seq();
     if (s.ok() && max_covering_tombstone_seq != nullptr &&
@@ -458,12 +455,9 @@ Status TableCache::Get(
         }
       }
     }
-    LOG("");
     if (s.ok()) {
       get_context->SetReplayLog(row_cache_entry);  // nullptr if no cache.
-      LOG("");
       s = t->Get(options, k, get_context, prefix_extractor.get(), skip_filters);
-      LOG("");
       get_context->SetReplayLog(nullptr);
     } else if (options.read_tier == kBlockCacheTier && s.IsIncomplete()) {
       // Couldn't find Table in cache but treat as kFound if no_io set
@@ -471,7 +465,6 @@ Status TableCache::Get(
       s = Status::OK();
       done = true;
     }
-    LOG("");
   }
 
   // Put the replay log in row cache only if something was found.
