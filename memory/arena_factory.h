@@ -18,7 +18,7 @@ class BasicArenaFactory {
   static BasicArena* UnPackLocal(int sockfd) {
     std::string msg;
     msg.resize(15);
-    read(sockfd, msg.data(), 15);
+    read_data(sockfd, msg.data(), 15);
     if (msg.substr(0, 5) == "Arena") {
       return reinterpret_cast<Arena*>(Arena::UnPackLocal(sockfd));
     } else if (msg.substr(0, 15) ==

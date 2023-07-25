@@ -54,7 +54,7 @@ inline void* TablePropertiesCollectorPackFactory::UnPackLocal(int sockfd) {
   //   int64_t msg = 0;
   size_t msg_len = sizeof(size_t) + sizeof(size_t) * 2 + sizeof(double);
   char* msg = reinterpret_cast<char*>(malloc(msg_len));
-  read(sockfd, msg, sizeof(msg));
+  read_data(sockfd, msg, sizeof(msg));
   size_t type = *reinterpret_cast<size_t*>(msg);
   if (type == 1) {
     send(sockfd, &type, sizeof(type), 0);
@@ -81,7 +81,7 @@ inline void* TablePropertiesCollectorPackFactory::UnPackLocal(int sockfd) {
 
 inline void* IntTblPropCollectorPackFactory::UnPackLocal(int sockfd) {
   int64_t msg = 0;
-  read(sockfd, &msg, sizeof(msg));
+  read_data(sockfd, &msg, sizeof(msg));
   int64_t type = msg & 0xff;
   int64_t info = msg >> 8;
   if (type == 1) {
@@ -96,7 +96,7 @@ inline void* IntTblPropCollectorPackFactory::UnPackLocal(int sockfd) {
     send(sockfd, &msg, sizeof(msg), 0);
     size_t msg_len = sizeof(size_t) + sizeof(int32_t);
     char* sst_collector_msg = reinterpret_cast<char*>(malloc(msg_len));
-    read(sockfd, sst_collector_msg, msg_len);
+    read_data(sockfd, sst_collector_msg, msg_len);
     int32_t version_ = *reinterpret_cast<int32_t*>(sst_collector_msg);
     size_t global_seqno_ =
         *reinterpret_cast<size_t*>(sst_collector_msg + sizeof(int32_t));

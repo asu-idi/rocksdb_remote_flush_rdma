@@ -52,7 +52,7 @@ class BlockBasedTableFactory : public TableFactory {
     size_t msg = 1;
     send(sockfd, &msg, sizeof(msg), 0);
     msg = 0;
-    read(sockfd, &msg, sizeof(size_t));
+    read_data(sockfd, &msg, sizeof(size_t));
   }
   void PackLocal(char*& buf) const override {
     size_t msg = 1;

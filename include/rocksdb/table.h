@@ -29,6 +29,7 @@
 #include "rocksdb/env.h"
 #include "rocksdb/options.h"
 #include "rocksdb/status.h"
+#include "util/socket_api.hpp"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -950,7 +951,7 @@ class TablePackFactory {
 
 inline void* TablePackFactory::UnPackLocal(int sockfd) {
   size_t msg = 0;
-  read(sockfd, &msg, sizeof(msg));
+  read_data(sockfd, &msg, sizeof(msg));
   if (msg == 0) {
     LOG("TablePackFactory::UnPackLocal: msg == 0 : nullptr");
     return nullptr;

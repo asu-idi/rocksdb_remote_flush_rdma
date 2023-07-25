@@ -362,6 +362,12 @@ class MemTableRepFactory : public Customizable {
     return CreateMemTableRep(key_cmp, allocator, slice_transform, logger);
   }
 
+  virtual MemTableRep* CreateExistMemTableWrapper(const Allocator* arna,
+                                                  const MemTableRep* memtable) {
+    LOG("should not call default CreateExistMemTableWrapper");
+    assert(false);
+  }
+
   const char* Name() const override = 0;
 
   // Return true if the current MemTableRep supports concurrent inserts

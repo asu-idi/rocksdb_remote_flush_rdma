@@ -28,12 +28,12 @@ class UserComparatorWrapper {
     user_comparator_->PackLocal(sockfd);
     send(sockfd, reinterpret_cast<const void*>(this), sizeof(*this), 0);
     int64_t ret_val = 0;
-    read(sockfd, &ret_val, sizeof(int64_t));
+    read_data(sockfd, &ret_val, sizeof(int64_t));
   }
   static void* UnPackLocal(int sockfd) {
     void* ucmp = ComparatorFactory::UnPackLocal(sockfd);
     void* mem = malloc(sizeof(UserComparatorWrapper));
-    read(sockfd, mem, sizeof(UserComparatorWrapper));
+    read_data(sockfd, mem, sizeof(UserComparatorWrapper));
     auto* ret = reinterpret_cast<UserComparatorWrapper*>(mem);
     ret->user_comparator_ = reinterpret_cast<Comparator*>(ucmp);
     send(sockfd, &ret, sizeof(void*), 0);

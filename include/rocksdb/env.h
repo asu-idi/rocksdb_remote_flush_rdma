@@ -33,12 +33,13 @@
 #include <string>
 #include <vector>
 
+#include "memory/remote_flush_service.h"
 #include "rocksdb/customizable.h"
 #include "rocksdb/functor_wrapper.h"
 #include "rocksdb/port_defs.h"
 #include "rocksdb/status.h"
 #include "rocksdb/thread_status.h"
-#include "memory/remote_flush_service.h"
+#include "util/socket_api.hpp"
 
 #ifdef _WIN32
 // Windows API macro interference
@@ -86,11 +87,11 @@ struct EnvOptions {
     size_t ret_val = 0;
     assert(rate_limiter == nullptr);
     send(sockfd, reinterpret_cast<const void*>(this), sizeof(EnvOptions), 0);
-    read(sockfd, &ret_val, sizeof(size_t));
+    read_data(sockfd, &ret_val, sizeof(size_t));
   }
   static void* UnPackLocal(int sockfd) {
     void* mem = malloc(sizeof(EnvOptions));
-    read(sockfd, mem, sizeof(EnvOptions));
+    read_data(sockfd, mem, sizeof(EnvOptions));
     size_t ret_val = 0;
     send(sockfd, &ret_val, sizeof(size_t), 0);
     return mem;

@@ -21,6 +21,7 @@
 #include "rocksdb/slice_transform.h"
 #include "rocksdb/types.h"
 #include "util/coding.h"
+#include "util/socket_api.hpp"
 #include "util/user_comparator_wrapper.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -259,12 +260,12 @@ class InternalKeyComparator
     user_comparator_.PackLocal(sockfd);
     int64_t ret_val = 0;
     send(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t), 0);
-    read(sockfd, &ret_val, sizeof(int64_t));
+    read_data(sockfd, &ret_val, sizeof(int64_t));
   }
   static void* UnPackLocal(int sockfd) {
     void* ucmp = UserComparatorWrapper::UnPackLocal(sockfd);
     int64_t ret = 0;
-    read(sockfd, &ret, sizeof(int64_t));
+    read_data(sockfd, &ret, sizeof(int64_t));
     auto ptr = new InternalKeyComparator();
     void* mem = reinterpret_cast<void*>(ptr);
     memcpy(reinterpret_cast<void*>(&ptr->user_comparator_), ucmp,
@@ -709,7 +710,7 @@ class InternalKeySliceTransform : public SliceTransform {
     info += (0x00);
     send(sockfd, &info, sizeof(info), 0);
     int64_t ret_val = 0;
-    read(sockfd, &ret_val, sizeof(ret_val));
+    read_data(sockfd, &ret_val, sizeof(ret_val));
     transform_->PackLocal(sockfd);
   }
   static void* UnPackLocal(void* transform, int sockfd);
