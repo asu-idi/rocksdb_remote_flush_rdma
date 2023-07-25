@@ -127,11 +127,11 @@ struct FileDescriptor {
     send(sockfd, reinterpret_cast<const void*>(this), sizeof(FileDescriptor),
          0);
     int64_t ret_val = 0;
-    read(sockfd, &ret_val, sizeof(ret_val));
+    read_data(sockfd, &ret_val, sizeof(ret_val));
   }
   static void* UnPackLocal(int sockfd) {
     void* mem = malloc(sizeof(FileDescriptor));
-    read(sockfd, mem, sizeof(FileDescriptor));
+    read_data(sockfd, mem, sizeof(FileDescriptor));
     int64_t ret_val = 0;
     send(sockfd, &ret_val, sizeof(ret_val), 0);
     auto* ptr = reinterpret_cast<FileDescriptor*>(mem);

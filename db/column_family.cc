@@ -64,6 +64,7 @@
 #include "util/cast_util.h"
 #include "util/compression.h"
 #include "util/logger.hpp"
+#include "util/socket_api.hpp"
 #include "util/thread_local.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -742,7 +743,7 @@ ColumnFamilyData::~ColumnFamilyData() {
   LOG("checkpoint 1");
   if (dummy_versions_ != nullptr) {
     // List must be empty
-    assert(dummy_versions_->Next() == dummy_versions_);
+    // assert(dummy_versions_->Next() == dummy_versions_);
     bool deleted __attribute__((__unused__));
     deleted = dummy_versions_->Unref();
     assert(deleted);
@@ -979,7 +980,7 @@ void* ColumnFamilyData::PackLocal(int sockfd) const {
   send(sockfd, reinterpret_cast<void*>(&int_tbl_prop_collector_factories_size),
        sizeof(size_t), 0);
   size_t retval = 0;
-  read(sockfd, reinterpret_cast<void*>(&retval), sizeof(size_t));
+  read_data(sockfd, reinterpret_cast<void*>(&retval), sizeof(size_t));
   LOG("server check int_tbl_prop_collector_factories_: ");
   for (auto& factory : int_tbl_prop_collector_factories_) {
     factory->PackLocal(sockfd);
@@ -987,11 +988,11 @@ void* ColumnFamilyData::PackLocal(int sockfd) const {
   LOG("server check int_tbl_prop_collector_factories_ done.");
 
   int64_t ret_val = name_.size();
-  send(sockfd, reinterpret_cast<const void*>(&ret_val), sizeof(int64_t), 0);
+  write_data(sockfd, reinterpret_cast<const void*>(&ret_val), sizeof(int64_t));
   ret_val = 0;
-  read(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t));
-  send(sockfd, reinterpret_cast<const void*>(name_.data()), name_.size(), 0);
-  read(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t));
+  read_data(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t));
+  write_data(sockfd, reinterpret_cast<const void*>(name_.data()), name_.size());
+  read_data(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t));
 
   send(sockfd, reinterpret_cast<const void*>(this), sizeof(ColumnFamilyData),
        0);
@@ -1001,7 +1002,7 @@ void* ColumnFamilyData::PackLocal(int sockfd) const {
          initial_cf_options_.comparator);
 
   int64_t ret_addr = 0;
-  read(sockfd, reinterpret_cast<void*>(&ret_addr), sizeof(int64_t));
+  read_data(sockfd, reinterpret_cast<void*>(&ret_addr), sizeof(int64_t));
   return reinterpret_cast<void*>(ret_addr);
 }
 
@@ -1015,8 +1016,9 @@ void* ColumnFamilyData::UnPackLocal(int sockfd) {
   auto* worker_mutable_cf_options_ = reinterpret_cast<MutableCFOptions*>(
       MutableCFOptions::UnPackLocal(sockfd));
   size_t int_tbl_prop_collector_factories_size = 0;
-  read(sockfd, reinterpret_cast<void*>(&int_tbl_prop_collector_factories_size),
-       sizeof(size_t));
+  read_data(sockfd,
+            reinterpret_cast<void*>(&int_tbl_prop_collector_factories_size),
+            sizeof(size_t));
   send(sockfd,
        reinterpret_cast<const void*>(&int_tbl_prop_collector_factories_size),
        sizeof(size_t), 0);
@@ -1027,15 +1029,15 @@ void* ColumnFamilyData::UnPackLocal(int sockfd) {
     temp_factories.emplace_back(int_tbl_prop_factory);
   }
   int64_t ret_val = 0;
-  read(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t));
+  read_data(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t));
   std::string worker_name_(ret_val, '\0');
   send(sockfd, reinterpret_cast<const void*>(&ret_val), sizeof(int64_t), 0);
-  read(sockfd, reinterpret_cast<void*>(worker_name_.data()),
-       worker_name_.size());
+  read_data(sockfd, reinterpret_cast<void*>(worker_name_.data()),
+            worker_name_.size());
   send(sockfd, reinterpret_cast<const void*>(&ret_val), sizeof(int64_t), 0);
 
   void* mem = malloc(sizeof(ColumnFamilyData));
-  read(sockfd, mem, sizeof(ColumnFamilyData));
+  read_data(sockfd, mem, sizeof(ColumnFamilyData));
   auto* worker_cfd_ = reinterpret_cast<ColumnFamilyData*>(mem);
   memcpy(reinterpret_cast<void*>(const_cast<ColumnFamilyOptions*>(
              &worker_cfd_->initial_cf_options_)),

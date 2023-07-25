@@ -556,7 +556,18 @@ namespace {
 class SpecialMemTableRep : public MemTableRep {
  public:
   void PackLocal(int sockfd) const override {
-    assert(false);
+    int64_t msg = 0x2;
+    msg += (num_entries_flush_ << 8);
+    LOG("SpecialMemTableRep::PackLocal: start send", msg, " ",
+        num_entries_flush_);
+    send(sockfd, &msg, sizeof(msg), 0);
+    LOG("SpecialMemTableRep::PackLocal: after send", msg, " ",
+        num_entries_flush_);
+    msg = 0;
+    read(sockfd, &msg, sizeof(msg));
+    LOG("SpecialMemTableRep::PackLocal: after recv, start wrapped "
+        "memtable::PackLocal ",
+        msg);
     memtable_->PackLocal(sockfd);
   }
 
@@ -664,6 +675,13 @@ class SpecialSkipListFactory : public MemTableRepFactory {
                                compare, allocator, transform, nullptr),
                            num_entries_flush_);
   }
+  MemTableRep* CreateExistMemTableWrapper(
+      const Allocator* arna, const MemTableRep* memtable) override {
+    return new SpecialMemTableRep(const_cast<Allocator*>(arna),
+                                  const_cast<MemTableRep*>(memtable),
+                                  num_entries_flush_);
+  }
+
   static const char* kClassName() { return "SpecialSkipListFactory"; }
   virtual const char* Name() const override { return kClassName(); }
   std::string GetId() const override {

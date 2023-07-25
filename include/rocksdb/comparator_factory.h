@@ -28,7 +28,7 @@ class ComparatorFactory {
 
 inline void* ComparatorFactory::UnPackLocal(int sockfd) {
   int64_t msg = 0;
-  read(sockfd, &msg, sizeof(msg));
+  read_data(sockfd, &msg, sizeof(msg));
   int64_t type = msg & 0xff;
   int64_t info = (msg >> 8);
   if (type == 0 /*BytewiseComparator*/) {

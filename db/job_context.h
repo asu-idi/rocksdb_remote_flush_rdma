@@ -269,20 +269,20 @@ inline void JobContext::PackLocal(int sockfd) const {
   send(sockfd, reinterpret_cast<const void*>(this), sizeof(JobContext), 0);
   assert(job_snapshot == nullptr);
   int64_t ret_val = 0;
-  read(sockfd, &ret_val, sizeof(int64_t));
+  read_data(sockfd, &ret_val, sizeof(int64_t));
 }
 
 inline void* JobContext::UnPackLocal(int sockfd) {
   size_t empty = 0;
-  read(sockfd, &empty, sizeof(size_t));
-  send(sockfd, &empty, sizeof(size_t), 0);
+  read_data(sockfd, &empty, sizeof(size_t));
+  write_data(sockfd, &empty, sizeof(size_t));
   if (empty == 0) {
     LOG("JobContext::UnPackLocal empty");
     return nullptr;
   }
   LOG("JobContext::UnPackLocal");
   void* mem = malloc(sizeof(JobContext));
-  read(sockfd, mem, sizeof(JobContext));
+  read_data(sockfd, mem, sizeof(JobContext));
   auto ret_val = reinterpret_cast<int64_t>(mem);
   send(sockfd, &ret_val, sizeof(int64_t), 0);
   return mem;

@@ -38,7 +38,7 @@ class BytewiseComparatorImpl : public Comparator {
     msg += (0x00);
     send(sockfd, &msg, sizeof(int64_t), 0);
     int64_t ret_val = 0;
-    read(sockfd, &ret_val, sizeof(int64_t));
+    read_data(sockfd, &ret_val, sizeof(int64_t));
   }
 
  public:
@@ -166,7 +166,7 @@ class ReverseBytewiseComparatorImpl : public BytewiseComparatorImpl {
     msg += (0x01);
     send(sockfd, &msg, sizeof(int64_t), 0);
     int64_t ret_val = 0;
-    read(sockfd, &ret_val, sizeof(int64_t));
+    read_data(sockfd, &ret_val, sizeof(int64_t));
   }
 
  public:

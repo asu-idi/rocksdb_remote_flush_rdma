@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "rocksdb/table_properties.h"
+#include "util/socket_api.hpp"
 #ifdef __linux__
 #include <sys/socket.h>
 #endif  //__linux__
@@ -33,7 +34,7 @@ class CompactOnDeletionCollectorFactory
         deletion_ratio_.load();
     send(sockfd, msg, msg_len, 0);
     size_t ret_val = 0;
-    read(sockfd, &ret_val, sizeof(size_t));
+    read_data(sockfd, &ret_val, sizeof(size_t));
   }
 
  public:

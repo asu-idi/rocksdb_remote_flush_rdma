@@ -103,7 +103,7 @@ class UserKeyTablePropertiesCollectorFactory
     msg += (0x01);
     send(sockfd, &msg, sizeof(msg), 0);
     int64_t ret_val = 0;
-    read(sockfd, &ret_val, sizeof(ret_val));
+    read_data(sockfd, &ret_val, sizeof(ret_val));
     user_collector_factory_->PackLocal(sockfd);
   }
 

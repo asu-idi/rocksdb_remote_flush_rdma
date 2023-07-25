@@ -8,6 +8,7 @@
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 #include "db/db_impl/db_impl.h"
 
+#include <fcntl.h>
 #include <stdint.h>
 
 #include <atomic>
@@ -317,7 +318,7 @@ void DBImpl::BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri) {
   int64_t buffer = 0;
   char* buffer_ptr = reinterpret_cast<char*>(&buffer);
 
-  read(sockfd, buffer_ptr, sizeof(int64_t));
+  read_data(sockfd, buffer_ptr, sizeof(int64_t));
   LOG("worker Message received1 / JobHandle: ", std::hex, buffer, std::dec, ' ',
       sockfd);
 
@@ -331,7 +332,7 @@ void DBImpl::BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri) {
   auto* local_handler = reinterpret_cast<RemoteFlushJob*>(
       flush_job->UnPackLocal(flush_job->worker_socket_fd_, this));
   int64_t signal_verify = 0;
-  read(sockfd, &signal_verify, sizeof(int64_t));
+  read_data(sockfd, &signal_verify, sizeof(int64_t));
   LOG("worker Message received2: ", signal_verify, ' ', sockfd);
   local_handler->worker_socket_fd_ = sockfd;
   local_handler->RunLocal();
@@ -341,7 +342,7 @@ void DBImpl::BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri) {
   LOG("worker Message sent3: ", signal, ' ', sockfd);
 
   magic = 0;
-  read(sockfd, &magic, sizeof(int64_t));
+  read_data(sockfd, &magic, sizeof(int64_t));
   LOG("worker Message received4: ", magic, ' ', sockfd);
   assert(magic == 1234);
 
@@ -379,7 +380,7 @@ void DBImpl::TEST_BGWorkRemoteFlush(void* arg) {
   size_t buffer = 0;
   char* buffer_ptr = reinterpret_cast<char*>(&buffer);
 
-  valread = read(fta.sockfd_, buffer_ptr, sizeof(size_t));
+  valread = read_data(fta.sockfd_, buffer_ptr, sizeof(size_t));
   LOG("Received RemoteFlushJob ptr: ", std::hex,
       reinterpret_cast<void*>(buffer), std::dec, ' ', valread,
       " bytes in total");
@@ -451,7 +452,7 @@ Status DBImpl::ListenAndScheduleFlushJob() {
 
   int server_fd, new_socket;
   struct sockaddr_in address;
-  int opt = 1;
+  int opt = ~O_NONBLOCK;
   int addrlen = sizeof(address);
   if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
     LOG("socket failed");

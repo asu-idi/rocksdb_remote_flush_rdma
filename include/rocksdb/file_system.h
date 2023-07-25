@@ -37,6 +37,7 @@
 #include "rocksdb/options.h"
 #include "rocksdb/table.h"
 #include "rocksdb/thread_status.h"
+#include "util/socket_api.hpp"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -94,19 +95,19 @@ struct IOOptions {
     size_t timeout_ = timeout.count();
     send(sockfd, reinterpret_cast<const void*>(&timeout_), sizeof(size_t), 0);
     timeout_ = 0;
-    read(sockfd, &timeout_, sizeof(size_t));
+    read_data(sockfd, &timeout_, sizeof(size_t));
 
     send(sockfd, reinterpret_cast<const void*>(this), sizeof(IOOptions), 0);
     size_t ret_val = 0;
-    read(sockfd, &ret_val, sizeof(size_t));
+    read_data(sockfd, &ret_val, sizeof(size_t));
   }
   static void* UnPackLocal(int sockfd) {
     void* mem = malloc(sizeof(IOOptions));
     size_t timeout_ = 0;
-    read(sockfd, &timeout_, sizeof(size_t));
+    read_data(sockfd, &timeout_, sizeof(size_t));
     send(sockfd, &timeout_, sizeof(size_t), 0);
 
-    read(sockfd, mem, sizeof(IOOptions));
+    read_data(sockfd, mem, sizeof(IOOptions));
     auto ptr = reinterpret_cast<IOOptions*>(mem);
     new (&ptr->timeout) std::chrono::microseconds(timeout_);
     size_t ret_val = 0;
@@ -185,7 +186,7 @@ struct FileOptions : EnvOptions {
     io_options.PackLocal(sockfd);
     send(sockfd, reinterpret_cast<const void*>(this), sizeof(FileOptions), 0);
     int64_t ret_val = 0;
-    read(sockfd, &ret_val, sizeof(int64_t));
+    read_data(sockfd, &ret_val, sizeof(int64_t));
   }
   static void* UnPackLocal(int sockfd) {
     auto* local_env_options_ =
@@ -194,7 +195,7 @@ struct FileOptions : EnvOptions {
         reinterpret_cast<IOOptions*>(IOOptions::UnPackLocal(sockfd));
     void* mem = new FileOptions(*local_env_options_);
     void* mem2 = malloc(sizeof(FileOptions));
-    read(sockfd, mem2, sizeof(FileOptions));
+    read_data(sockfd, mem2, sizeof(FileOptions));
     auto ptr = reinterpret_cast<FileOptions*>(mem2);
     auto local_file_options = reinterpret_cast<FileOptions*>(mem);
     new (&local_file_options->io_options) IOOptions(*local_io_options);

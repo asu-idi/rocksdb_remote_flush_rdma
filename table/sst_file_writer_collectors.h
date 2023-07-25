@@ -82,7 +82,7 @@ class SstFileWriterPropertiesCollectorFactory
     *reinterpret_cast<size_t*>(msg + sizeof(int32_t)) = global_seqno_;
     send(sockfd, msg, msg_len, 0);
     size_t ret_val = 0;
-    read(sockfd, &ret_val, sizeof(size_t));
+    read_data(sockfd, &ret_val, sizeof(size_t));
   }
 
  public:

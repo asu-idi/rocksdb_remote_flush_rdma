@@ -6,6 +6,8 @@
 #pragma once
 
 #include <cassert>
+
+#include "util/socket_api.hpp"
 #ifdef __linux__
 #include <sys/socket.h>
 #include <unistd.h>
@@ -43,7 +45,7 @@ class DisableGCSnapshotChecker : public SnapshotChecker {
     size_t msg = 0;
     msg += (0x2);
     send(sockfd, &msg, sizeof(msg), 0);
-    read(sockfd, &msg, sizeof(msg));
+    read_data(sockfd, &msg, sizeof(msg));
   }
 
  public:
@@ -92,13 +94,13 @@ class SnapshotCheckerFactory {
 
 inline void* SnapshotCheckerFactory::UnPackLocal(int sockfd) {
   size_t msg = 0;
-  read(sockfd, &msg, sizeof(msg));
+  read_data(sockfd, &msg, sizeof(msg));
   send(sockfd, &msg, sizeof(msg), 0);
   if (msg == 0xff) {
     return nullptr;
   }
   msg = 0;
-  read(sockfd, &msg, sizeof(msg));
+  read_data(sockfd, &msg, sizeof(msg));
   if (msg == 0x02) {
     send(sockfd, &msg, sizeof(msg), 0);
     return DisableGCSnapshotChecker::Instance();

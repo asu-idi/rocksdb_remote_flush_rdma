@@ -144,7 +144,7 @@ void RemoteFlushJob::PackLocal(int server_socket_fd) const {
   send(server_socket_fd, &mem_size, sizeof(size_t), 0);
   LOG("server send mems size: ", mem_size);
   size_t mem_size_ret = 0;
-  read(server_socket_fd, &mem_size_ret, sizeof(size_t));
+  read_data(server_socket_fd, &mem_size_ret, sizeof(size_t));
   LOG("server recv mems size: ", mem_size_ret);
   assert(mem_size == mem_size_ret);
   for (auto& memtable : mems_) {
@@ -156,13 +156,13 @@ void RemoteFlushJob::PackLocal(int server_socket_fd) const {
     LOG("jobcontext not null");
     size_t msg_ = 1;
     send(server_socket_fd, &msg_, sizeof(size_t), 0);
-    read(server_socket_fd, &msg_, sizeof(size_t));
+    read_data(server_socket_fd, &msg_, sizeof(size_t));
     job_context_->PackLocal(server_socket_fd);
   } else {
     LOG("jobcontext null");
     size_t msg_ = 0;
     send(server_socket_fd, &msg_, sizeof(size_t), 0);
-    read(server_socket_fd, &msg_, sizeof(size_t));
+    read_data(server_socket_fd, &msg_, sizeof(size_t));
   }
   // Pack db_impl_seqno_time_mapping_
   db_impl_seqno_time_mapping_.PackLocal(server_socket_fd);
@@ -175,60 +175,60 @@ void RemoteFlushJob::PackLocal(int server_socket_fd) const {
   // mutable_cf_options_.PackLocal(server_socket_fd);
   size_t dbname_len = dbname_.size();
   send(server_socket_fd, &dbname_len, sizeof(size_t), 0);
-  read(server_socket_fd, &dbname_len, sizeof(size_t));
+  read_data(server_socket_fd, &dbname_len, sizeof(size_t));
   if (!dbname_.empty()) {
     send(server_socket_fd, dbname_.data(), dbname_len, 0);
-    read(server_socket_fd, &dbname_len, sizeof(size_t));
+    read_data(server_socket_fd, &dbname_len, sizeof(size_t));
   }
   size_t len = full_history_ts_low_.size();
   send(server_socket_fd, &len, sizeof(size_t), 0);
-  read(server_socket_fd, &len, sizeof(size_t));
+  read_data(server_socket_fd, &len, sizeof(size_t));
   if (!full_history_ts_low_.empty()) {
     send(server_socket_fd, full_history_ts_low_.data(), len, 0);
-    read(server_socket_fd, &len, sizeof(size_t));
+    read_data(server_socket_fd, &len, sizeof(size_t));
   }
   size_t db_id_len = db_id_.size();
   send(server_socket_fd, &db_id_len, sizeof(size_t), 0);
-  read(server_socket_fd, &db_id_len, sizeof(size_t));
+  read_data(server_socket_fd, &db_id_len, sizeof(size_t));
   if (!db_id_.empty()) {
     send(server_socket_fd, db_id_.data(), db_id_len, 0);
-    read(server_socket_fd, &db_id_len, sizeof(size_t));
+    read_data(server_socket_fd, &db_id_len, sizeof(size_t));
   }
   size_t db_session_id_len = db_session_id_.size();
   send(server_socket_fd, &db_session_id_len, sizeof(size_t), 0);
-  read(server_socket_fd, &db_session_id_len, sizeof(size_t));
+  read_data(server_socket_fd, &db_session_id_len, sizeof(size_t));
   if (!db_session_id_.empty()) {
     send(server_socket_fd, db_session_id_.data(), db_session_id_len, 0);
-    read(server_socket_fd, &db_session_id_len, sizeof(size_t));
+    read_data(server_socket_fd, &db_session_id_len, sizeof(size_t));
   }
   size_t existing_snapshots_len = existing_snapshots_.size();
   send(server_socket_fd, &existing_snapshots_len, sizeof(size_t), 0);
-  read(server_socket_fd, &existing_snapshots_len, sizeof(size_t));
+  read_data(server_socket_fd, &existing_snapshots_len, sizeof(size_t));
   if (existing_snapshots_len) {
     for (size_t i = 0; i < existing_snapshots_len; i++) {
       send(server_socket_fd, &existing_snapshots_[i], sizeof(SequenceNumber),
            0);
       size_t temp_buf = 0;
-      read(server_socket_fd, &temp_buf, sizeof(size_t));
+      read_data(server_socket_fd, &temp_buf, sizeof(size_t));
     }
   }
 
   if (snapshot_checker_ == nullptr) {
     size_t msg = 0xff;
     send(server_socket_fd, &msg, sizeof(size_t), 0);
-    read(server_socket_fd, &msg, sizeof(size_t));
+    read_data(server_socket_fd, &msg, sizeof(size_t));
   } else {
     size_t msg = 0x02;
     send(server_socket_fd, &msg, sizeof(size_t), 0);
     msg = 0;
-    read(server_socket_fd, &msg, sizeof(size_t));
+    read_data(server_socket_fd, &msg, sizeof(size_t));
     snapshot_checker_->PackLocal(server_socket_fd);
   }
 
   send(server_socket_fd, reinterpret_cast<const void*>(this),
        sizeof(RemoteFlushJob), 0);
   int64_t ret_addr = 0;
-  read(server_socket_fd, &ret_addr, sizeof(int64_t));
+  read_data(server_socket_fd, &ret_addr, sizeof(int64_t));
   LOG("RemoteFlushJob::PackLocal done, remote_handler = ", std::hex, ret_addr,
       std::dec);
 }
@@ -241,14 +241,14 @@ void* RemoteFlushJob::UnPackLocal(int worker_socket_fd, DBImpl* remote_db) {
 
   std::string clock_info_;
   clock_info_.resize(20);
-  read(worker_socket_fd, clock_info_.data(), clock_info_.length());
+  read_data(worker_socket_fd, clock_info_.data(), clock_info_.length());
   void* clock_ret_addr = retrieve_from(clock_info_);
   send(worker_socket_fd, &local_handler->clock_, sizeof(int64_t), 0);
   LOG("worker send ", std::hex, &local_handler->clock_, std::dec);
 
   // RemoteFlushJob recv other data
   size_t mems_size_ = 0;
-  read(worker_socket_fd, &mems_size_, sizeof(size_t));
+  read_data(worker_socket_fd, &mems_size_, sizeof(size_t));
   LOG("worker recv mems size: ", mems_size_);
   send(worker_socket_fd, &mems_size_, sizeof(size_t), 0);
   LOG("worker send back mems size: ", mems_size_);
@@ -270,58 +270,59 @@ void* RemoteFlushJob::UnPackLocal(int worker_socket_fd, DBImpl* remote_db) {
   // void* mutable_cf_options_ret =
   //     MutableCFOptions::UnPackLocal(worker_socket_fd);
   size_t dbname_len = 0;
-  read(worker_socket_fd, &dbname_len, sizeof(size_t));
+  read_data(worker_socket_fd, &dbname_len, sizeof(size_t));
   send(worker_socket_fd, &dbname_len, sizeof(size_t), 0);
   std::string local_dbname;
   local_dbname.resize(dbname_len);
   if (local_dbname.size()) {
-    read(worker_socket_fd, local_dbname.data(), local_dbname.size());
+    read_data(worker_socket_fd, local_dbname.data(), local_dbname.size());
     send(worker_socket_fd, &dbname_len, sizeof(size_t), 0);
   }
 
   size_t ts_len = 0;
-  read(worker_socket_fd, &ts_len, sizeof(size_t));
+  read_data(worker_socket_fd, &ts_len, sizeof(size_t));
   send(worker_socket_fd, &ts_len, sizeof(size_t), 0);
   std::string local_ts_low;
   local_ts_low.resize(ts_len);
   if (local_ts_low.size()) {
-    read(worker_socket_fd, local_ts_low.data(), local_ts_low.size());
+    read_data(worker_socket_fd, local_ts_low.data(), local_ts_low.size());
     send(worker_socket_fd, &ts_len, sizeof(size_t), 0);
   }
   size_t db_id_len = 0;
-  read(worker_socket_fd, &db_id_len, sizeof(size_t));
+  read_data(worker_socket_fd, &db_id_len, sizeof(size_t));
   send(worker_socket_fd, &db_id_len, sizeof(size_t), 0);
   std::string local_db_id;
   local_db_id.resize(db_id_len);
   if (local_db_id.size()) {
-    read(worker_socket_fd, local_db_id.data(), local_db_id.size());
+    read_data(worker_socket_fd, local_db_id.data(), local_db_id.size());
     send(worker_socket_fd, &db_id_len, sizeof(size_t), 0);
   }
   size_t db_session_id_len = 0;
-  read(worker_socket_fd, &db_session_id_len, sizeof(size_t));
+  read_data(worker_socket_fd, &db_session_id_len, sizeof(size_t));
   send(worker_socket_fd, &db_session_id_len, sizeof(size_t), 0);
   std::string local_db_session_id;
   local_db_session_id.resize(db_session_id_len);
   if (local_db_session_id.size()) {
-    read(worker_socket_fd, local_db_session_id.data(),
-         local_db_session_id.size());
+    read_data(worker_socket_fd, local_db_session_id.data(),
+              local_db_session_id.size());
     send(worker_socket_fd, &db_session_id_len, sizeof(size_t), 0);
   }
 
   size_t existing_snapshots_len = 0;
-  read(worker_socket_fd, &existing_snapshots_len, sizeof(size_t));
+  read_data(worker_socket_fd, &existing_snapshots_len, sizeof(size_t));
   send(worker_socket_fd, &existing_snapshots_len, sizeof(size_t), 0);
   std::vector<SequenceNumber> existing_snapshots;
   existing_snapshots.resize(existing_snapshots_len);
   if (existing_snapshots_len) {
     for (size_t i = 0; i < existing_snapshots_len; i++) {
-      read(worker_socket_fd, &existing_snapshots[i], sizeof(SequenceNumber));
+      read_data(worker_socket_fd, &existing_snapshots[i],
+                sizeof(SequenceNumber));
       send(worker_socket_fd, &existing_snapshots_len, sizeof(size_t), 0);
     }
   }
   auto* local_snapshot_checker = reinterpret_cast<SnapshotChecker*>(
       SnapshotCheckerFactory::UnPackLocal(worker_socket_fd));
-  read(worker_socket_fd, mem, sizeof(RemoteFlushJob));
+  read_data(worker_socket_fd, mem, sizeof(RemoteFlushJob));
   LOG("worker recv ", std::hex, mem, std::dec);
 
   // fill local_handler
@@ -397,7 +398,7 @@ void RemoteFlushJob::PackRemote(int worker_socket_fd) const {
   LOG("worker send ", std::hex, install_needed, std::dec);
 
   int64_t remote_install_addr = 0;
-  read(worker_socket_fd, &remote_install_addr, sizeof(int64_t));
+  read_data(worker_socket_fd, &remote_install_addr, sizeof(int64_t));
   LOG("worker recv ", std::hex, remote_install_addr, std::dec);
 
   LOG("RemoteFlushJob::PackRemote done");
@@ -407,7 +408,7 @@ void* RemoteFlushJob::UnPackRemote(int server_socket_fd) {
       "UnPack data from remote side");
   void* mem = malloc(sizeof(install_info));
   auto* install_info_ = reinterpret_cast<install_info*>(mem);
-  read(server_socket_fd, install_info_, sizeof(install_info));
+  read_data(server_socket_fd, install_info_, sizeof(install_info));
   LOG("server recv ", std::hex, &install_info_, std::dec);
   // unpack install_info
   send(server_socket_fd, &install_info_, sizeof(int64_t), 0);
@@ -638,7 +639,7 @@ Status RemoteFlushJob::MatchRemoteWorker() {
   LOG("server Message sent1 / JobHandle: ", std::hex, data, std::dec, ' ',
       server_socket_fd_);
 
-  read(server_socket_fd_, &buffer, sizeof(size_t));
+  read_data(server_socket_fd_, &buffer, sizeof(size_t));
   LOG("server Message received1: ", buffer, ' ', server_socket_fd_);
 
   return buffer == 4321 ? Status::OK()
@@ -647,13 +648,13 @@ Status RemoteFlushJob::MatchRemoteWorker() {
 
 Status RemoteFlushJob::QuitRemoteWorker() {
   int64_t signal_ret = 0;
-  read(server_socket_fd_, &signal_ret, sizeof(int64_t));
+  read_data(server_socket_fd_, &signal_ret, sizeof(int64_t));
   LOG("server Message received3: ", signal_ret, ' ', server_socket_fd_);
   int64_t data = 1234;
   send(server_socket_fd_, &data, sizeof(int64_t), 0);
   LOG("server Message sent4: ", data, ' ', server_socket_fd_);
   int64_t buffer = 0;
-  read(server_socket_fd_, &buffer, sizeof(int64_t));
+  read_data(server_socket_fd_, &buffer, sizeof(int64_t));
   LOG("server Message received5: ", buffer, ' ', server_socket_fd_);
   close(server_socket_fd_);
   return buffer == 1234 ? Status::OK()

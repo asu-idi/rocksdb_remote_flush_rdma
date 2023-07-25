@@ -288,7 +288,7 @@ void* MemTable::UnPackLocal(int sock_fd) {
       "done");
   void* mem = malloc(sizeof(MemTable));
   auto* memtable = reinterpret_cast<MemTable*>(mem);
-  read(sock_fd, mem, sizeof(MemTable));
+  assert(read_data(sock_fd, mem, sizeof(MemTable)) == sizeof(MemTable));
   LOG("recv MemTable", mem);
 
   memtable->arena_ = reinterpret_cast<BasicArena*>(local_arena);
@@ -307,41 +307,39 @@ void* MemTable::UnPackLocal(int sock_fd) {
   memtable->table_ = local_table;
   memtable->range_del_table_ = local_range_del_table;
 
-  send(sock_fd, &mem, sizeof(void*), 0);
+  assert(write(sock_fd, reinterpret_cast<void*>(&mem), sizeof(size_t)) ==
+         sizeof(size_t));
   LOG("send MemTable", mem);
   return mem;
 }
 
-void* MemTable::PackLocal(int sock_fd) const {
-  LOG("start MemTable::PackLocal");
+void MemTable::PackLocal(int sock_fd) const {
   arena_->PackLocal(sock_fd);
-  LOG("arena_->PackLocal(sock_fd) done");
   if (prefix_extractor_ != nullptr)
     prefix_extractor_->PackLocal(sock_fd);
   else {
     int64_t msg = 0xff;
-    send(sock_fd, &msg, sizeof(msg), 0);
+    assert(write(sock_fd, &msg, sizeof(msg)) == sizeof(msg));
     int64_t ret_val = 0;
-    read(sock_fd, &ret_val, sizeof(int64_t));
+    assert(read_data(sock_fd, &ret_val, sizeof(int64_t)) == sizeof(int64_t));
   }
-  LOG("prefix_extractor_->PackLocal(sock_fd) done");
   comparator_.PackLocal(sock_fd);
-  LOG("comparator_.PackLocal(sock_fd) done");
   moptions_.PackLocal(sock_fd);
-  LOG("moptions_.PackLocal(sock_fd) done");
   // bloom_filter_->PackLocal(sock_fd);
+  assert(table_ != nullptr);
+  LOG("start MemTable::PackLocal table_");
   table_->PackLocal(sock_fd);
-  LOG("table_->PackLocal(sock_fd) done");
+  LOG("start MemTable::PackLocal range_del_table_");
+  assert(range_del_table_ != nullptr);
   range_del_table_->PackLocal(sock_fd);
-  LOG("range_del_table_->PackLocal(sock_fd) done");
+  LOG("range_del_table_->PackLocal done");
 
-  send(sock_fd, reinterpret_cast<const void*>(this), sizeof(MemTable), 0);
-  LOG("send MemTable", reinterpret_cast<const void*>(this));
-  int64_t ret_addr = 0;
-  read(sock_fd, &ret_addr, sizeof(int64_t));
+  assert(write(sock_fd, reinterpret_cast<const void*>(this),
+               sizeof(MemTable)) == sizeof(MemTable));
+  LOG("write MemTable", reinterpret_cast<const void*>(this));
+  size_t ret_addr = 0;
+  assert(read_data(sock_fd, &ret_addr, sizeof(size_t)) == sizeof(size_t));
   LOG("recv MemTable", ret_addr);
-
-  return reinterpret_cast<void*>(ret_addr);
 }
 
 MemTable::~MemTable() {

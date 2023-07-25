@@ -48,12 +48,12 @@ struct ImmutableMemTableOptions {
     LOG("ImmutableMemTableOptions::PackLocal");
     send(sockfd, reinterpret_cast<const void*>(this), sizeof(*this), 0);
     int64_t ret_val = 0;
-    read(sockfd, &ret_val, sizeof(int64_t));
+    read_data(sockfd, &ret_val, sizeof(int64_t));
   }
   static void* UnPackLocal(int sockfd) {
     LOG("ImmutableMemTableOptions::UnPackLocal");
     void* mem = malloc(sizeof(ImmutableMemTableOptions));
-    read(sockfd, mem, sizeof(ImmutableMemTableOptions));
+    read_data(sockfd, mem, sizeof(ImmutableMemTableOptions));
     auto* ptr = reinterpret_cast<ImmutableMemTableOptions*>(mem);
     ptr->info_log = nullptr;  // todo(iaIm14)
     send(sockfd, &mem, sizeof(mem), 0);
@@ -106,7 +106,7 @@ using MultiGetRange = MultiGetContext::Range;
 class MemTable {
  public:
   static void* UnPackLocal(int sock_fd);
-  void* PackLocal(int sock_fd) const;
+  void PackLocal(int sock_fd) const;
 
  public:
   struct KeyComparator : public MemTableRep::KeyComparator {
@@ -117,7 +117,7 @@ class MemTable {
       int64_t ret_val = 0;
       send(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t), 0);
       LOG("send KeyComparator");
-      read(sockfd, &ret_val, sizeof(int64_t));
+      read_data(sockfd, &ret_val, sizeof(int64_t));
       LOG("read KeyComparator");
     }
     static void* UnPackLocal(int sockfd) {
@@ -127,7 +127,7 @@ class MemTable {
       void* mem = new KeyComparator(InternalKeyComparator());
       auto* kcmp = reinterpret_cast<KeyComparator*>(mem);
       int64_t ret_val = 0;
-      read(sockfd, &ret_val, sizeof(int64_t));
+      read_data(sockfd, &ret_val, sizeof(int64_t));
       LOG("read KeyComparator");
       memcpy(reinterpret_cast<void*>(
                  const_cast<InternalKeyComparator*>(&kcmp->comparator)),

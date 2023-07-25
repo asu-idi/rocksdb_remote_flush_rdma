@@ -12,6 +12,7 @@
 #include <cassert>
 
 #include "util/logger.hpp"
+#include "util/socket_api.hpp"
 // for socket API
 #ifdef __linux
 #include <arpa/inet.h>
@@ -48,7 +49,7 @@ class SystemClock : public Customizable {
     send(sockfd, mem.c_str(), mem.length(), 0);
     LOG("send ", mem.c_str());
     int64_t ret_addr = 0;
-    read(sockfd, &ret_addr, sizeof(int64_t));
+    read_data(sockfd, &ret_addr, sizeof(int64_t));
     LOG("recv ", ret_addr);
     return reinterpret_cast<void*>(ret_addr);
   }
