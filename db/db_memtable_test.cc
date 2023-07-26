@@ -13,8 +13,6 @@
 #include "db/memtable.h"
 #include "db/range_del_aggregator.h"
 #include "memory/allocator.h"
-#include "memory/concurrent_shared_arena.h"
-#include "memory/shared_mem_basic.h"
 #include "port/stack_trace.h"
 #include "rocksdb/memtablerep.h"
 #include "rocksdb/slice_transform.h"
@@ -33,8 +31,8 @@ class MockMemTableRep : public MemTableRep {
 
   inline static MockMemTableRep* CreateMockMemTableRep(Allocator* allocator,
                                                        MemTableRep* rep) {
-    assert(strcmp(allocator->name(), "ConcurrentSharedArena") == 0);
-    auto* mem = shm_alloc(sizeof(MockMemTableRep));
+    assert(strcmp(allocator->name(), "ConcurrentArena") == 0);
+    auto* mem = malloc(sizeof(MockMemTableRep));
     auto* ret = new (mem) MockMemTableRep(allocator, rep);
     return ret;
   }
@@ -99,18 +97,6 @@ class MockMemTableRepFactory : public MemTableRepFactory {
                                  uint32_t column_family_id) override {
     last_column_family_id_ = column_family_id;
     return CreateMemTableRep(cmp, allocator, transform, logger);
-  }
-
-  MemTableRep* CreateMemtableRepFromShm(const MemTableRep::KeyComparator& cmp,
-                                        Allocator* allocator,
-                                        const SliceTransform* transform,
-                                        Logger* logger) override {
-    SkipListFactory factory;
-    MemTableRep* shared_skiplist_rep =
-        factory.CreateMemtableRepFromShm(cmp, allocator, transform, logger);
-    mock_rep_ =
-        MockMemTableRep::CreateMockMemTableRep(allocator, shared_skiplist_rep);
-    return mock_rep_;
   }
 
   const char* Name() const override { return "MockMemTableRepFactory"; }

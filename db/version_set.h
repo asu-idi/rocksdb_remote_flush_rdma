@@ -1002,15 +1002,6 @@ class Version {
       const ReadOptions& read_options, MergeIteratorBuilder* merge_iter_builder,
       int level, bool allow_unprepared_value);
 
-  void Pack();
-  void UnPack();
-  void blockUnusedDataForTest();
-  void unblockUnusedDataForTest();
-  void CEHCKShared();
-  bool is_shared();
-  bool is_packaged_ = false;
-  std::vector<std::pair<void*, size_t>> block_;
-
  private:
   Env* env_;
   SystemClock* clock_;
@@ -1627,16 +1618,6 @@ class VersionSet {
   std::shared_ptr<IOTracer> io_tracer_;
 
   std::string db_session_id_;
-
- public:
-  void Pack();
-  void UnPack();
-  void blockUnusedDataForTest();
-  void unblockUnusedDataForTest();
-  void CHECKShared();
-  bool is_shared();
-  bool is_packaged_ = false;
-  std::vector<std::pair<void*, size_t>> block_;
 
  private:
   // REQUIRES db mutex at beginning. may release and re-acquire db mutex

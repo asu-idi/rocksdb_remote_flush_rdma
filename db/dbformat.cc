@@ -14,7 +14,6 @@
 #include <cinttypes>
 
 #include "db/lookup_key.h"
-#include "memory/shared_mem_basic.h"
 #include "monitoring/perf_context_imp.h"
 #include "port/port.h"
 #include "util/coding.h"

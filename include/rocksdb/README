@@ -1,3 +1,0 @@
-* note: Pack() interface is used to pack the data structure and its members. If is_packaged_ is true, the class is packed(noted that it doesn't mean that its members is packed). By calling all the Pack() interface of its members, the class and its members can be packed, is_packaged_ is set to true. 
-* note: CHECKShared() need to check whether the class need to be shared(is_shared_ || SharedContainer::find(this)) and already been packaged(is_packaged_) and so as its members(by calling members->CHECKShared()). Before Pack() is called, CHECKShared() should return false.
-* is_packaged_ is default to false, and is_shared_ is default to true if create from shared mem.

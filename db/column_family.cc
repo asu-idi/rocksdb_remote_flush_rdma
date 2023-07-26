@@ -44,8 +44,6 @@
 #include "db/write_controller.h"
 #include "file/sst_file_manager_impl.h"
 #include "logging/logging.h"
-#include "memory/concurrent_shared_arena.h"
-#include "memory/shared_mem_basic.h"
 #include "monitoring/thread_status_util.h"
 #include "options/cf_options.h"
 #include "options/db_options.h"
@@ -470,23 +468,11 @@ void* const SuperVersion::kSVInUse = &SuperVersion::dummy;
 void* const SuperVersion::kSVObsolete = nullptr;
 
 SuperVersion::~SuperVersion() {
-  LOG("SuperVersion::~SuperVersion()");
+  LOG("SuperVersion::~SuperVersion");
   for (auto td : to_delete) {
-    if (td->IsSharedMemtable()) {
-      LOG("SuperVersion::~SuperVersion() shared_memtable ", std::hex,
-          reinterpret_cast<void*>(td), std::dec, ' ', td->GetID());
-      if (singleton<SharedContainer>::Instance().find(
-              reinterpret_cast<char*>(td), sizeof(MemTable))) {
-        td->~MemTable();
-        shm_delete(reinterpret_cast<char*>(td));
-      }
-    } else {
-      LOG("SuperVersion::~SuperVersion() local_memtable ", std::hex,
-          reinterpret_cast<void*>(td), std::dec);
-      delete td;
-    }
+    delete td;
   }
-  LOG("SuperVersion::~SuperVersion() end");
+  LOG("SuperVersion::~SuperVersion end");
 }
 
 SuperVersion* SuperVersion::Ref() {
@@ -585,10 +571,9 @@ ColumnFamilyData::ColumnFamilyData(
           cf_options.table_factory->IsDeleteRangeSupported()),
       write_buffer_manager_(write_buffer_manager),
       mem_(nullptr),
-      imm_(MemTableList::CreateSharedMemTableList(
-          ioptions_.min_write_buffer_number_to_merge,
-          ioptions_.max_write_buffer_number_to_maintain,
-          ioptions_.max_write_buffer_size_to_maintain)),
+      imm_(new MemTableList(ioptions_.min_write_buffer_number_to_merge,
+                            ioptions_.max_write_buffer_number_to_maintain,
+                            ioptions_.max_write_buffer_size_to_maintain)),
       super_version_(nullptr),
       super_version_number_(0),
       local_sv_(new ThreadLocalPtr(&SuperVersionUnrefHandle)),
@@ -697,26 +682,9 @@ ColumnFamilyData::ColumnFamilyData(
   }
 }
 
-ColumnFamilyData* ColumnFamilyData::CreateSharedColumnFamilyData(
-    uint32_t id, const std::string& name, Version* dummy_versions,
-    Cache* table_cache, WriteBufferManager* write_buffer_manager,
-    const ColumnFamilyOptions& options, const ImmutableDBOptions& db_options,
-    const FileOptions* file_options, ColumnFamilySet* column_family_set,
-    BlockCacheTracer* const block_cache_tracer,
-    const std::shared_ptr<IOTracer>& io_tracer, const std::string& db_id,
-    const std::string& db_session_id) {
-  assert(db_options.server_remote_flush);
-  void* mem = shm_alloc(sizeof(ColumnFamilyData));
-  auto* ret = new (mem) ColumnFamilyData(
-      id, name, dummy_versions, table_cache, write_buffer_manager, options,
-      db_options, file_options, column_family_set, block_cache_tracer,
-      io_tracer, db_id, db_session_id);
-  return ret;
-}
-
 // DB mutex held
 ColumnFamilyData::~ColumnFamilyData() {
-  LOG("checkpoint 1 ", this->GetID());
+  LOG("ColumnFamilyData: ", GetID(), "destructing");
   assert(refs_.load(std::memory_order_relaxed) == 0);
   // remove from linked list
   auto prev = prev_;
@@ -740,7 +708,6 @@ ColumnFamilyData::~ColumnFamilyData() {
   assert(!queued_for_flush_);
   assert(!queued_for_compaction_);
   assert(super_version_ == nullptr);
-  LOG("checkpoint 1");
   if (dummy_versions_ != nullptr) {
     // List must be empty
     // assert(dummy_versions_->Next() == dummy_versions_);
@@ -748,40 +715,19 @@ ColumnFamilyData::~ColumnFamilyData() {
     deleted = dummy_versions_->Unref();
     assert(deleted);
   }
-  LOG("checkpoint 1");
+
   if (mem_ != nullptr) {
-    if (initial_cf_options().server_use_remote_flush == true) {
-      void* ret = mem_->Unref();
-      if (ret != nullptr) {
-        assert(mem_->IsSharedMemtable());
-        shm_delete(reinterpret_cast<char*>(ret));
-      }
-    } else {
-      assert(!mem_->IsSharedMemtable());
-      delete mem_->Unref();
-    }
-    LOG("checkpoint 1");
+    LOG("cfd Unref Memtable");
+    delete mem_->Unref();
   }
   autovector<MemTable*> to_delete;
   imm_->current()->Unref(&to_delete);
   for (MemTable* m : to_delete) {
-    if (m->IsSharedMemtable()) {
-      LOG("checkpoint 1");
-      assert(m->IsSharedMemtable());
-      if (singleton<SharedContainer>::Instance().find(
-              reinterpret_cast<char*>(m), sizeof(MemTable))) {
-        m->~MemTable();
-        shm_delete(reinterpret_cast<char*>(m));
-      }
-    } else {
-      LOG("checkpoint 1");
-      assert(!mem_->IsSharedMemtable());
-      delete m;
-    }
+    delete m;
   }
-  LOG("checkpoint 1");
-  imm_->~MemTableList();
-  shm_delete(reinterpret_cast<char*>(imm_));
+  LOG("cfd delete MemtableList");
+  if (imm_ != nullptr) delete imm_;
+
   if (db_paths_registered_) {
     // TODO(cc): considering using ioptions_.fs, currently some tests rely on
     // EnvWrapper, that's the main reason why we use env here.
@@ -793,180 +739,6 @@ ColumnFamilyData::~ColumnFamilyData() {
           id_, name_.c_str());
     }
   }
-}
-
-bool ColumnFamilyData::CHECKShared() {
-  void* mem = reinterpret_cast<void*>(this);
-  bool ret = singleton<SharedContainer>::Instance().find(
-      mem, sizeof(ColumnFamilyData));
-  // TODO: add ColumnFamilyData member checker
-  ret = ret && imm_->CHECKShared();
-
-  return ret;
-}
-
-bool ColumnFamilyData::unblockUnusedDataForTest() {
-  if (temp_blocked_data_.size() != 11) {
-    return false;
-  }
-  dummy_versions_ = reinterpret_cast<Version*>(temp_blocked_data_[0].first);
-  current_ = reinterpret_cast<Version*>(temp_blocked_data_[1].first);
-  // memcpy(reinterpret_cast<void*>(
-  //            const_cast<ColumnFamilyOptions*>(&initial_cf_options_)),
-  //        temp_blocked_data_[2].first, sizeof(ColumnFamilyOptions));
-  // free(temp_blocked_data_[2].first);
-  memcpy(reinterpret_cast<void*>(&blob_file_cache_),
-         temp_blocked_data_[2].first, sizeof(std::unique_ptr<BlobFileCache>));
-  free(temp_blocked_data_[2].first);
-
-  memcpy(reinterpret_cast<void*>(&blob_source_), temp_blocked_data_[3].first,
-         sizeof(std::unique_ptr<BlobSource>));
-  free(temp_blocked_data_[3].first);
-  memcpy(reinterpret_cast<void*>(&prev_), temp_blocked_data_[4].first,
-         sizeof(ColumnFamilyData*));
-  free(temp_blocked_data_[4].first);
-  memcpy(reinterpret_cast<void*>(&next_), temp_blocked_data_[5].first,
-         sizeof(ColumnFamilyData*));
-  free(temp_blocked_data_[5].first);
-  memcpy(reinterpret_cast<void*>(&column_family_set_),
-         temp_blocked_data_[6].first, sizeof(ColumnFamilySet*));
-  free(temp_blocked_data_[6].first);
-  memcpy(reinterpret_cast<void*>(&compaction_picker_),
-         temp_blocked_data_[7].first,
-         sizeof(std::unique_ptr<CompactionPicker>));
-  free(temp_blocked_data_[7].first);
-  memcpy(reinterpret_cast<void*>(&internal_stats_), temp_blocked_data_[8].first,
-         sizeof(std::unique_ptr<InternalStats>));
-  free(temp_blocked_data_[8].first);
-  memcpy(reinterpret_cast<void*>(&table_cache_), temp_blocked_data_[9].first,
-         sizeof(std::unique_ptr<TableCache>));
-  free(temp_blocked_data_[9].first);
-  memcpy(reinterpret_cast<void*>(&local_sv_), temp_blocked_data_[10].first,
-         sizeof(std::unique_ptr<ThreadLocalPtr>));
-  free(temp_blocked_data_[10].first);
-
-  // ioptions_.unblockUnusedDataForTest();
-  assert(super_version_ == nullptr);
-  assert(write_controller_token_ == nullptr);
-  assert(data_dirs_.size() == 0);
-  assert(file_metadata_cache_res_mgr_ == nullptr);
-
-  temp_blocked_data_.clear();
-  return true;
-}
-
-// internal_comparator_ ; ioptions_ ; table_cache_ ; internal_stats_ ; imm_ ;
-
-// table_cache_ option todo(currently not supported)
-// internal_stats_(currently not supported) could support this by record its
-// change(Add\AddCompactionStats\AddCFStats) later
-
-// ioptions_ TODO const, construct from default(db_options_,
-// initial_cf_options_) or try to support dump&parse(time consuming)
-// internal_comparator_ already support builtin
-// imm_ already supported
-
-bool ColumnFamilyData::blockUnusedDataForTest() {
-  if (temp_blocked_data_.size() != 0) {
-    return false;
-  }
-  write_buffer_manager_ = reinterpret_cast<WriteBufferManager*>(0x1000);
-  mem_->blockUnusedDataForTest();
-  assert(super_version_ == nullptr);
-  assert(data_dirs_.size() == 0);  // TODO: maybe needed
-  assert(file_metadata_cache_res_mgr_ == nullptr);
-  // ioptions_.blockUnusedDataForTest(initial_cf_options_);
-
-  temp_blocked_data_.emplace_back(reinterpret_cast<void*>(dummy_versions_),
-                                  sizeof(Version));
-  dummy_versions_ = reinterpret_cast<Version*>(0x1000);
-  temp_blocked_data_.emplace_back(reinterpret_cast<void*>(current_),
-                                  sizeof(Version));
-  current_ = reinterpret_cast<Version*>(0x1000);
-  memset(reinterpret_cast<void*>(&int_tbl_prop_collector_factories_), 0x0,
-         sizeof(std::vector<std::unique_ptr<IntTblPropCollectorFactory>>));
-  //*******************************
-  // void* initial_cf_options_cp_ = malloc(sizeof(ColumnFamilyOptions));
-  // memcpy(initial_cf_options_cp_,
-  //        reinterpret_cast<void*>(
-  //            const_cast<ColumnFamilyOptions*>(&initial_cf_options_)),
-  //        sizeof(ColumnFamilyOptions));
-  // memset(reinterpret_cast<void*>(
-  //            const_cast<ColumnFamilyOptions*>(&initial_cf_options_)),
-  //        0x1, sizeof(ColumnFamilyOptions));
-  // temp_blocked_data_.emplace_back(initial_cf_options_cp_,
-  //                                 sizeof(ColumnFamilyOptions));
-  //*******************************
-  memset(reinterpret_cast<void*>(
-             const_cast<MutableCFOptions*>(&mutable_cf_options_)),
-         0x1, sizeof(MutableCFOptions));
-
-  void* blob_file_cache_cp_ = malloc(sizeof(std::unique_ptr<BlobFileCache>));
-  memcpy(blob_file_cache_cp_, reinterpret_cast<void*>(&blob_file_cache_),
-         sizeof(std::unique_ptr<BlobFileCache>));
-  memset(reinterpret_cast<void*>(&blob_file_cache_), 0x0,
-         sizeof(std::unique_ptr<BlobFileCache>));
-  temp_blocked_data_.emplace_back(blob_file_cache_cp_,
-                                  sizeof(std::unique_ptr<BlobFileCache>));
-
-  void* blob_source_cp_ = malloc(sizeof(std::unique_ptr<BlobSource>));
-  memcpy(blob_source_cp_, reinterpret_cast<void*>(&blob_source_),
-         sizeof(std::unique_ptr<BlobSource>));
-  memset(reinterpret_cast<void*>(&blob_source_), 0x0,
-         sizeof(std::unique_ptr<BlobSource>));
-  temp_blocked_data_.emplace_back(blob_source_cp_,
-                                  sizeof(std::unique_ptr<BlobSource>));
-
-  void* prev_cp_ = malloc(sizeof(ColumnFamilyData*));
-  memcpy(prev_cp_, reinterpret_cast<void*>(&prev_), sizeof(ColumnFamilyData*));
-  memset(reinterpret_cast<void*>(&prev_), 0x1, sizeof(ColumnFamilyData*));
-  temp_blocked_data_.emplace_back(prev_cp_, sizeof(ColumnFamilyData*));
-  void* next_cp_ = malloc(sizeof(ColumnFamilyData*));
-  memcpy(next_cp_, reinterpret_cast<void*>(&next_), sizeof(ColumnFamilyData*));
-  memset(reinterpret_cast<void*>(&next_), 0x1, sizeof(ColumnFamilyData*));
-  temp_blocked_data_.emplace_back(next_cp_, sizeof(ColumnFamilyData*));
-
-  void* column_family_set_cp_ = malloc(sizeof(ColumnFamilySet*));
-  memcpy(column_family_set_cp_, reinterpret_cast<void*>(&column_family_set_),
-         sizeof(ColumnFamilySet*));
-  memset(reinterpret_cast<void*>(&column_family_set_), 0x1,
-         sizeof(ColumnFamilySet*));
-  temp_blocked_data_.emplace_back(column_family_set_cp_,
-                                  sizeof(ColumnFamilySet*));
-  void* compaction_picker_cp_ =
-      malloc(sizeof(std::unique_ptr<CompactionPicker>));
-  memcpy(compaction_picker_cp_, reinterpret_cast<void*>(&compaction_picker_),
-         sizeof(std::unique_ptr<CompactionPicker>));
-  memset(reinterpret_cast<void*>(&compaction_picker_), 0x1,
-         sizeof(std::unique_ptr<CompactionPicker>));
-  temp_blocked_data_.emplace_back(compaction_picker_cp_,
-                                  sizeof(std::unique_ptr<CompactionPicker>));
-
-  void* internal_stats_cp_ = malloc(sizeof(std::unique_ptr<InternalStats>));
-  memcpy(internal_stats_cp_, reinterpret_cast<void*>(&internal_stats_),
-         sizeof(std::unique_ptr<InternalStats>));
-  memset(reinterpret_cast<void*>(&internal_stats_), 0x1,
-         sizeof(std::unique_ptr<InternalStats>));
-  temp_blocked_data_.emplace_back(internal_stats_cp_,
-                                  sizeof(std::unique_ptr<InternalStats>));
-
-  void* table_cache_cp_ = malloc(sizeof(std::unique_ptr<TableCache>));
-  memcpy(table_cache_cp_, reinterpret_cast<void*>(&table_cache_),
-         sizeof(std::unique_ptr<TableCache>));
-  memset(reinterpret_cast<void*>(&table_cache_), 0x1,
-         sizeof(std::unique_ptr<TableCache>));
-  temp_blocked_data_.emplace_back(table_cache_cp_,
-                                  sizeof(std::unique_ptr<TableCache>));
-
-  void* local_sv_cp_ = malloc(sizeof(std::unique_ptr<ThreadLocalPtr>));
-  memcpy(local_sv_cp_, reinterpret_cast<void*>(&local_sv_),
-         sizeof(std::unique_ptr<ThreadLocalPtr>));
-  memset(reinterpret_cast<void*>(&local_sv_), 0x1,
-         sizeof(std::unique_ptr<ThreadLocalPtr>));
-  temp_blocked_data_.emplace_back(local_sv_cp_,
-                                  sizeof(std::unique_ptr<ThreadLocalPtr>));
-
-  return true;
 }
 
 void* ColumnFamilyData::PackLocal(int sockfd) const {
@@ -1074,40 +846,13 @@ void* ColumnFamilyData::UnPackLocal(int sockfd) {
   return mem;
 }
 
-// internal_comparator_ ; imm_ ; ioptions_ ; table_cache_ ; internal_stats_ ;
-// local_sv_ ; compaction_picker_ ;
-void ColumnFamilyData::Pack() {
-  assert(is_shared());
-  if (is_packaged_) {
-    LOG("ColumnFamilyData is already packaged");
-    return;
-  }
-  // internal_comparator_.Pack();
-  // ioptions_.Pack(const_cast<ColumnFamilyOptions&>(initial_cf_options_));
-  is_packaged_ = true;
-}
-void ColumnFamilyData::UnPack() {
-  assert(is_shared());
-  if (!is_packaged_) {
-    LOG("ColumnFamilyData is already unpackaged");
-    return;
-  }
-  // internal_comparator_.UnPack();
-  is_packaged_ = false;
-}
-
 bool ColumnFamilyData::UnrefAndTryDelete() {
   int old_refs = refs_.fetch_sub(1);
   assert(old_refs > 0);
 
   if (old_refs == 1) {
     assert(super_version_ == nullptr);
-    if (is_shared()) {
-      this->~ColumnFamilyData();
-      shm_delete(reinterpret_cast<char*>(this));
-    } else {
-      delete this;
-    }
+    delete this;
     return true;
   }
 
@@ -1495,20 +1240,9 @@ uint64_t ColumnFamilyData::GetLiveSstFilesSize() const {
 
 MemTable* ColumnFamilyData::ConstructNewMemtable(
     const MutableCFOptions& mutable_cf_options, SequenceNumber earliest_seq) {
-  MemTable* memtable_ = nullptr;
-  if (initial_cf_options_.server_use_remote_flush == false) {
-    memtable_ =
-        new MemTable(internal_comparator_, ioptions_, mutable_cf_options,
-                     write_buffer_manager_, earliest_seq, id_);
-    LOG("alloc memtable in local_mem", ' ', std::hex,
-        reinterpret_cast<void*>(memtable_), std::dec);
-  } else {
-    memtable_ = MemTable::CreateSharedMemTable(
-        internal_comparator_, ioptions_, mutable_cf_options,
-        write_buffer_manager_, earliest_seq, id_);
-    LOG("alloc memtable in shared_mem", ' ', std::hex,
-        reinterpret_cast<void*>(memtable_), std::dec);
-  }
+  auto* memtable_ =
+      new MemTable(internal_comparator_, ioptions_, mutable_cf_options,
+                   write_buffer_manager_, earliest_seq, id_);
   LOG("ColumnFamilyData::ConstructNewMemtable Alloc memtable finish: "
       "ptr =",
       static_cast<void*>(memtable_), ' ', memtable_->GetID());
@@ -1518,13 +1252,7 @@ MemTable* ColumnFamilyData::ConstructNewMemtable(
 void ColumnFamilyData::CreateNewMemtable(
     const MutableCFOptions& mutable_cf_options, SequenceNumber earliest_seq) {
   if (mem_ != nullptr) {
-    if (initial_cf_options().server_use_remote_flush) {
-      assert(mem_->IsSharedMemtable());
-      MemTable* ret = mem_->Unref();
-      if (ret) shm_delete(reinterpret_cast<char*>(ret));
-    } else {
-      delete mem_->Unref();
-    }
+    delete mem_->Unref();
   }
   MemTable* ptr = ConstructNewMemtable(mutable_cf_options, earliest_seq);
   SetMemtable(ptr);
@@ -1955,19 +1683,10 @@ ColumnFamilySet::ColumnFamilySet(const std::string& dbname,
                                  const std::string& db_session_id)
     : max_column_family_(0),
       file_options_(file_options),
-      dummy_cfd_(db_options->server_remote_flush
-                     ? ColumnFamilyData::CreateSharedColumnFamilyData(
-                           ColumnFamilyData::kDummyColumnFamilyDataId, "",
-                           nullptr, nullptr, nullptr,
-                           SanitizeOptions(*db_options, ColumnFamilyOptions()),
-                           *db_options, &file_options_, nullptr,
-                           block_cache_tracer, io_tracer, db_id, db_session_id)
-                     : new ColumnFamilyData(
-                           ColumnFamilyData::kDummyColumnFamilyDataId, "",
-                           nullptr, nullptr, nullptr, ColumnFamilyOptions(),
-                           *db_options, &file_options_, nullptr,
-                           block_cache_tracer, io_tracer, db_id,
-                           db_session_id)),
+      dummy_cfd_(new ColumnFamilyData(
+          ColumnFamilyData::kDummyColumnFamilyDataId, "", nullptr, nullptr,
+          nullptr, ColumnFamilyOptions(), *db_options, &file_options_, nullptr,
+          block_cache_tracer, io_tracer, db_id, db_session_id)),
       default_cfd_cache_(nullptr),
       db_name_(dbname),
       db_options_(db_options),
@@ -2055,17 +1774,10 @@ ColumnFamilyData* ColumnFamilySet::CreateColumnFamily(
       db_options_->server_remote_flush ? "true" : "false");
 
   ColumnFamilyData* new_cfd = nullptr;
-  if (db_options_->server_remote_flush) {
-    new_cfd = ColumnFamilyData::CreateSharedColumnFamilyData(
-        id, name, dummy_versions, table_cache_, write_buffer_manager_, options,
-        *db_options_, &file_options_, this, block_cache_tracer_, io_tracer_,
-        db_id_, db_session_id_);
-  } else {
-    new_cfd = new ColumnFamilyData(id, name, dummy_versions, table_cache_,
-                                   write_buffer_manager_, options, *db_options_,
-                                   &file_options_, this, block_cache_tracer_,
-                                   io_tracer_, db_id_, db_session_id_);
-  }
+  new_cfd = new ColumnFamilyData(id, name, dummy_versions, table_cache_,
+                                 write_buffer_manager_, options, *db_options_,
+                                 &file_options_, this, block_cache_tracer_,
+                                 io_tracer_, db_id_, db_session_id_);
   column_families_.insert({name, id});
   column_family_data_.insert({id, new_cfd});
   max_column_family_ = std::max(max_column_family_, id);

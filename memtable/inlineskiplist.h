@@ -64,8 +64,6 @@
 
 #include "db/memtable.h"
 #include "memory/allocator.h"
-#include "memory/concurrent_shared_arena.h"
-#include "memory/shared_mem_basic.h"
 #include "port/likely.h"
 #include "port/port.h"
 #include "rocksdb/comparator.h"
@@ -338,12 +336,6 @@ class InlineSkipList {
   InlineSkipList(const InlineSkipList&) = delete;
   InlineSkipList& operator=(const InlineSkipList&) = delete;
 
-  static InlineSkipList<Comparator>* CreateSharedInlineSkipList(
-      Comparator cmp, Allocator* allocator, int32_t max_height = 12,
-      int32_t branching_factor = 4);
-  bool is_shared() const { return is_shared_; }
-  bool CHECKShared() const;
-
   // Allocates a key and a skip-list node, returning a pointer to the key
   // portion of the node.  This method is thread-safe if the allocator
   // is thread-safe.
@@ -478,8 +470,6 @@ class InlineSkipList {
   // case.  It caches the prev and next found during the most recent
   // non-concurrent insertion.
   Splice* seq_splice_;
-
-  bool is_shared_;
 
   inline int GetMaxHeight() const {
     return max_height_.load(std::memory_order_relaxed);
@@ -627,69 +617,6 @@ struct InlineSkipList<Comparator>::Node {
   // stored _earlier_, so level 1 is at next_[-1].
   std::atomic<Node*> next_[1];
 };
-
-// ptrs: allocator
-template <class Comparator>
-InlineSkipList<Comparator>*
-InlineSkipList<Comparator>::CreateSharedInlineSkipList(
-    Comparator cmp, Allocator* allocator, int32_t max_height,
-    int32_t branching_factor) {
-  assert(strcmp(allocator->name(), "ConcurrentSharedArena") == 0);
-  LOG("allocate shared inlineSkiplist");
-  void* mem = allocator->Allocate(sizeof(InlineSkipList<Comparator>));
-  auto* ret = new (mem) InlineSkipList<Comparator>(cmp, allocator, max_height,
-                                                   branching_factor, true);
-  return ret;
-}
-
-template <class Comparator>
-bool InlineSkipList<Comparator>::CHECKShared() const {
-  LOG("check shared inlineSkiplist");
-  bool ret = singleton<SharedContainer>::Instance().find(
-      reinterpret_cast<void*>(const_cast<uint16_t*>(&kMaxHeight_)),
-      sizeof(kMaxHeight_));
-  ret = ret & singleton<SharedContainer>::Instance().find(
-                  reinterpret_cast<void*>(const_cast<uint16_t*>(&kBranching_)),
-                  sizeof(kBranching_));
-  ret = ret & singleton<SharedContainer>::Instance().find(
-                  reinterpret_cast<void*>(
-                      const_cast<uint32_t*>(&kScaledInverseBranching_)),
-                  sizeof(kScaledInverseBranching_));
-  ret = ret & singleton<SharedContainer>::Instance().find(
-                  reinterpret_cast<void*>(allocator_), sizeof(allocator_));
-  // ret = ret & singleton<SharedContainer>::Instance().find(
-  //                 reinterpret_cast<void*>(const_cast<Comparator*>(&compare_)),
-  //                 sizeof(compare_));
-  ret = ret &
-        singleton<SharedContainer>::Instance().find(
-            reinterpret_cast<void*>(const_cast<Node*>(head_)), sizeof(head_));
-
-  Iterator iter(this);
-  iter.SeekToFirst();
-  while (iter.Valid()) {
-    // TODO: check Node next[-1]
-    const char* key_ptr = iter.key();
-    ret =
-        ret &&
-        singleton<SharedContainer>::Instance().find(
-            reinterpret_cast<void*>(const_cast<char*>(key_ptr)),
-            sizeof(
-                typename std::remove_reference<Comparator>::type::DecodedType));
-    LOG("check shared inlineSkiplist key: " /*, std::dec, key_val*/, ' ',
-        std::hex, reinterpret_cast<void*>(const_cast<char*>(key_ptr)));
-    iter.Next();
-  }
-
-  ret =
-      ret &&
-      singleton<SharedContainer>::Instance().find(
-          reinterpret_cast<void*>(const_cast<std::atomic<int>*>(&max_height_)),
-          sizeof(max_height_));
-  ret = ret &&
-        singleton<SharedContainer>::Instance().find(
-            seq_splice_, sizeof(Splice) + sizeof(Node*) * (kMaxHeight_ + 1));
-  return ret;
-}
 
 template <class Comparator>
 inline InlineSkipList<Comparator>::Iterator::Iterator(
@@ -984,8 +911,7 @@ InlineSkipList<Comparator>::InlineSkipList(const Comparator cmp,
       compare_(cmp),
       head_(AllocateNode(0, max_height)),
       max_height_(1),
-      seq_splice_(AllocateSplice()),
-      is_shared_(is_shared) {
+      seq_splice_(AllocateSplice()) {
   assert(max_height > 0 && kMaxHeight_ == static_cast<uint32_t>(max_height));
   assert(branching_factor > 1 &&
          kBranching_ == static_cast<uint32_t>(branching_factor));

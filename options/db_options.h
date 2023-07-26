@@ -26,13 +26,6 @@ struct ImmutableDBOptions {
 
   void Dump(Logger* log) const;
 
-  void* Pack();
-  ImmutableDBOptions* UnPack(void* dumped_file);
-  bool is_shared();
-  void blockUnusedDataForTest();
-  void unblockUnusedDataForTest();
-  void CHECKShared();
-
   bool create_if_missing;
   bool create_missing_column_families;
   bool error_if_exists;

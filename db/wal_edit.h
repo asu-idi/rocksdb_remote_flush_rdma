@@ -16,7 +16,6 @@
 #include <vector>
 
 #include "logging/event_logger.h"
-#include "memory/shared_std.hpp"
 #include "port/port.h"
 #include "rocksdb/rocksdb_namespace.h"
 

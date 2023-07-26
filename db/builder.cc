@@ -51,8 +51,6 @@ TableBuilder* NewTableBuilder(const TableBuilderOptions& tboptions,
   assert((tboptions.column_family_id ==
           TablePropertiesCollectorFactory::Context::kUnknownColumnFamily) ==
          tboptions.column_family_name.empty());
-  LOG("NewTableBuilder");
-  LOG("checkpoint TIME:", tboptions.ioptions.table_factory->Name());
   return tboptions.ioptions.table_factory->NewTableBuilder(tboptions, file);
 }
 

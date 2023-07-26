@@ -27,12 +27,6 @@ struct ImmutableCFOptions {
   explicit ImmutableCFOptions();
   explicit ImmutableCFOptions(const ColumnFamilyOptions& cf_options);
 
-  void Pack();
-  void UnPack();
-  bool is_shared();
-  void blockUnusedDataForTest();
-  void unblockUnusedDataForTest();
-
   CompactionStyle compaction_style;
 
   CompactionPri compaction_pri;

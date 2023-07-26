@@ -10,8 +10,6 @@
 
 #include <cstdint>
 
-#include "memory/shared_mem_basic.h"
-#include "memory/shared_std.hpp"
 #include "monitoring/perf_context_imp.h"
 #include "rocksdb/comparator.h"
 #include "rocksdb/comparator_factory.h"

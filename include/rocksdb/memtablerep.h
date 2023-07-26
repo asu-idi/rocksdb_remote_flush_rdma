@@ -45,7 +45,6 @@
 #include <stdexcept>
 #include <unordered_set>
 
-#include "memory/concurrent_shared_arena.h"
 #include "memtable/skiplist.h"
 #include "rocksdb/customizable.h"
 #include "rocksdb/slice.h"
@@ -305,8 +304,6 @@ class MemTableRep {
   // Default: true
   virtual bool IsSnapshotSupported() const { return true; }
 
-  [[nodiscard]] virtual bool CHECKShared() const { return false; }
-
  protected:
   // When *key is an internal key concatenated with the value, returns the
   // user key.
@@ -328,20 +325,6 @@ class MemTableRepFactory : public Customizable {
   static Status CreateFromString(const ConfigOptions& config_options,
                                  const std::string& id,
                                  std::shared_ptr<MemTableRepFactory>* factory);
-
-  virtual MemTableRep* CreateMemtableRepFromShm(
-      const MemTableRep::KeyComparator&, Allocator*, const SliceTransform*,
-      Logger* logger) {
-    LOG("should not call default CreateMemtableRepFromShm");
-    return nullptr;
-  }
-  virtual MemTableRep* CreateMemtableRepFromShm(
-      const MemTableRep::KeyComparator& key_cmp, Allocator* allocator,
-      const SliceTransform* slice_transform, Logger* logger,
-      uint32_t /*cf_id*/) {
-    return CreateMemtableRepFromShm(key_cmp, allocator, slice_transform,
-                                    logger);
-  }
 
   virtual MemTableRep* CreateMemTableRep(const MemTableRep::KeyComparator&,
                                          Allocator*, const SliceTransform*,
@@ -398,10 +381,6 @@ class SkipListFactory : public MemTableRepFactory {
   virtual MemTableRep* CreateMemTableRep(const MemTableRep::KeyComparator&,
                                          Allocator*, const SliceTransform*,
                                          Logger* logger) override;
-  using MemTableRepFactory::CreateMemtableRepFromShm;
-  virtual MemTableRep* CreateMemtableRepFromShm(
-      const MemTableRep::KeyComparator&, Allocator*, const SliceTransform*,
-      Logger* logger) override;
 
   bool IsInsertConcurrentlySupported() const override { return true; }
 

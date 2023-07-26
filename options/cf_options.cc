@@ -15,7 +15,6 @@
 #include <string>
 
 #include "logging/logging.h"
-#include "memory/shared_mem_basic.h"
 #include "options/configurable_helper.h"
 #include "options/db_options.h"
 #include "options/options_helper.h"
@@ -947,19 +946,6 @@ ImmutableOptions::ImmutableOptions(const ImmutableDBOptions& db_options,
 ImmutableOptions::ImmutableOptions(const ImmutableDBOptions& db_options,
                                    const ImmutableCFOptions& cf_options)
     : ImmutableDBOptions(db_options), ImmutableCFOptions(cf_options) {}
-
-void ImmutableCFOptions::Pack() {
-  // TODO: add Dump
-}
-void ImmutableCFOptions::UnPack() {
-  // TODO: add Parse
-}
-bool ImmutableCFOptions::is_shared() {
-  return singleton<SharedContainer>::Instance().find(
-      reinterpret_cast<void*>(this), sizeof(ImmutableCFOptions));
-}
-void ImmutableCFOptions::blockUnusedDataForTest() {}
-void ImmutableCFOptions::unblockUnusedDataForTest() {}
 
 // Multiple two operands. If they overflow, return op1.
 uint64_t MultiplyCheckOverflow(uint64_t op1, double op2) {

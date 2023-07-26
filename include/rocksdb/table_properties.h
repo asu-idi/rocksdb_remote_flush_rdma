@@ -12,10 +12,10 @@
 #include <memory>
 #include <string>
 
-#include "memory/shared_std.hpp"
 #include "rocksdb/customizable.h"
 #include "rocksdb/status.h"
 #include "rocksdb/types.h"
+#include "util/logger.hpp"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -320,17 +320,6 @@ struct TableProperties {
   // Return the approximated memory usage of this TableProperties object,
   // including memory used by the string properties and UserCollectedProperties
   std::size_t ApproximateMemoryUsage() const;
-
-  void Pack();
-  void UnPack();
-  bool CHECKShared();
-
-  shm_std::shared_vector<std::pair<void*, size_t>> string_package_;
-  shm_std::shared_vector<std::pair<void*, size_t>>
-      user_collected_properties_package_;
-  shm_std::shared_vector<std::pair<void*, size_t>> readable_properties_package_;
-  bool is_shared_ = true;
-  bool is_packaged_ = false;
 };
 
 // Extra properties

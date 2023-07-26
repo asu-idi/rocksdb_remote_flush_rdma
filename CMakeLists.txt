@@ -782,13 +782,9 @@ set(SOURCES
         logging/log_buffer.cc
         memory/arena.cc
         memory/concurrent_arena.cc
-        # memory/shared_arena.cc
-        memory/shared_mem_basic.cc
-        memory/concurrent_shared_arena.cc
         memory/jemalloc_nodump_allocator.cc
         memory/memkind_kmem_allocator.cc
         memory/memory_allocator.cc
-        memory/shared_package.cc
         memtable/alloc_tracker.cc
         memtable/hash_linklist_rep.cc
         memtable/hash_skiplist_rep.cc
@@ -1420,7 +1416,6 @@ if(WITH_TESTS)
         logging/event_logger_test.cc
         memory/arena_test.cc
         memory/memory_allocator_test.cc
-        memory/shared_std_test.cc
         memtable/inlineskiplist_test.cc
         memtable/skiplist_test.cc
         memtable/write_buffer_manager_test.cc

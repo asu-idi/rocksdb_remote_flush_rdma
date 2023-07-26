@@ -36,9 +36,7 @@
 #include "memory/arena.h"
 #include "memory/arena_factory.h"
 #include "memory/concurrent_arena.h"
-#include "memory/concurrent_shared_arena.h"
 #include "memory/memory_usage.h"
-#include "memory/shared_mem_basic.h"
 #include "monitoring/perf_context_imp.h"
 #include "monitoring/statistics.h"
 #include "port/lang.h"
@@ -103,40 +101,20 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
       refs_(0),
       kArenaBlockSize(Arena::OptimizeBlockSize(moptions_.arena_block_size)),
       mem_tracker_(write_buffer_manager),
-      arena_(is_shared
-                 ? static_cast<BasicArena*>(
-                       ConSharedArena::CreateSharedConSharedArena(
-                           mutable_cf_options.arena_block_size,
-                           //  TODO(iaIm14): enable this and pass all tests.
-                           (write_buffer_manager != nullptr &&
-                            (write_buffer_manager->enabled() ||
-                             write_buffer_manager->cost_to_cache()))
-                               ? &mem_tracker_
-                               : nullptr,
-                           mutable_cf_options.memtable_huge_page_size))
-                 : static_cast<BasicArena*>(new ConcurrentArena(
-                       moptions_.arena_block_size,
-                       (write_buffer_manager != nullptr &&
-                        (write_buffer_manager->enabled() ||
-                         write_buffer_manager->cost_to_cache()))
-                           ? &mem_tracker_
-                           : nullptr,
-                       mutable_cf_options.memtable_huge_page_size))),
-      table_(is_shared ? ioptions.memtable_factory->CreateMemtableRepFromShm(
-                             comparator_, arena_,
-                             mutable_cf_options.prefix_extractor.get(),
-                             ioptions.logger, column_family_id)
-                       : ioptions.memtable_factory->CreateMemTableRep(
-                             comparator_, arena_,
-                             mutable_cf_options.prefix_extractor.get(),
-                             ioptions.logger, column_family_id)),
-      range_del_table_(is_shared
-                           ? SkipListFactory().CreateMemtableRepFromShm(
-                                 comparator_, arena_, nullptr /* transform */,
-                                 ioptions.logger, column_family_id)
-                           : SkipListFactory().CreateMemTableRep(
-                                 comparator_, arena_, nullptr /* transform */,
-                                 ioptions.logger, column_family_id)),
+      arena_(static_cast<BasicArena*>(
+          new ConcurrentArena(moptions_.arena_block_size,
+                              (write_buffer_manager != nullptr &&
+                               (write_buffer_manager->enabled() ||
+                                write_buffer_manager->cost_to_cache()))
+                                  ? &mem_tracker_
+                                  : nullptr,
+                              mutable_cf_options.memtable_huge_page_size))),
+      table_(ioptions.memtable_factory->CreateMemTableRep(
+          comparator_, arena_, mutable_cf_options.prefix_extractor.get(),
+          ioptions.logger, column_family_id)),
+      range_del_table_(SkipListFactory().CreateMemTableRep(
+          comparator_, arena_, nullptr /* transform */, ioptions.logger,
+          column_family_id)),
       is_range_del_table_empty_(true),
       data_size_(0),
       num_entries_(0),
@@ -160,8 +138,7 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
           ioptions.memtable_insert_with_hint_prefix_extractor.get()),
       oldest_key_time_(std::numeric_limits<uint64_t>::max()),
       atomic_flush_seqno_(kMaxSequenceNumber),
-      approximate_memory_usage_(0),
-      is_shared_(is_shared) {
+      approximate_memory_usage_(0) {
   UpdateFlushState();
   // something went wrong if we need to flush before inserting anything
   assert(!ShouldScheduleFlush());
@@ -194,89 +171,12 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
       reinterpret_cast<void*>(table_), std::dec);
 }
 
-MemTable* MemTable::CreateSharedMemTable(
-    const InternalKeyComparator& comparator, const ImmutableOptions& ioptions,
-    const MutableCFOptions& mutable_cf_options,
-    WriteBufferManager* write_buffer_manager, SequenceNumber earliest_seq,
-    uint32_t column_family_id) {
-  void* mem = shm_alloc(sizeof(MemTable));
-  LOG("CreateSharedMemTable ", std::hex, mem, std::dec);
-  auto* ret = new (mem)
-      MemTable(comparator, ioptions, mutable_cf_options, write_buffer_manager,
-               earliest_seq, column_family_id, true);
-  return ret;
-}
-
-// select data: flush_job_info_; edit_
-void MemTable::blockUnusedDataForTest() {
-  memset(reinterpret_cast<void*>(&this->mem_tracker_), 0, sizeof(AllocTracker));
-  if (reinterpret_cast<void*>(bloom_filter_.get()) ==
-      reinterpret_cast<void*>(0x1000)) {
-    LOG("memtable data already been blocked");
-    return;
-  } else {
-    bloom_filter_.reset(reinterpret_cast<DynamicBloom*>(0x1000));
-  }
-  insert_with_hint_prefix_extractor_ =
-      reinterpret_cast<SliceTransform*>(0x1000);
-  insert_hints_.clear();
-  memset(reinterpret_cast<void*>(&this->insert_hints_), 0,
-         sizeof(std::unordered_map<Slice, void*, SliceHasher>));
-  clock_ = reinterpret_cast<SystemClock*>(0x1000);
-  memset(
-      reinterpret_cast<void*>(const_cast<SliceTransform**>(&prefix_extractor_)),
-      0x0, sizeof(SliceTransform*));
-  memset(reinterpret_cast<void*>(&locks_), 0x0,
-         sizeof(std::vector<port::RWMutex>));
-  memset(reinterpret_cast<void*>(&comparator_), 0, sizeof(KeyComparator));
-  memset(reinterpret_cast<void*>(
-             const_cast<ImmutableMemTableOptions*>(&moptions_)),
-         0, sizeof(ImmutableMemTableOptions));
-}
-
-bool MemTable::CHECKShared() {
-  bool ret = singleton<SharedContainer>::Instance().find(
-      reinterpret_cast<void*>(this), sizeof(MemTable));
-  ret = ret && singleton<SharedContainer>::Instance().find(
-                   arena_, sizeof(ConSharedArena));
-  ret = ret && table_->CHECKShared() && range_del_table_->CHECKShared();
-  // ret = ret && edit_.CHECKShared();
-  // TODO: maybe check after remote RunLocal() or other occation?
-  if (flush_job_info_ != nullptr) ret = ret && flush_job_info_->CHECKShared();
-  return ret;
-}
-void MemTable::Pack() {
-  assert(IsSharedMemtable());
-  // table_.Pack();
-  // range_del_table_.Pack();
-  LOG("start MemTable::VersionEdit::Pack()");
-  // edit_.Pack();
-  LOG("finish MemTable::VersionEdit::Pack()");
-  if (flush_job_info_ != nullptr) {
-    LOG("start MemTable::flush_job_info_->Pack()");
-    flush_job_info_->Pack();
-    LOG("finish MemTable::flush_job_info_->Pack()");
-  }
-  LOG("finish MemTable::Pack()");
-}
-void MemTable::UnPack() {
-  // table_.Unpack();
-  // range_del_table_.Unpack();
-  // edit_.UnPack();
-  // TODO: check if a shared std::unique_ptr could work
-  if (flush_job_info_ != nullptr) flush_job_info_->UnPack();
-}
-
 void* MemTable::UnPackLocal(int sock_fd) {
   LOG("start MemTable::UnPackLocal");
   void* local_arena = BasicArenaFactory::UnPackLocal(sock_fd);
-  LOG("BasicArenaFactory::UnPackLocal(sock_fd) done");
   void* local_prefix_extractor = SliceTransformFactory::UnPackLocal(sock_fd);
-  LOG("SliceTransformFactory::UnPackLocal(sock_fd) done");
   void* local_comparator = KeyComparator::UnPackLocal(sock_fd);
-  LOG("KeyComparator::UnPackLocal(sock_fd) done");
   void* local_moptions = ImmutableMemTableOptions::UnPackLocal(sock_fd);
-  LOG("ImmutableMemTableOptions::UnPackLocal(sock_fd) done");
   // DynamicBloom* local_bloom_filter =
   //     DynamicBloom::UnPackLocal(sock_fd, local_arena);
   auto* local_table = reinterpret_cast<MemTableRep*>(
@@ -343,33 +243,8 @@ void MemTable::PackLocal(int sock_fd) const {
 }
 
 MemTable::~MemTable() {
-  if (IsSharedMemtable()) {
-    LOG("Memtable ", this->GetID(),
-        "shared destruct, ptr=", reinterpret_cast<void*>(table_));
-    LOG("Memtable ", this->GetID(),
-        "shared destruct, ptr=", reinterpret_cast<void*>(range_del_table_));
-    assert(singleton<SharedContainer>::Instance().find(
-        reinterpret_cast<char*>(table_), sizeof(MemTableRep)));
-    assert(singleton<SharedContainer>::Instance().find(
-        reinterpret_cast<char*>(range_del_table_), sizeof(MemTableRep)));
-    // TODO(iaIm14): free without calling destructor, as MemtableRep is
-    // derived table_->~MemTableRep(); range_del_table_->~MemTableRep();
-    shm_delete(reinterpret_cast<char*>(table_));
-    shm_delete(reinterpret_cast<char*>(range_del_table_));
-  } else {
-    LOG("Memtable ", this->GetID(),
-        "local destruct, ptr=", reinterpret_cast<void*>(table_));
-    LOG("Memtable ", this->GetID(),
-        "local destruct, ptr=", reinterpret_cast<void*>(range_del_table_));
-    assert(!singleton<SharedContainer>::Instance().find(
-        reinterpret_cast<char*>(table_), sizeof(MemTableRep)));
-    assert(!singleton<SharedContainer>::Instance().find(
-        reinterpret_cast<char*>(range_del_table_), sizeof(MemTableRep)));
-    delete table_;
-    delete range_del_table_;
-  }
   mem_tracker_.FreeMem();
-  LOG("Memtable ", this->GetID(), "destructed");
+  LOG("Memtable ", GetID(), "destructed");
   assert(refs_ == 0);
 }
 

@@ -14,7 +14,6 @@
 #include "cache/cache_reservation_manager.h"
 #include "db/forward_iterator.h"
 #include "env/mock_env.h"
-#include "memory/shared_mem_basic.h"
 #include "port/lang.h"
 #include "rocksdb/cache.h"
 #include "rocksdb/convenience.h"
