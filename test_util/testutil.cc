@@ -691,7 +691,6 @@ class SpecialSkipListFactory : public MemTableRepFactory {
 
 MemTableRepFactory* NewSpecialSkipListFactory(int num_entries_per_flush) {
   RegisterTestLibrary();
-  LOG("create factory checkpoint");
   return new SpecialSkipListFactory(num_entries_per_flush);
 }
 

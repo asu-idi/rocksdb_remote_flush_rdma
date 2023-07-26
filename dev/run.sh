@@ -19,7 +19,7 @@ cd $PROJECT_ROOT/dev
 cp ../build/db_remote_flush_test ./
 cp ../build/remote_flush_worker ./
 
-rm Log-???????????????\.log
+rm Log-*
 rm -rf memtable_result/
 mkdir memtable_result/
 rm -rf ./data

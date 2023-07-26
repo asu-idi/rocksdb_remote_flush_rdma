@@ -825,7 +825,7 @@ using MultiGetRange = MultiGetContext::Range;
 class Version {
  public:
   void PackLocal(int sockfd) const;
-  static void* UnPackLocal(int sockfd);
+  static void* UnPackLocal(int sockfd, void* cfd_ptr);
 
  public:
   // Append to *iters a sequence of iterators that will

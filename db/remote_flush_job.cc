@@ -170,7 +170,18 @@ void RemoteFlushJob::PackLocal(int server_socket_fd) const {
   cfd_->PackLocal(server_socket_fd);
   meta_.PackLocal(server_socket_fd);
   file_options_.PackLocal(server_socket_fd);
-  assert(base_ == cfd_->current());
+
+  assert(base_ != nullptr && base_->cfd() == cfd_);
+  if (base_ != cfd_->current()) {
+    size_t msg = 0;
+    write(server_socket_fd, &msg, sizeof(size_t));
+    read_data(server_socket_fd, &msg, sizeof(size_t));
+    base_->PackLocal(server_socket_fd);
+  } else {
+    size_t msg = 1;
+    write(server_socket_fd, &msg, sizeof(size_t));
+    read_data(server_socket_fd, &msg, sizeof(size_t));
+  }
   // mutable_cf_options_.PackLocal(server_socket_fd);
   size_t dbname_len = dbname_.size();
   send(server_socket_fd, &dbname_len, sizeof(size_t), 0);
@@ -266,6 +277,13 @@ void* RemoteFlushJob::UnPackLocal(int worker_socket_fd, DBImpl* remote_db) {
   void* cfd_ret = ColumnFamilyData::UnPackLocal(worker_socket_fd);
   void* meta_ret = FileMetaData::UnPackLocal(worker_socket_fd);
   void* file_options_ret = FileOptions::UnPackLocal(worker_socket_fd);
+  void* base_version_ret = nullptr;
+  size_t base_version_flag = 0;
+  read_data(worker_socket_fd, &base_version_flag, sizeof(size_t));
+  send(worker_socket_fd, &base_version_flag, sizeof(size_t), 0);
+  if (base_version_flag == 0) {
+    base_version_ret = Version::UnPackLocal(worker_socket_fd, cfd_ret);
+  }
   // void* mutable_cf_options_ret =
   //     MutableCFOptions::UnPackLocal(worker_socket_fd);
   size_t dbname_len = 0;
@@ -350,7 +368,9 @@ void* RemoteFlushJob::UnPackLocal(int worker_socket_fd, DBImpl* remote_db) {
          reinterpret_cast<void*>(&seqno_to_time_mapping_ret),
          sizeof(SeqnoToTimeMapping*));
   local_handler->cfd_ = reinterpret_cast<ColumnFamilyData*>(cfd_ret);
-  local_handler->base_ = local_handler->cfd_->current();
+  local_handler->base_ = base_version_flag == 1
+                             ? local_handler->cfd_->current()
+                             : reinterpret_cast<Version*>(base_version_ret);
   local_handler->versions_ = reinterpret_cast<VersionSet*>(versions_ret);
   local_handler->edit_ = reinterpret_cast<VersionEdit*>(edit_ret);
   new (const_cast<std::string*>(&local_handler->full_history_ts_low_))
