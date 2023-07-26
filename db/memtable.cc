@@ -206,7 +206,9 @@ void* MemTable::UnPackLocal(int sock_fd) {
       std::dec);
   memtable->table_ = local_table;
   memtable->range_del_table_ = local_range_del_table;
-
+  new (&memtable->fragmented_range_tombstone_list_)
+      std::unique_ptr<FragmentedRangeTombstoneList>(nullptr);
+  memtable->ConstructFragmentedRangeTombstones();
   assert(write(sock_fd, reinterpret_cast<void*>(&mem), sizeof(size_t)) ==
          sizeof(size_t));
   LOG("send MemTable", mem);
@@ -725,10 +727,12 @@ InternalIterator* MemTable::NewIterator(const ReadOptions& read_options,
 FragmentedRangeTombstoneIterator* MemTable::NewRangeTombstoneIterator(
     const ReadOptions& read_options, SequenceNumber read_seq,
     bool immutable_memtable) {
+  LOG("start MemTable::NewRangeTombstoneIterator");
   if (read_options.ignore_range_deletions ||
       is_range_del_table_empty_.load(std::memory_order_relaxed)) {
     return nullptr;
   }
+  LOG("start MemTable::NewRangeTombstoneIteratorInternal");
   return NewRangeTombstoneIteratorInternal(read_options, read_seq,
                                            immutable_memtable);
 }
@@ -739,7 +743,9 @@ FragmentedRangeTombstoneIterator* MemTable::NewRangeTombstoneIteratorInternal(
   if (immutable_memtable) {
     // Note that caller should already have verified that
     // !is_range_del_table_empty_
+    LOG("check IsFragmentedRangeTombstonesConstructed");
     assert(IsFragmentedRangeTombstonesConstructed());
+    LOG("new FragmentedRangeTombstoneIterator");
     return new FragmentedRangeTombstoneIterator(
         fragmented_range_tombstone_list_.get(), comparator_.comparator,
         read_seq, read_options.timestamp);

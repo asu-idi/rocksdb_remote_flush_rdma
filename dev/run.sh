@@ -34,7 +34,7 @@ cp ../build/rdma_server ./
 # cp ../build/db_test3 ./
 # cp ../build/db_test4 ./
 
-rm Log-???????????????\.log
+rm Log-*
 rm -rf memtable_result/
 mkdir memtable_result/
 rm -rf ./data

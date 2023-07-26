@@ -27,8 +27,8 @@
 #ifdef ROCKSDB_ASSERT_STATUS_CHECKED
 #include "port/stack_trace.h"
 #endif
-
 #include "rocksdb/slice.h"
+#include "util/logger.hpp"
 
 namespace ROCKSDB_NAMESPACE {
 
