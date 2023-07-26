@@ -23,7 +23,6 @@
 #include <sstream>
 
 #include "logging/logging.h"
-#include "memory/shared_mem_basic.h"
 #include "memory/remote_flush_service.h"
 #include "monitoring/statistics.h"
 #include "options/db_options.h"
@@ -314,57 +313,6 @@ void* ColumnFamilyOptions::UnPackLocal(char*& buf) {
       reinterpret_cast<TableFactory*>(TablePackFactory::UnPackLocal(buf));
   options->table_factory.reset(local_table_factory);
   return reinterpret_cast<void*>(options);
-}
-
-void* ColumnFamilyOptions::Pack(std::shared_ptr<FileSystem> fs) {
-  if (is_packaged_) {
-    assert(option_dump_file != nullptr);
-    return option_dump_file;
-  }
-  std::function<std::string()> gen = []() {
-    std::string ret = "/tmp/rocksdb_options_dir/ColumnFamilyOptions-";
-    for (int i = 0; i < 10; i++) {
-      std::random_device rd;
-      std::mt19937 generator(rd());
-      ret += std::to_string(generator() % 10);
-    }
-    return ret;
-  };
-  std::string file_name = gen();
-  void* mem = shm_alloc(file_name.length());
-  memcpy(mem, file_name.c_str(), file_name.length());
-  option_dump_file = mem;
-  LOG("Packaging ImmutableDBOptions to %s", file_name.c_str());
-  DBOptions db_options = DBOptions();
-  std::vector<std::string> cf_names_;
-  std::vector<ColumnFamilyOptions> cf_options_;
-  cf_names_.push_back("default");
-  cf_options_.push_back(*this);
-  Status ret = PersistRocksDBOptions(db_options, cf_names_, cf_options_,
-                                     file_name, fs.get());
-  is_packaged_ = true;
-  return option_dump_file;
-}
-ColumnFamilyOptions* ColumnFamilyOptions::Unpack(void* dumped_file) {
-  std::string file_name = std::string(static_cast<char*>(dumped_file));
-  LOG("Unpackaging ImmutableDBOptions from %s", file_name.c_str());
-  DBOptions db_options = DBOptions();
-  ConfigOptions config_options;
-  std::vector<ColumnFamilyDescriptor> loaded_cf_descs;
-  Status ret = LoadOptionsFromFile(config_options, file_name, &db_options,
-                                   &loaded_cf_descs);
-  assert(ret.ok());
-  *this = loaded_cf_descs[0].options;
-  server_use_remote_flush = true;
-  if (!is_packaged_) {
-    return this;
-  } else {
-    assert(dumped_file == option_dump_file);
-    shm_delete(reinterpret_cast<char*>(dumped_file));
-    option_dump_file = nullptr;
-    is_packaged_ = false;
-  }
-  return this;
 }
 
 DBOptions::DBOptions() {}

@@ -19,8 +19,6 @@
 #include "db/version_set.h"
 #include "logging/log_buffer.h"
 #include "logging/logging.h"
-#include "memory/shared_mem_basic.h"
-#include "memory/shared_std.hpp"
 #include "monitoring/thread_status_util.h"
 #include "rocksdb/db.h"
 #include "rocksdb/env.h"
@@ -36,20 +34,6 @@ class InternalKeyComparator;
 class Mutex;
 class VersionSet;
 
-bool MemTableListVersion::CHECKShared() {
-  size_t size = sizeof(MemTableListVersion);
-  void *front = reinterpret_cast<void*>(this),
-       *ptr1 = reinterpret_cast<void*>(parent_memtable_list_memory_usage_);
-
-  LOG("MemTableListVersion::CHECKShared");
-  bool ret = singleton<SharedContainer>::Instance().find(front, size) &&
-             singleton<SharedContainer>::Instance().find(ptr1, sizeof(size_t));
-  for (auto& it : memlist_) {
-    ret = ret &&
-          singleton<SharedContainer>::Instance().find(&it, sizeof(MemTable*));
-  }
-  return ret;
-}
 void MemTableListVersion::AddMemTable(MemTable* m) {
   memlist_.push_front(m);
   *parent_memtable_list_memory_usage_ += m->ApproximateMemoryUsage();
@@ -64,23 +48,6 @@ void MemTableListVersion::UnrefMemTable(autovector<MemTable*>* to_delete,
   }
 }
 
-MemTableListVersion* MemTableListVersion::CreateSharedMemtableListVersion(
-    size_t* parent_memtable_list_memory_usage,
-    int max_write_buffer_number_to_maintain,
-    int64_t max_write_buffer_size_to_maintain) {
-  void* mem = shm_alloc(sizeof(MemTableListVersion));
-  LOG("MemTableListVersion::CreateSharedMemtableListVersion");
-  return new (mem) MemTableListVersion(parent_memtable_list_memory_usage,
-                                       max_write_buffer_number_to_maintain,
-                                       max_write_buffer_size_to_maintain, true);
-}
-MemTableListVersion* MemTableListVersion::CreateSharedMemtableListVersion(
-    size_t* parent_memtable_list_memory_usage, const MemTableListVersion& old) {
-  void* mem = shm_alloc(sizeof(MemTableListVersion));
-  return new (mem)
-      MemTableListVersion(parent_memtable_list_memory_usage, old, true);
-}
-
 MemTableListVersion::MemTableListVersion(
     size_t* parent_memtable_list_memory_usage, const MemTableListVersion& old,
     bool shared)
@@ -88,8 +55,7 @@ MemTableListVersion::MemTableListVersion(
           old.max_write_buffer_number_to_maintain_),
       max_write_buffer_size_to_maintain_(
           old.max_write_buffer_size_to_maintain_),
-      parent_memtable_list_memory_usage_(parent_memtable_list_memory_usage),
-      is_shared_(shared) {
+      parent_memtable_list_memory_usage_(parent_memtable_list_memory_usage) {
   memlist_ = old.memlist_;
   for (auto& m : memlist_) {
     m->Ref();
@@ -107,8 +73,7 @@ MemTableListVersion::MemTableListVersion(
     int64_t max_write_buffer_size_to_maintain, bool shared)
     : max_write_buffer_number_to_maintain_(max_write_buffer_number_to_maintain),
       max_write_buffer_size_to_maintain_(max_write_buffer_size_to_maintain),
-      parent_memtable_list_memory_usage_(parent_memtable_list_memory_usage),
-      is_shared_(shared) {}
+      parent_memtable_list_memory_usage_(parent_memtable_list_memory_usage) {}
 
 void MemTableListVersion::Ref() { ++refs_; }
 
@@ -127,37 +92,9 @@ void MemTableListVersion::Unref(autovector<MemTable*>* to_delete) {
       UnrefMemTable(to_delete, m);
     }
     LOG("MemTableListVersion::Unref");
-    if (!is_shared_) {
-      LOG("MemTableListVersion::Unref delete");
-      delete this;
-    } else {
-      LOG("MemTableListVersion::Unref delete shared");
-      this->~MemTableListVersion();
-      shm_delete(reinterpret_cast<char*>(this));
-    }
+    delete this;
     LOG("MemTableListVersion::Unref done");
   }
-}
-
-MemTableList* MemTableList::CreateSharedMemTableList(
-    int min_write_buffer_number_to_merge,
-    int max_write_buffer_number_to_maintain,
-    int64_t max_write_buffer_size_to_maintain) {
-  void* mem = shm_alloc(sizeof(MemTableList));
-  LOG("MemTableList::CreateSharedMemTableList");
-  return new (mem) MemTableList(min_write_buffer_number_to_merge,
-                                max_write_buffer_number_to_maintain,
-                                max_write_buffer_size_to_maintain, true);
-}
-
-bool MemTableList::CHECKShared() {
-  LOG("MemTableList::CHECKShared");
-  void* mem = reinterpret_cast<void*>(this);
-  bool ret =
-      singleton<SharedContainer>::Instance().find(mem, sizeof(MemTableList));
-  assert(current_);
-  ret = ret && current_->CHECKShared();
-  return ret;
 }
 
 int MemTableList::NumNotFlushed() const {
@@ -223,11 +160,11 @@ bool MemTableListVersion::GetFromHistory(
 }
 
 bool MemTableListVersion::GetFromList(
-    shm_std::shared_list<MemTable*>* list, const LookupKey& key,
-    std::string* value, PinnableWideColumns* columns, std::string* timestamp,
-    Status* s, MergeContext* merge_context,
-    SequenceNumber* max_covering_tombstone_seq, SequenceNumber* seq,
-    const ReadOptions& read_opts, ReadCallback* callback, bool* is_blob_index) {
+    std::list<MemTable*>* list, const LookupKey& key, std::string* value,
+    PinnableWideColumns* columns, std::string* timestamp, Status* s,
+    MergeContext* merge_context, SequenceNumber* max_covering_tombstone_seq,
+    SequenceNumber* seq, const ReadOptions& read_opts, ReadCallback* callback,
+    bool* is_blob_index) {
   *seq = kMaxSequenceNumber;
 
   for (auto& memtable : *list) {
@@ -367,12 +304,9 @@ SequenceNumber MemTableListVersion::GetFirstSequenceNumber() const {
 // caller is responsible for referencing m
 void MemTableListVersion::Add(MemTable* m, autovector<MemTable*>* to_delete) {
   assert(refs_ == 1);  // only when refs_ == 1 is MemTableListVersion mutable
-  LOG("MemTableListVersion::Add AddMemTable::before: shared:", CHECKShared());
   AddMemTable(m);
-  LOG("MemTableListVersion::Add AddMemTable::after: shared:", CHECKShared());
   // m->MemoryAllocatedBytes() is added in MemoryAllocatedBytesExcludingLast
   TrimHistory(to_delete, 0);
-  LOG("MemTableListVersion::TrimHistory::after: shared:", CHECKShared());
 }
 
 // Removes m from list of memtables not flushed.  Caller should NOT Unref m.
@@ -689,9 +623,7 @@ void MemTableList::Add(MemTable* m, autovector<MemTable*>* to_delete) {
   // and when moving to the immutable list we don't unref it,
   // we don't have to ref the memtable here. we just take over the
   // reference from the DBImpl.
-  LOG("MemTableList::Add::before CHECKShared", CHECKShared());
   current_->Add(m, to_delete);
-  LOG("MemTableList::Add::after CHECKShared", CHECKShared());
   m->MarkImmutable();
   num_flush_not_started_++;
   if (num_flush_not_started_ == 1) {
@@ -754,18 +686,7 @@ void MemTableList::InstallNewVersion() {
   } else {
     // somebody else holds the current version, we need to create new one
     MemTableListVersion* version = current_;
-
-    if (version->is_shared()) {
-      // TODO(iaIm14):DBRemoteFlushTest.MemPurgeCorrectLogNumberAndSSTFileCreation
-      // assert(singleton<SharedContainer>::Instance().find(
-      //     version, sizeof(MemTableListVersion)));
-      current_ = MemTableListVersion::CreateSharedMemtableListVersion(
-          &current_memory_usage_, *version);
-    } else {
-      // assert(!singleton<SharedContainer>::Instance().find(
-      //     version, sizeof(MemTableListVersion)));
-      current_ = new MemTableListVersion(&current_memory_usage_, *version);
-    }
+    current_ = new MemTableListVersion(&current_memory_usage_, *version);
     current_->Ref();
     version->Unref();
   }

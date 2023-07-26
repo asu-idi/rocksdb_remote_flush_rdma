@@ -25,8 +25,6 @@
 #include "db/dbformat.h"
 #include "db/version_set.h"
 #include "logging/event_logger.h"
-#include "memory/shared_mem_basic.h"
-#include "memory/shared_package.h"
 #include "rocksdb/file_checksum.h"
 #include "rocksdb/slice.h"
 #include "table/unique_id_impl.h"
@@ -225,30 +223,6 @@ void* FileMetaData::UnPackLocal(char*& buf) {
   LOG("client FileMetaData::UnPackLocal unique_id");
 
   return mem;
-}
-
-FileMetaData* FileMetaData::CreateSharedMetaData() {
-  void* mem = shm_alloc(sizeof(FileMetaData));
-  auto* ret = new (mem) FileMetaData();
-  return ret;
-}
-
-FileMetaData* FileMetaData::CreateSharedMetaData(
-    uint64_t file, uint32_t file_path_id, uint64_t file_size,
-    const InternalKey& smallest_key, const InternalKey& largest_key,
-    const SequenceNumber& smallest_seq, const SequenceNumber& largest_seq,
-    bool marked_for_compact, Temperature _temperature,
-    uint64_t oldest_blob_file, uint64_t _oldest_ancester_time,
-    uint64_t _file_creation_time, uint64_t _epoch_number,
-    const std::string& _file_checksum,
-    const std::string& _file_checksum_func_name, UniqueId64x2 _unique_id,
-    const uint64_t _compensated_range_deletion_size) {
-  void* mem = shm_alloc(sizeof(FileMetaData));
-  return new (mem) FileMetaData(
-      file, file_path_id, file_size, smallest_key, largest_key, smallest_seq,
-      largest_seq, marked_for_compact, _temperature, oldest_blob_file,
-      _oldest_ancester_time, _file_creation_time, _epoch_number, _file_checksum,
-      _file_checksum_func_name, _unique_id, _compensated_range_deletion_size);
 }
 
 Status FileMetaData::UpdateBoundaries(const Slice& key, const Slice& value,

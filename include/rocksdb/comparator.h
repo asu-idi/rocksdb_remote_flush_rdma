@@ -11,7 +11,6 @@
 #include <cassert>
 #include <string>
 
-#include "memory/shared_mem_basic.h"
 #include "memory/remote_flush_service.h"
 #include "rocksdb/customizable.h"
 #include "rocksdb/rocksdb_namespace.h"
@@ -171,17 +170,6 @@ class Comparator : public Customizable, public CompareInterface {
   virtual bool EqualWithoutTimestamp(const Slice& a, const Slice& b) const {
     return 0 ==
            CompareWithoutTimestamp(a, /*a_has_ts=*/true, b, /*b_has_ts=*/true);
-  }
-
-  // shared, comparator.cc
-  Comparator* UnPack(const char* name) {
-    shm_delete(const_cast<char*>(name));
-    return this;
-  }
-  const char* Pack() {
-    void* mem = shm_alloc(strlen(Name()) + 1);
-    memcpy(mem, Name(), strlen(Name()) + 1);
-    return reinterpret_cast<const char*>(mem);
   }
 
  private:

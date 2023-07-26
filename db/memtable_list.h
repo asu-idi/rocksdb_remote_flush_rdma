@@ -5,11 +5,8 @@
 //
 #pragma once
 
-#include <memory/shared_mem_basic.h>
-
 #include <deque>
 #include <limits>
-#include <memory/shared_std.hpp>
 #include <set>
 #include <string>
 #include <vector>
@@ -51,13 +48,7 @@ class MemTableListVersion {
                                int max_write_buffer_number_to_maintain,
                                int64_t max_write_buffer_size_to_maintain,
                                bool shared = false);
-  static auto CreateSharedMemtableListVersion(
-      size_t* parent_memtable_list_memory_usage,
-      int max_write_buffer_number_to_maintain,
-      int64_t max_write_buffer_size_to_maintain) -> MemTableListVersion*;
-  static auto CreateSharedMemtableListVersion(
-      size_t* parent_memtable_list_memory_usage, const MemTableListVersion& old)
-      -> MemTableListVersion*;
+
   void Ref();
   void Unref(autovector<MemTable*>* to_delete = nullptr);
 
@@ -146,8 +137,6 @@ class MemTableListVersion {
   // smallest sequence number of all FirstSequenceNumber.
   // Return kMaxSequenceNumber if the list is empty.
   SequenceNumber GetFirstSequenceNumber() const;
-  bool CHECKShared();
-  bool is_shared() const { return is_shared_; }
 
  private:
   friend class MemTableList;
@@ -172,7 +161,7 @@ class MemTableListVersion {
   // Return true if memtable is trimmed
   bool TrimHistory(autovector<MemTable*>* to_delete, size_t usage);
 
-  bool GetFromList(shm_std::shared_list<MemTable*>* list, const LookupKey& key,
+  bool GetFromList(std::list<MemTable*>* list, const LookupKey& key,
                    std::string* value, PinnableWideColumns* columns,
                    std::string* timestamp, Status* s,
                    MergeContext* merge_context,
@@ -198,11 +187,11 @@ class MemTableListVersion {
   bool MemtableLimitExceeded(size_t usage);
 
   // Immutable MemTables that have not yet been flushed.
-  shm_std::shared_list<MemTable*> memlist_;
+  std::list<MemTable*> memlist_;
 
   // MemTables that have already been flushed
   // (used during Transaction validation)
-  shm_std::shared_list<MemTable*> memlist_history_;
+  std::list<MemTable*> memlist_history_;
 
   // Maximum number of MemTables to keep in memory (including both flushed
   const int max_write_buffer_number_to_maintain_;
@@ -213,8 +202,6 @@ class MemTableListVersion {
   int refs_ = 0;
 
   size_t* parent_memtable_list_memory_usage_;
-
-  bool is_shared_;
 };
 
 // This class stores references to all the immutable memtables.
@@ -238,15 +225,9 @@ class MemTableList {
       : imm_flush_needed(false),
         imm_trim_needed(false),
         min_write_buffer_number_to_merge_(min_write_buffer_number_to_merge),
-        current_(
-            is_shared
-                ? MemTableListVersion::CreateSharedMemtableListVersion(
-                      &current_memory_usage_,
-                      max_write_buffer_number_to_maintain,
-                      max_write_buffer_size_to_maintain)
-                : new MemTableListVersion(&current_memory_usage_,
-                                          max_write_buffer_number_to_maintain,
-                                          max_write_buffer_size_to_maintain)),
+        current_(new MemTableListVersion(&current_memory_usage_,
+                                         max_write_buffer_number_to_maintain,
+                                         max_write_buffer_size_to_maintain)),
         num_flush_not_started_(0),
         commit_in_progress_(false),
         flush_requested_(false),
@@ -255,12 +236,6 @@ class MemTableList {
         current_has_history_(false) {
     current_->Ref();
   }
-
-  static MemTableList* CreateSharedMemTableList(
-      int min_write_buffer_number_to_merge,
-      int max_write_buffer_number_to_maintain,
-      int64_t max_write_buffer_size_to_maintain);
-  bool CHECKShared();
 
   // Should not delete MemTableList without making sure MemTableList::current()
   // is Unref()'d.

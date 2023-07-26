@@ -22,7 +22,6 @@
 #include "file/random_access_file_reader.h"
 #include "file/sequence_file_reader.h"
 #include "file/writable_file_writer.h"
-#include "memory/shared_mem_basic.h"
 #include "port/port.h"
 #include "rocksdb/convenience.h"
 #include "rocksdb/system_clock.h"
@@ -666,19 +665,7 @@ class SpecialSkipListFactory : public MemTableRepFactory {
         factory_.CreateMemTableRep(compare, allocator, transform, nullptr),
         num_entries_flush_);
   }
-  using MemTableRepFactory::CreateMemtableRepFromShm;
-  virtual MemTableRep* CreateMemtableRepFromShm(
-      const MemTableRep::KeyComparator& compare, Allocator* allocator,
-      const SliceTransform* transform, Logger* /*logger*/) override {
-    void* mem = shm_alloc(sizeof(SpecialMemTableRep));
-    LOG("create rep from remote mem: ", allocator->name(), ' ', std::hex, mem,
-        std::dec);
-    return new (mem)
-        SpecialMemTableRep(allocator,
-                           factory_.CreateMemtableRepFromShm(
-                               compare, allocator, transform, nullptr),
-                           num_entries_flush_);
-  }
+
   MemTableRep* CreateExistMemTableWrapper(
       const Allocator* arna, const MemTableRep* memtable) override {
     return new SpecialMemTableRep(const_cast<Allocator*>(arna),

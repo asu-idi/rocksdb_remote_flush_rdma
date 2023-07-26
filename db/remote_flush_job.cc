@@ -64,7 +64,6 @@
 #include "logging/event_logger.h"
 #include "logging/log_buffer.h"
 #include "logging/logging.h"
-#include "memory/shared_mem_basic.h"
 #include "monitoring/iostats_context_imp.h"
 #include "monitoring/perf_context_imp.h"
 #include "monitoring/thread_status_util.h"
@@ -671,19 +670,16 @@ std::shared_ptr<RemoteFlushJob> RemoteFlushJob::CreateRemoteFlushJob(
     const SeqnoToTimeMapping& seqno_time_mapping, const std::string& db_id,
     const std::string& db_session_id, std::string full_history_ts_low,
     BlobFileCompletionCallback* blob_callback) {
-  void* mem = shm_alloc(sizeof(RemoteFlushJob));
-  LOG("RemoteFlushJob::CreateRemoteFlushJob thread_id:",
-      std::this_thread::get_id(), "Create RemoteFlushJob: handle:", mem);
-  return {new (mem) RemoteFlushJob(
-              dbname, cfd, db_options, mutable_cf_options, max_memtable_id,
-              file_options, versions, db_mutex, shutting_down,
-              existing_snapshots, earliest_write_conflict_snapshot,
-              snapshot_checker, job_context, flush_reason, log_buffer,
-              db_directory, output_file_directory, output_compression, stats,
-              event_logger, measure_io_stats, sync_output_directory,
-              write_manifest, thread_pri, io_tracer, seqno_time_mapping, db_id,
-              db_session_id, full_history_ts_low, blob_callback),
-          [](RemoteFlushJob* p) { shm_delete(reinterpret_cast<char*>(p)); }};
+  auto mem = new RemoteFlushJob(
+      dbname, cfd, db_options, mutable_cf_options, max_memtable_id,
+      file_options, versions, db_mutex, shutting_down,
+      std::move(existing_snapshots), earliest_write_conflict_snapshot,
+      snapshot_checker, job_context, flush_reason, log_buffer, db_directory,
+      output_file_directory, output_compression, stats, event_logger,
+      measure_io_stats, sync_output_directory, write_manifest, thread_pri,
+      io_tracer, seqno_time_mapping, db_id, db_session_id,
+      std::move(full_history_ts_low), blob_callback);
+  return std::shared_ptr<RemoteFlushJob>(mem);
 }
 RemoteFlushJob::~RemoteFlushJob() { ThreadStatusUtil::ResetThreadStatus(); }
 
@@ -1017,16 +1013,10 @@ Status RemoteFlushJob::MemPurge() {
         return s;
       }
     }
-    if (cfd_->initial_cf_options().server_use_remote_flush) {
-      new_mem = MemTable::CreateSharedMemTable(
-          (cfd_->internal_comparator()), *(cfd_->ioptions()),
-          mutable_cf_options_, cfd_->write_buffer_mgr(), earliest_seqno,
-          cfd_->GetID());
-    } else {
-      LOG(" ColumnFamily ", cfd_->GetID(),
-          " Setup with NO remote_flush_trigger but use RemoteFlushJob");
-      assert(cfd_->GetLatestCFOptions().server_use_remote_flush);
-    }
+
+    new_mem = new MemTable((cfd_->internal_comparator()), *(cfd_->ioptions()),
+                           mutable_cf_options_, cfd_->write_buffer_mgr(),
+                           earliest_seqno, cfd_->GetID());
     assert(new_mem != nullptr);
 
     Env* env = db_options_.env;
