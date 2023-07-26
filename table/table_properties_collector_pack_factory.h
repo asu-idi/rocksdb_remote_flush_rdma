@@ -113,7 +113,7 @@ inline void* TablePropertiesCollectorPackFactory::UnPackLocal(char*& buf) {
   //   int64_t msg = 0;
   size_t msg_len = sizeof(size_t) + sizeof(size_t) * 2 + sizeof(double);
   char* msg = reinterpret_cast<char*>(malloc(msg_len));
-  UNPACK_FROM_BUF(buf, msg, sizeof(msg));
+  UNPACK_FROM_BUF(buf, msg, msg_len);
   size_t type = *reinterpret_cast<size_t*>(msg);
   if (type == 1) {
     LOG("TablePropertiesCollectorPackFactory::UnPackLocal: "

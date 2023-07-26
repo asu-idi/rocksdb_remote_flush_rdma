@@ -338,15 +338,6 @@ struct ColumnFamilyOptions : public AdvancedColumnFamilyOptions {
   // Default: nullptr
   std::shared_ptr<SstPartitionerFactory> sst_partitioner_factory = nullptr;
 
-  void* Pack(std::shared_ptr<FileSystem>);
-  ColumnFamilyOptions* Unpack(void* dumped_file);
-  void CHECKShared();
-  void is_shared();
-  void blockUnusedDataForTest();
-  void unblockUnusedDataForTest();
-  bool is_packaged_ = false;
-  void* option_dump_file = nullptr;
-
   // Create ColumnFamilyOptions with default values for all fields
   ColumnFamilyOptions();
   // Create ColumnFamilyOptions from Options

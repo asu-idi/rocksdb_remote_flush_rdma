@@ -21,8 +21,6 @@
 #include "db/table_properties_collector.h"
 #include "db/write_batch_internal.h"
 #include "db/write_controller.h"
-#include "memory/shared_mem_basic.h"
-#include "memory/shared_std.hpp"
 #include "memory/remote_flush_service.h"
 #include "options/cf_options.h"
 #include "rocksdb/compaction_job_stats.h"
@@ -651,31 +649,6 @@ class ColumnFamilyData {
   bool mempurge_used_;
 
   std::atomic<uint64_t> next_epoch_number_;
-
-  // shared
-  bool is_packaged_ = false;
-  shm_std::shared_vector<std::pair<void*, size_t>> string_package_;
-  shm_std::shared_vector<std::pair<void*, size_t>> ds_package_;
-
- public:
-  std::vector<std::pair<void*, size_t>> temp_blocked_data_;
-  bool CHECKShared();
-  [[nodiscard]] bool is_shared() {
-    return singleton<SharedContainer>::Instance().find(
-        reinterpret_cast<void*>(this), sizeof(ColumnFamilyData));
-  }
-  static ColumnFamilyData* CreateSharedColumnFamilyData(
-      uint32_t id, const std::string& name, Version* dummy_versions,
-      Cache* table_cache, WriteBufferManager* write_buffer_manager,
-      const ColumnFamilyOptions& options, const ImmutableDBOptions& db_options,
-      const FileOptions* file_options, ColumnFamilySet* column_family_set,
-      BlockCacheTracer* const block_cache_tracer,
-      const std::shared_ptr<IOTracer>& io_tracer, const std::string& db_id,
-      const std::string& db_session_id);
-  void Pack();
-  void UnPack();
-  bool blockUnusedDataForTest();
-  bool unblockUnusedDataForTest();
 };
 
 // ColumnFamilySet has interesting thread-safety requirements

@@ -12,7 +12,6 @@
 #include "db/merge_context.h"
 #include "db/version_set.h"
 #include "db/write_controller.h"
-#include "memory/shared_mem_basic.h"
 #include "rocksdb/db.h"
 #include "rocksdb/status.h"
 #include "rocksdb/write_buffer_manager.h"
@@ -902,13 +901,6 @@ TEST_F(MemTableListTest, DISABLED_SharedMemListVersion) {
   lists.emplace_back(new MemTableList(min_write_buffer_number_to_merge,
                                       max_write_buffer_number_to_maintain,
                                       max_write_buffer_size_to_maintain, true));
-  LOG("create MemTableList done");
-  ASSERT_TRUE(lists[0]->current()->CHECKShared());
-  for (auto list : lists) {
-    auto* ptr = list->current();
-    ASSERT_TRUE(singleton<SharedContainer>::Instance().find(
-        reinterpret_cast<void*>(ptr), sizeof(MemTableListVersion)));
-  }
 }
 
 TEST_F(MemTableListTest, AtomicFlusTest) {
@@ -1077,11 +1069,10 @@ TEST_F(MemTableListTest, SharedAtomicFlusTest) {
       7 * static_cast<int64_t>(options.write_buffer_size);
   autovector<MemTableList*> lists;
   for (int i = 0; i != num_cfs; ++i) {
-    lists.emplace_back(MemTableList::CreateSharedMemTableList(
-        min_write_buffer_number_to_merge, max_write_buffer_number_to_maintain,
-        max_write_buffer_size_to_maintain));
+    lists.emplace_back(new MemTableList(min_write_buffer_number_to_merge,
+                                        max_write_buffer_number_to_maintain,
+                                        max_write_buffer_size_to_maintain));
   }
-  for (auto& list : lists) ASSERT_TRUE(list->CHECKShared());
 
   autovector<uint32_t> cf_ids;
   std::vector<std::vector<MemTable*>> tables(num_cfs);
@@ -1117,7 +1108,6 @@ TEST_F(MemTableListTest, SharedAtomicFlusTest) {
 
   std::vector<autovector<MemTable*>> flush_candidates(num_cfs);
 
-  for (auto& list : lists) ASSERT_TRUE(list->CHECKShared());
   // Nothing to flush
   for (auto i = 0; i != num_cfs; ++i) {
     auto* list = lists[i];
@@ -1135,8 +1125,6 @@ TEST_F(MemTableListTest, SharedAtomicFlusTest) {
     ASSERT_FALSE(list->IsFlushPending());
     ASSERT_FALSE(list->imm_flush_needed.load(std::memory_order_acquire));
   }
-
-  for (auto& list : lists) ASSERT_TRUE(list->CHECKShared());
 
   autovector<MemTable*> to_delete;
   // Add tables to the immutable memtalbe lists associated with column families
@@ -1156,7 +1144,7 @@ TEST_F(MemTableListTest, SharedAtomicFlusTest) {
   // list[2]: |0| 1
   //          +-+
   // Pick memtables to flush
-  for (auto& list : lists) ASSERT_TRUE(list->CHECKShared());
+
   for (auto i = 0; i != num_cfs; ++i) {
     flush_candidates[i].clear();
     lists[i]->PickMemtablesToFlush(flush_memtable_ids[i], &flush_candidates[i]);
@@ -1176,8 +1164,6 @@ TEST_F(MemTableListTest, SharedAtomicFlusTest) {
     }
   }
 
-  for (auto& list : lists) ASSERT_TRUE(list->CHECKShared());
-
   Status s = Mock_InstallMemtableAtomicFlushResults(
       tmp_lists, tmp_cf_ids, tmp_options_list, to_flush, &to_delete);
   ASSERT_OK(s);
@@ -1192,14 +1178,11 @@ TEST_F(MemTableListTest, SharedAtomicFlusTest) {
         static_cast<size_t>(num_tables_per_cf) - flush_candidates[i].size(),
         lists[i]->NumNotFlushed());
   }
-  for (auto& list : lists) ASSERT_TRUE(list->CHECKShared());
+
   to_delete.clear();
   for (auto list : lists) {
     list->current()->Unref(&to_delete);
-    // delete list;
-
-    list->~MemTableList();
-    shm_delete(reinterpret_cast<char*>(list));
+    delete list;
   }
 
   for (auto& mutable_cf_options : mutable_cf_options_list) {

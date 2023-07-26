@@ -24,8 +24,6 @@
 #include "db/version_edit.h"
 #include "memory/allocator.h"
 #include "memory/concurrent_arena.h"
-#include "memory/remote_flush_service.h"
-#include "memory/shared_std.hpp"
 #include "monitoring/instrumented_mutex.h"
 #include "options/cf_options.h"
 #include "rocksdb/db.h"
@@ -119,7 +117,7 @@ using MultiGetRange = MultiGetContext::Range;
 class MemTable {
  public:
   static void* UnPackLocal(int sock_fd);
-  void* PackLocal(int sock_fd) const;
+  void PackLocal(int sock_fd) const;
   static void* UnPackLocal(char*& buf);
   void PackLocal(char*& buf) const;
 
@@ -189,11 +187,6 @@ class MemTable {
                     WriteBufferManager* write_buffer_manager,
                     SequenceNumber earliest_seq, uint32_t column_family_id,
                     bool is_shared = false);
-  static MemTable* CreateSharedMemTable(
-      const InternalKeyComparator& comparator, const ImmutableOptions& ioptions,
-      const MutableCFOptions& mutable_cf_options,
-      WriteBufferManager* write_buffer_manager, SequenceNumber earliest_seq,
-      uint32_t column_family_id);
 
   // No copying allowed
   MemTable(const MemTable&) = delete;
@@ -617,20 +610,6 @@ class MemTable {
   static Status VerifyEntryChecksum(const char* entry,
                                     size_t protection_bytes_per_key,
                                     bool allow_data_in_errors = false);
-  // TODO(iaIm14): remove is_shared(), dup with IsSharedMemtable() and may cause
-  // delete problem.
-  bool IsSharedMemtable() {
-    if (strcmp(arena_->name(), "ConcurrentSharedArena") == 0) {
-      return true;
-    } else {
-      return false;
-    }
-  }
-  bool CHECKShared();
-  void Pack();
-  void UnPack();
-  bool is_shared() const { return is_shared_; }
-  void blockUnusedDataForTest();
 
  private:
   enum FlushStateEnum { FLUSH_NOT_REQUESTED, FLUSH_REQUESTED, FLUSH_SCHEDULED };
@@ -716,9 +695,6 @@ class MemTable {
 
   // Flush job info of the current memtable.
   std::unique_ptr<FlushJobInfo> flush_job_info_;
-
-  bool is_shared_;
-  shm_std::shared_vector<void*> package_;
 
   // Updates flush_state_ using ShouldFlushNow()
   void UpdateFlushState();
