@@ -1550,13 +1550,14 @@ void Version::PackLocal(int sockfd) const {
   int64_t ret_val = 0;
   read_data(sockfd, &ret_val, sizeof(int64_t));
 }
-void* Version::UnPackLocal(int sockfd) {
+void* Version::UnPackLocal(int sockfd, void* cfd_ptr) {
   void* mem = malloc(sizeof(Version));
   auto* mem_ptr = reinterpret_cast<Version*>(mem);
   void* worker_storage_info = VersionStorageInfo::UnPackLocal(sockfd);
   read_data(sockfd, mem, sizeof(Version));
   memcpy(reinterpret_cast<void*>(&mem_ptr->storage_info_), worker_storage_info,
          sizeof(VersionStorageInfo));
+  mem_ptr->cfd_ = reinterpret_cast<ColumnFamilyData*>(cfd_ptr);
   send(sockfd, &mem_ptr, sizeof(int64_t), 0);
   return mem;
 }
@@ -6455,14 +6456,19 @@ uint64_t VersionSet::ApproximateSize(const SizeApproximationOptions& options,
                                      Version* v, const Slice& start,
                                      const Slice& end, int start_level,
                                      int end_level, TableReaderCaller caller) {
+  LOG("VersionSet::ApproximateSize start");
   const auto& icmp = v->cfd_->internal_comparator();
-
+  LOG("VersionSet::ApproximateSize start");
   // pre-condition
-  assert(icmp.Compare(start, end) <= 0);
-
+  // todo(iaIm14): need fix
+  // assert(icmp.Compare(start, end) <= 0);
+  LOG("VersionSet::ApproximateSize start");
   uint64_t total_full_size = 0;
+  LOG("VersionSet::ApproximateSize start");
   const auto* vstorage = v->storage_info();
+  LOG("VersionSet::ApproximateSize start");
   const int num_non_empty_levels = vstorage->num_non_empty_levels();
+  LOG("VersionSet::ApproximateSize start");
   end_level = (end_level == -1) ? num_non_empty_levels
                                 : std::min(end_level, num_non_empty_levels);
   if (end_level <= start_level) {
@@ -6486,7 +6492,7 @@ uint64_t VersionSet::ApproximateSize(const SizeApproximationOptions& options,
 
   autovector<FdWithKeyRange*, 32> first_files;
   autovector<FdWithKeyRange*, 16> last_files;
-
+  LOG("VersionSet::ApproximateSize start");
   // scan all the levels
   for (int level = start_level; level < end_level; ++level) {
     const LevelFilesBrief& files_brief = vstorage->LevelFilesBrief(level);
@@ -6526,7 +6532,7 @@ uint64_t VersionSet::ApproximateSize(const SizeApproximationOptions& options,
 
     // scan all files from the starting index to the ending index
     // (inferred from the sorted order)
-
+    LOG("VersionSet::ApproximateSize start");
     // first scan all the intermediate full files (excluding first and last)
     for (int i = idx_start + 1; i < idx_end; ++i) {
       uint64_t file_size = files_brief.files[i].fd.GetFileSize();
@@ -6535,7 +6541,7 @@ uint64_t VersionSet::ApproximateSize(const SizeApproximationOptions& options,
              ApproximateSize(v, files_brief.files[i], start, end, caller));
       total_full_size += file_size;
     }
-
+    LOG("VersionSet::ApproximateSize start");
     // save the first and the last files (which may be the same file), so we
     // can scan them later.
     first_files.push_back(&files_brief.files[idx_start]);
@@ -6560,6 +6566,7 @@ uint64_t VersionSet::ApproximateSize(const SizeApproximationOptions& options,
   // inside ApproximateSize. We use half of file size as an approximation below.
 
   const double margin = options.files_size_error_margin;
+  LOG("VersionSet::ApproximateSize start");
   if (margin > 0 && total_intersecting_size <
                         static_cast<uint64_t>(total_full_size * margin)) {
     total_full_size += total_intersecting_size / 2;

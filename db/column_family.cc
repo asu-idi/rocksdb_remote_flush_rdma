@@ -744,6 +744,7 @@ ColumnFamilyData::~ColumnFamilyData() {
 void* ColumnFamilyData::PackLocal(int sockfd) const {
   initial_cf_options_.PackLocal(sockfd);
   current_->PackLocal(sockfd);
+  assert(current_->cfd() == this);
   ioptions_.PackLocal(sockfd);
   mutable_cf_options_.PackLocal(sockfd);
   // int_tbl_prop_collector_factories_.PackLocal(sockfd);
@@ -779,10 +780,11 @@ void* ColumnFamilyData::PackLocal(int sockfd) const {
 }
 
 void* ColumnFamilyData::UnPackLocal(int sockfd) {
+  void* mem = malloc(sizeof(ColumnFamilyData));
   auto* worker_initial_cf_options_ = reinterpret_cast<ColumnFamilyOptions*>(
       ColumnFamilyOptions::UnPackLocal(sockfd));
   auto* worker_current_ =
-      reinterpret_cast<Version*>(Version::UnPackLocal(sockfd));
+      reinterpret_cast<Version*>(Version::UnPackLocal(sockfd, mem));
   auto* worker_ioptions_ = reinterpret_cast<ImmutableOptions*>(
       ImmutableOptions::UnPackLocal(sockfd, *worker_initial_cf_options_));
   auto* worker_mutable_cf_options_ = reinterpret_cast<MutableCFOptions*>(
@@ -808,7 +810,6 @@ void* ColumnFamilyData::UnPackLocal(int sockfd) {
             worker_name_.size());
   send(sockfd, reinterpret_cast<const void*>(&ret_val), sizeof(int64_t), 0);
 
-  void* mem = malloc(sizeof(ColumnFamilyData));
   read_data(sockfd, mem, sizeof(ColumnFamilyData));
   auto* worker_cfd_ = reinterpret_cast<ColumnFamilyData*>(mem);
   memcpy(reinterpret_cast<void*>(const_cast<ColumnFamilyOptions*>(
@@ -842,6 +843,7 @@ void* ColumnFamilyData::UnPackLocal(int sockfd) {
       std::unique_ptr<InternalStats>(std::make_unique<InternalStats>(
           worker_cfd_->ioptions_.num_levels, worker_cfd_->ioptions_.clock,
           worker_cfd_));
+  worker_cfd_->current_ = worker_current_;
   send(sockfd, reinterpret_cast<const void*>(&mem), sizeof(int64_t), 0);
   return mem;
 }
