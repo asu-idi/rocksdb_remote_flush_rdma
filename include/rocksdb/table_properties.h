@@ -185,6 +185,10 @@ class TablePropertiesCollectorFactory : public Customizable {
 // table.
 struct TableProperties {
  public:
+  void PackRemote(int sockfd) const;
+  static void* UnPackRemote(int sockfd);
+
+ public:
   // the file number at creation time, or 0 for unknown. When known,
   // combining with db_session_id must uniquely identify an SST file.
   uint64_t orig_file_number = 0;

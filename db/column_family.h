@@ -270,8 +270,33 @@ class ColumnFamilySet;
 // Most methods require DB mutex held, unless otherwise noted
 class ColumnFamilyData {
  public:
-  void* PackLocal(int sockfd) const;
+  struct cfd_pack_remote_data {
+    struct CompactionStats {
+      uint64_t micros;
+      uint64_t cpu_micros;
+      uint64_t bytes_read_non_output_levels;
+      uint64_t bytes_read_output_level;
+      uint64_t bytes_read_blob;
+      uint64_t bytes_written;
+      uint64_t bytes_written_blob;
+      uint64_t bytes_moved;
+      int num_input_files_in_non_output_levels;
+      int num_input_files_in_output_level;
+      int num_output_files;
+      int num_output_files_blob;
+      uint64_t num_input_records;
+      uint64_t num_dropped_records;
+      uint64_t num_output_records;
+      int count;
+      int counts[static_cast<int>(CompactionReason::kNumOfReasons)]{};
+    };
+    std::vector<CompactionStats> compaction_stats;
+    std::vector<CompactionJobStats> compaction_stats_by_pri;
+  };
+  void PackLocal(int sockfd) const;
   static void* UnPackLocal(int sockfd);
+  void PackRemote(int sockfd) const;
+  void UnPackRemote(int sockfd);
 
  public:
   ~ColumnFamilyData();
@@ -301,10 +326,11 @@ class ColumnFamilyData {
   // access data from dropped column family.
   // Column family can be dropped and still alive. In that state:
   // *) Compaction and flush is not executed on the dropped column family.
-  // *) Client can continue reading from column family. Writes will fail unless
-  // WriteOptions::ignore_missing_column_families is true
-  // When the dropped column family is unreferenced, then we:
-  // *) Remove column family from the linked list maintained by ColumnFamilySet
+  // *) Client can continue reading from column family. Writes will fail
+  // unless WriteOptions::ignore_missing_column_families is true When the
+  // dropped column family is unreferenced, then we:
+  // *) Remove column family from the linked list maintained by
+  // ColumnFamilySet
   // *) delete all memory associated with that column family
   // *) delete all the files associated with that column family
   void SetDropped();
@@ -600,8 +626,8 @@ class ColumnFamilyData {
   std::unique_ptr<ThreadLocalPtr> local_sv_;
 
   // pointers for a circular linked list. we use it to support iterations over
-  // all column families that are alive (note: dropped column families can also
-  // be alive as long as client holds a reference)
+  // all column families that are alive (note: dropped column families can
+  // also be alive as long as client holds a reference)
   ColumnFamilyData* next_;
   ColumnFamilyData* prev_;
 
@@ -618,7 +644,8 @@ class ColumnFamilyData {
 
   std::unique_ptr<WriteControllerToken> write_controller_token_;
 
-  // If true --> this ColumnFamily is currently present in DBImpl::flush_queue_
+  // If true --> this ColumnFamily is currently present in
+  // DBImpl::flush_queue_
   bool queued_for_flush_;
 
   // If true --> this ColumnFamily is currently present in
@@ -640,8 +667,8 @@ class ColumnFamilyData {
 
   std::string full_history_ts_low_;
 
-  // For charging memory usage of file metadata created for newly added files to
-  // a Version associated with this CFD
+  // For charging memory usage of file metadata created for newly added files
+  // to a Version associated with this CFD
   std::shared_ptr<CacheReservationManager> file_metadata_cache_res_mgr_;
   bool mempurge_used_;
 
@@ -649,11 +676,10 @@ class ColumnFamilyData {
 };
 
 // ColumnFamilySet has interesting thread-safety requirements
-// * CreateColumnFamily() or RemoveColumnFamily() -- need to be protected by DB
-// mutex AND executed in the write thread.
-// CreateColumnFamily() should ONLY be called from VersionSet::LogAndApply() AND
-// single-threaded write thread. It is also called during Recovery and in
-// DumpManifest().
+// * CreateColumnFamily() or RemoveColumnFamily() -- need to be protected by
+// DB mutex AND executed in the write thread. CreateColumnFamily() should ONLY
+// be called from VersionSet::LogAndApply() AND single-threaded write thread.
+// It is also called during Recovery and in DumpManifest().
 // RemoveColumnFamily() is only called from SetDropped(). DB mutex needs to be
 // held and it needs to be executed from the write thread. SetDropped() also
 // guarantees that it will be called only from single-threaded LogAndApply(),
@@ -740,10 +766,10 @@ class ColumnFamilySet {
   const FileOptions file_options_;
 
   ColumnFamilyData* dummy_cfd_;
-  // We don't hold the refcount here, since default column family always exists
-  // We are also not responsible for cleaning up default_cfd_cache_. This is
-  // just a cache that makes common case (accessing default column family)
-  // faster
+  // We don't hold the refcount here, since default column family always
+  // exists We are also not responsible for cleaning up default_cfd_cache_.
+  // This is just a cache that makes common case (accessing default column
+  // family) faster
   ColumnFamilyData* default_cfd_cache_;
 
   const std::string db_name_;

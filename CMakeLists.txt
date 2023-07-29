@@ -1563,6 +1563,7 @@ endif()
 set(WITH_DEV true)
 if(WITH_DEV)
   set(DEVELOP 
+  dev/remote_flush_test_server.cpp
   # dev/trace_query_test.cpp
   # dev/trace_io_test.cpp
   # dev/trace_block_cache_test.cpp

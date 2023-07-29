@@ -846,6 +846,7 @@ class VersionBuilder::Rep {
   // Apply all of the edits in *edit to the current state.
   Status Apply(const VersionEdit* edit) {
     {
+      LOG("");
       const Status s = CheckConsistency(base_vstorage_);
       if (!s.ok()) {
         return s;
@@ -863,7 +864,7 @@ class VersionBuilder::Rep {
         return s;
       }
     }
-
+    LOG("");
     // Increase the amount of garbage for blob files affected by GC
     for (const auto& blob_file_garbage : edit->GetBlobFileGarbages()) {
       const Status s = ApplyBlobFileGarbage(blob_file_garbage);
@@ -871,7 +872,7 @@ class VersionBuilder::Rep {
         return s;
       }
     }
-
+    LOG("");
     // Delete table files
     for (const auto& deleted_file : edit->GetDeletedFiles()) {
       const int level = deleted_file.first;
@@ -882,7 +883,7 @@ class VersionBuilder::Rep {
         return s;
       }
     }
-
+    LOG("");
     // Add new table files
     for (const auto& new_file : edit->GetNewFiles()) {
       const int level = new_file.first;
@@ -893,7 +894,7 @@ class VersionBuilder::Rep {
         return s;
       }
     }
-
+    LOG("");
     // Populate compact cursors for round-robin compaction, leave
     // the cursor to be empty to indicate it is invalid
     for (const auto& cursor : edit->GetCompactCursors()) {
@@ -904,6 +905,7 @@ class VersionBuilder::Rep {
         return s;
       }
     }
+    LOG("");
     return Status::OK();
   }
 

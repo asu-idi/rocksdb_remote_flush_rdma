@@ -61,10 +61,6 @@ class Arena;
 
 class RemoteFlushJob {
  public:
-  struct install_info {
-    uint64_t start_micros_;
-    uint64_t start_cpu_micros_;
-  };
   int server_socket_fd_;
   int worker_socket_fd_;
 
@@ -91,7 +87,7 @@ class RemoteFlushJob {
   void PackLocal(int sockfd) const;
   static void* UnPackLocal(int sockfd, DBImpl* remote_db);
   void PackRemote(int sockfd) const;
-  static void* UnPackRemote(int sockfd);
+  void UnPackRemote(int sockfd);
 
  private:
   // TODO(icanadi) make effort to reduce number of parameters here

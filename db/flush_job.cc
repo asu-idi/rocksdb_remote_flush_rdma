@@ -250,7 +250,20 @@ Status FlushJob::Run(LogsWithPrepTracker* prep_tracker, FileMetaData* file_meta,
   } else {
     // This will release and re-acquire the mutex.
     LOG("Run job: write l0table");
+    LOG("RemoteFlushJob::UnPackRemote meta_.smallest: ",
+        *meta_.smallest.get_rep());
+    LOG("RemoteFlushJob::UnPackRemote meta_.largest: ",
+        *meta_.largest.get_rep());
+    // assert(meta_.smallest.Valid());
+    // assert(meta_.largest.Valid());
     s = WriteLevel0Table();
+    LOG("RemoteFlushJob::UnPackRemote meta_.smallest: ",
+        *meta_.smallest.get_rep());
+    LOG("RemoteFlushJob::UnPackRemote meta_.largest: ",
+        *meta_.largest.get_rep());
+    // assert(meta_.smallest.Valid());
+    // assert(meta_.largest.Valid());
+
     LOG("Run job: write l0table done");
   }
 

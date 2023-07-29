@@ -121,9 +121,12 @@ extern uint64_t PackFileNumberAndPathId(uint64_t number, uint64_t path_id);
 // file is not in any live version any more.
 struct FileDescriptor {
  public:
+  void PackRemote(int sockfd) const { PackLocal(sockfd); }
+  static void* UnPackRemote(int sockfd) { return UnPackLocal(sockfd); }
   void PackLocal(int sockfd) const {
     send(sockfd, reinterpret_cast<const void*>(this), sizeof(FileDescriptor),
          0);
+    assert(table_reader == nullptr);
     int64_t ret_val = 0;
     read_data(sockfd, &ret_val, sizeof(ret_val));
   }
@@ -195,6 +198,8 @@ struct FileMetaData {
  public:
   void PackLocal(int sockfd) const;
   static void* UnPackLocal(int sockfd);
+  void PackRemote(int sockfd) const;
+  static void* UnPackRemote(int sockfd);
 
  public:
   FileDescriptor fd;
@@ -392,6 +397,8 @@ struct LevelFilesBrief {
 // to the MANIFEST file.
 class VersionEdit {
  public:
+  void PackRemote(int sockfd) const;
+  void UnPackRemote(int sockfd);
   void PackLocal(int sockfd) const;
   static void* UnPackLocal(int sockfd);
 

@@ -14,10 +14,12 @@ fi
 cmake ..
 make remote_flush_worker -j 18
 make db_remote_flush_test -j 18
+make remote_flush_test_server -j 18
 cd $PROJECT_ROOT/dev
 
 cp ../build/db_remote_flush_test ./
 cp ../build/remote_flush_worker ./
+cp ../build/remote_flush_test_server ./
 
 rm Log-*
 rm -rf memtable_result/

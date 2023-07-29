@@ -43,6 +43,7 @@
 #include "port/port.h"
 #include "port/port_posix.h"
 #include "rocksdb/comparator.h"
+#include "rocksdb/compression_type.h"
 #include "rocksdb/env.h"
 #include "rocksdb/iterator.h"
 #include "rocksdb/listener.h"
@@ -53,6 +54,7 @@
 #include "rocksdb/slice_transform.h"
 #include "rocksdb/slice_transform_factory.h"
 #include "rocksdb/system_clock.h"
+#include "rocksdb/table_properties.h"
 #include "rocksdb/types.h"
 #include "rocksdb/write_buffer_manager.h"
 #include "table/internal_iterator.h"
@@ -64,6 +66,7 @@
 #include "util/dynamic_bloom.h"
 #include "util/logger.hpp"
 #include "util/mutexlock.h"
+#include "util/socket_api.hpp"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -171,6 +174,8 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
       reinterpret_cast<void*>(table_), std::dec);
 }
 
+void MemTable::check() {}
+
 void* MemTable::UnPackLocal(int sock_fd) {
   LOG("start MemTable::UnPackLocal");
   void* local_arena = BasicArenaFactory::UnPackLocal(sock_fd);
@@ -244,6 +249,169 @@ void MemTable::PackLocal(int sock_fd) const {
   LOG("recv MemTable", ret_addr);
 }
 
+void MemTable::PackRemote(int sock_fd) const {
+  assert(flush_job_info_ != nullptr);
+  LOG("MemTable::PackRemote");
+  // note: only pack flush_job_info
+  size_t ret_num = 0;
+  LOG("MemTable::PackRemote start waiting write ");
+  write(sock_fd, reinterpret_cast<const void*>(&flush_job_info_->cf_id),
+        sizeof(uint32_t));
+  LOG("MemTable::PackRemote write cf_id done");
+  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
+  LOG("MemTable::PackRemote read ret_num done");
+  size_t cf_name_len = flush_job_info_->cf_name.size();
+  LOG("MemTable::PackRemote cf_name_len=", cf_name_len);
+  write(sock_fd, reinterpret_cast<const void*>(&cf_name_len), sizeof(size_t));
+  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
+  write(sock_fd,
+        reinterpret_cast<const void*>(flush_job_info_->cf_name.c_str()),
+        cf_name_len);
+  LOG("");
+  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
+  size_t file_path_len = flush_job_info_->file_path.size();
+  write(sock_fd, reinterpret_cast<const void*>(&file_path_len), sizeof(size_t));
+  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
+  LOG("");
+  write(sock_fd,
+        reinterpret_cast<const void*>(flush_job_info_->file_path.c_str()),
+        file_path_len);
+  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
+  LOG("");
+  LOG("file_number:", flush_job_info_->file_number);
+  write(sock_fd, reinterpret_cast<const void*>(&flush_job_info_->file_number),
+        sizeof(uint64_t));
+  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
+  LOG("");
+  write(
+      sock_fd,
+      reinterpret_cast<const void*>(&flush_job_info_->oldest_blob_file_number),
+      sizeof(uint64_t));
+  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
+  LOG("");
+  write(sock_fd, reinterpret_cast<const void*>(&flush_job_info_->thread_id),
+        sizeof(uint64_t));
+  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
+  LOG("");
+  write(sock_fd, reinterpret_cast<const void*>(&flush_job_info_->job_id),
+        sizeof(uint64_t));
+  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
+  LOG("");
+  write(sock_fd,
+        reinterpret_cast<const void*>(&flush_job_info_->smallest_seqno),
+        sizeof(SequenceNumber));
+  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
+  LOG("");
+  write(sock_fd, reinterpret_cast<const void*>(&flush_job_info_->largest_seqno),
+        sizeof(SequenceNumber));
+  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
+  LOG("MemTable::PackRemote start waiting table_properties");
+  flush_job_info_->table_properties.PackRemote(sock_fd);
+  LOG("MemTable::PackRemote table_properties done");
+  write(sock_fd, reinterpret_cast<const void*>(&flush_job_info_->flush_reason),
+        sizeof(FlushReason));
+  LOG("MemTable::PackRemote write flush_reason done");
+  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
+  LOG("MemTable::PackRemote read ret_num done");
+  write(sock_fd,
+        reinterpret_cast<const void*>(&flush_job_info_->blob_compression_type),
+        sizeof(CompressionType));
+  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
+  LOG("MemTable::PackRemote read ret_num done");
+  // todo: blob_files_info update
+  LOG("MemTable::PackRemote done");
+}
+
+void MemTable::UnPackRemote(int sock_fd) {
+  auto flush_job_info = new FlushJobInfo();
+  void* mem = reinterpret_cast<void*>(flush_job_info);
+  size_t ret_num = 0;
+  LOG("MemTable::UnPackRemote start waiting read");
+  read_data(sock_fd, reinterpret_cast<void*>(&flush_job_info->cf_id),
+            sizeof(uint32_t));
+  LOG("MemTable::UnPackRemote read cf_id done");
+  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
+  size_t cf_name_len = 0;
+  read_data(sock_fd, reinterpret_cast<void*>(&cf_name_len), sizeof(size_t));
+  LOG("");
+  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
+  char* cf_name = reinterpret_cast<char*>(malloc(cf_name_len));
+  read_data(sock_fd, reinterpret_cast<void*>(cf_name), cf_name_len);
+  LOG("");
+  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
+  LOG("");
+  flush_job_info->cf_name = std::string(cf_name, cf_name_len);
+  LOG("");
+  free(cf_name);
+  size_t file_path_len = 0;
+  read_data(sock_fd, reinterpret_cast<void*>(&file_path_len), sizeof(size_t));
+  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
+  LOG("");
+  char* file_path = reinterpret_cast<char*>(malloc(file_path_len));
+  read_data(sock_fd, reinterpret_cast<void*>(file_path), file_path_len);
+  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
+  LOG("");
+  flush_job_info->file_path = std::string(file_path, file_path_len);
+  free(file_path);
+  LOG("");
+  read_data(sock_fd, reinterpret_cast<void*>(&flush_job_info->file_number),
+            sizeof(uint64_t));
+  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
+  LOG("");
+  read_data(sock_fd,
+            reinterpret_cast<void*>(&flush_job_info->oldest_blob_file_number),
+            sizeof(uint64_t));
+  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
+  LOG("");
+  read_data(sock_fd, reinterpret_cast<void*>(&flush_job_info->thread_id),
+            sizeof(uint64_t));
+  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
+  LOG("");
+  read_data(sock_fd, reinterpret_cast<void*>(&flush_job_info->job_id),
+            sizeof(uint64_t));
+  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
+  LOG("");
+  read_data(sock_fd, reinterpret_cast<void*>(&flush_job_info->smallest_seqno),
+            sizeof(SequenceNumber));
+  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
+  LOG("");
+  read_data(sock_fd, reinterpret_cast<void*>(&flush_job_info->largest_seqno),
+            sizeof(SequenceNumber));
+  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
+  LOG("MemTable::UnPackRemote start waiting table_properties");
+  void* local_table_properties = TableProperties::UnPackRemote(sock_fd);
+  LOG("MemTable::UnPackRemote table_properties done");
+  flush_job_info->table_properties =
+      *reinterpret_cast<TableProperties*>(local_table_properties);
+
+  read_data(sock_fd, reinterpret_cast<void*>(&flush_job_info->flush_reason),
+            sizeof(FlushReason));
+  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
+  LOG("MemTable::UnPackRemote read flush_reason done");
+  read_data(sock_fd,
+            reinterpret_cast<void*>(&flush_job_info->blob_compression_type),
+            sizeof(CompressionType));
+  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
+  LOG("MemTable::UnPackRemote read blob_compression_type done");
+  flush_job_info_ = std::make_unique<FlushJobInfo>();
+  flush_job_info_->cf_id = flush_job_info->cf_id;
+  flush_job_info_->cf_name = flush_job_info->cf_name;
+  flush_job_info_->file_path = flush_job_info->file_path;
+  flush_job_info_->file_number = flush_job_info->file_number;
+  flush_job_info_->oldest_blob_file_number =
+      flush_job_info->oldest_blob_file_number;
+  flush_job_info_->thread_id = flush_job_info->thread_id;
+  flush_job_info_->job_id = flush_job_info->job_id;
+  flush_job_info_->smallest_seqno = flush_job_info->smallest_seqno;
+  flush_job_info_->largest_seqno = flush_job_info->largest_seqno;
+  flush_job_info_->table_properties = flush_job_info->table_properties;
+  flush_job_info_->flush_reason = flush_job_info->flush_reason;
+  flush_job_info_->blob_compression_type =
+      flush_job_info->blob_compression_type;
+  free(flush_job_info);
+  LOG("MemTable::UnPackRemote done");
+}
+
 MemTable::~MemTable() {
   mem_tracker_.FreeMem();
   LOG("Memtable ", GetID(), "destructed");
@@ -275,12 +443,12 @@ bool MemTable::ShouldFlushNow() {
   // matches the buffer size. Thus we have to decide if we should
   // over-allocate or under-allocate. This constant variable can be
   // interpreted as: if we still have more than
-  // "kAllowOverAllocationRatio * kArenaBlockSize" space left, we'd try
-  // to over allocate one more block.
+  // "kAllowOverAllocationRatio * kArenaBlockSize" space left, we'd
+  // try to over allocate one more block.
   const double kAllowOverAllocationRatio = 0.6;
 
-  // If arena still have room for new block allocation, we can safely say
-  // it shouldn't flush.
+  // If arena still have room for new block allocation, we can safely
+  // say it shouldn't flush.
   auto allocated_memory = table_->ApproximateMemoryUsage() +
                           range_del_table_->ApproximateMemoryUsage() +
                           arena_->MemoryAllocatedBytes();
@@ -294,9 +462,9 @@ bool MemTable::ShouldFlushNow() {
     return false;
   }
 
-  // if user keeps adding entries that exceeds write_buffer_size, we need
-  // to flush earlier even though we still have much available memory
-  // left.
+  // if user keeps adding entries that exceeds write_buffer_size, we
+  // need to flush earlier even though we still have much available
+  // memory left.
   if (allocated_memory >
       write_buffer_size + kArenaBlockSize * kAllowOverAllocationRatio) {
     return true;
@@ -307,10 +475,10 @@ bool MemTable::ShouldFlushNow() {
   //  (1) "moderately" over allocated the memory (no more than `0.6 *
   //  arena
   // block size`. Or,
-  //  (2) the allocated memory is less than write buffer size, but we'll
-  //  stop
-  // here since if we allocate a new arena block, we'll over allocate too
-  // much more (half of the arena block size) memory.
+  //  (2) the allocated memory is less than write buffer size, but
+  //  we'll stop
+  // here since if we allocate a new arena block, we'll over allocate
+  // too much more (half of the arena block size) memory.
   //
   // In either case, to avoid over-allocate, the last block will stop
   // allocation when its usage reaches a certain ratio, which we
@@ -321,16 +489,16 @@ bool MemTable::ShouldFlushNow() {
   // The answer is: if the entry size is also bigger than 0.25 *
   // kArenaBlockSize, a dedicated block will be allocated for it;
   // otherwise arena will anyway skip the AllocatedAndUnused() and
-  // allocate a new, empty and regular block. In either case, we *overly*
-  // over-allocated.
+  // allocate a new, empty and regular block. In either case, we
+  // *overly* over-allocated.
   //
-  // Therefore, setting the last block to be at most "0.75 full" avoids
-  // both cases.
+  // Therefore, setting the last block to be at most "0.75 full"
+  // avoids both cases.
   //
-  // NOTE: the average percentage of waste space of this approach can be
-  // counted as: "arena block size * 0.25 / write buffer size". User who
-  // specify a small write buffer size and/or big arena block size may
-  // suffer.
+  // NOTE: the average percentage of waste space of this approach can
+  // be counted as: "arena block size * 0.25 / write buffer size".
+  // User who specify a small write buffer size and/or big arena block
+  // size may suffer.
   return arena_->AllocatedAndUnused() < kArenaBlockSize / 4;
 }
 
@@ -414,7 +582,8 @@ Status MemTable::VerifyEntryChecksum(const char* entry,
   }
   if (!match) {
     std::string msg(
-        "Corrupted memtable entry, per key-value checksum verification "
+        "Corrupted memtable entry, per key-value checksum "
+        "verification "
         "failed.");
     if (allow_data_in_errors) {
       msg.append("Unrecognized value type: " +
@@ -738,9 +907,9 @@ MemTable::MemTableStats MemTable::ApproximateStats(const Slice& start_ikey,
     return {0, 0};
   }
   if (entry_count > n) {
-    // (range_del_)table_->ApproximateNumEntries() is just an estimate so
-    // it can be larger than actual entries we have. Cap it to entries we
-    // have to limit the inaccuracy.
+    // (range_del_)table_->ApproximateNumEntries() is just an estimate
+    // so it can be larger than actual entries we have. Cap it to
+    // entries we have to limit the inaccuracy.
     entry_count = n;
   }
   uint64_t data_size = data_size_.load(std::memory_order_relaxed);
@@ -964,11 +1133,11 @@ Status MemTable::Add(SequenceNumber s, ValueType type,
           cached_range_tombstone_.AccessAtCore(i);
       auto new_local_cache_ref = std::make_shared<
           const std::shared_ptr<FragmentedRangeTombstoneListCache>>(new_cache);
-      // It is okay for some reader to load old cache during invalidation
-      // as the new sequence number is not published yet. Each core will
-      // have a shared_ptr to a shared_ptr to the cached fragmented range
-      // tombstones, so that ref count is maintianed locally per-core
-      // using the per-core shared_ptr.
+      // It is okay for some reader to load old cache during
+      // invalidation as the new sequence number is not published yet.
+      // Each core will have a shared_ptr to a shared_ptr to the
+      // cached fragmented range tombstones, so that ref count is
+      // maintianed locally per-core using the per-core shared_ptr.
       std::atomic_store_explicit(
           local_cache_ref_ptr,
           std::shared_ptr<FragmentedRangeTombstoneListCache>(
@@ -991,7 +1160,8 @@ namespace {
 struct Saver {
   Status* status;
   const LookupKey* key;
-  bool* found_final_value;  // Is value set correctly? Used by KeyMayExist
+  bool* found_final_value;  // Is value set correctly? Used by
+                            // KeyMayExist
   bool* merge_in_progress;
   std::string* value;
   PinnableWideColumns* columns;
@@ -1073,10 +1243,10 @@ static bool SaveValue(void* arg, const char* entry) {
       if (s->seq > max_covering_tombstone_seq) {
         if (ts_sz && s->timestamp != nullptr) {
           // `timestamp` was set to range tombstone's timestamp before
-          // `SaveValue` is ever called. This key has a higher sequence
-          // number than range tombstone, and is the key with the highest
-          // seqno across all keys with this user_key, so we update
-          // timestamp here.
+          // `SaveValue` is ever called. This key has a higher
+          // sequence number than range tombstone, and is the key with
+          // the highest seqno across all keys with this user_key, so
+          // we update timestamp here.
           Slice ts = ExtractTimestampFromUserKey(user_key_slice, ts_sz);
           s->timestamp->assign(ts.data(), ts_sz);
         }
@@ -1123,7 +1293,8 @@ static bool SaveValue(void* arg, const char* entry) {
         if (s->is_blob_index == nullptr) {
           ROCKS_LOG_ERROR(s->logger, "Encountered unexpected blob index.");
           *(s->status) = Status::NotSupported(
-              "Encountered unexpected blob index. Please open DB with "
+              "Encountered unexpected blob index. Please open DB "
+              "with "
               "ROCKSDB_NAMESPACE::blob_db::BlobDB.");
           *(s->found_final_value) = true;
           return false;
@@ -1162,8 +1333,8 @@ static bool SaveValue(void* arg, const char* entry) {
         *(s->status) = Status::OK();
 
         if (!s->do_merge) {
-          // Preserve the value with the goal of returning it as part of
-          // raw merge operands to the user
+          // Preserve the value with the goal of returning it as part
+          // of raw merge operands to the user
           // TODO(yanqin) update MergeContext so that timestamps
           // information can also be retained.
 
@@ -1174,9 +1345,9 @@ static bool SaveValue(void* arg, const char* entry) {
 
           if (s->value || s->columns) {
             std::string result;
-            // `op_failure_scope` (an output parameter) is not provided
-            // (set to nullptr) since a failure must be propagated
-            // regardless of its value.
+            // `op_failure_scope` (an output parameter) is not
+            // provided (set to nullptr) since a failure must be
+            // propagated regardless of its value.
             *(s->status) = MergeHelper::TimedFullMerge(
                 merge_operator, s->key->user_key(), &v,
                 merge_context->GetOperands(), &result, s->logger, s->statistics,
@@ -1221,8 +1392,8 @@ static bool SaveValue(void* arg, const char* entry) {
         *(s->status) = Status::OK();
 
         if (!s->do_merge) {
-          // Preserve the value with the goal of returning it as part of
-          // raw merge operands to the user
+          // Preserve the value with the goal of returning it as part
+          // of raw merge operands to the user
 
           Slice value_of_default;
           *(s->status) = WideColumnSerialization::GetValueOfDefaultColumn(
@@ -1241,25 +1412,27 @@ static bool SaveValue(void* arg, const char* entry) {
             *(s->status) = WideColumnSerialization::GetValueOfDefaultColumn(
                 v, value_of_default);
             if (s->status->ok()) {
-              // `op_failure_scope` (an output parameter) is not provided
-              // (set to nullptr) since a failure must be propagated
-              // regardless of its value.
+              // `op_failure_scope` (an output parameter) is not
+              // provided (set to nullptr) since a failure must be
+              // propagated regardless of its value.
               *(s->status) = MergeHelper::TimedFullMerge(
                   merge_operator, s->key->user_key(), &value_of_default,
                   merge_context->GetOperands(), s->value, s->logger,
-                  s->statistics, s->clock, /* result_operand */ nullptr,
+                  s->statistics, s->clock,
+                  /* result_operand */ nullptr,
                   /* update_num_ops_stats */ true,
                   /* op_failure_scope */ nullptr);
             }
           } else if (s->columns) {
             std::string result;
-            // `op_failure_scope` (an output parameter) is not provided
-            // (set to nullptr) since a failure must be propagated
-            // regardless of its value.
+            // `op_failure_scope` (an output parameter) is not
+            // provided (set to nullptr) since a failure must be
+            // propagated regardless of its value.
             *(s->status) = MergeHelper::TimedFullMergeWithEntity(
                 merge_operator, s->key->user_key(), v,
                 merge_context->GetOperands(), &result, s->logger, s->statistics,
-                s->clock, /* update_num_ops_stats */ true,
+                s->clock,
+                /* update_num_ops_stats */ true,
                 /* op_failure_scope */ nullptr);
 
             if (s->status->ok()) {
@@ -1296,9 +1469,9 @@ static bool SaveValue(void* arg, const char* entry) {
         if (*(s->merge_in_progress)) {
           if (s->value || s->columns) {
             std::string result;
-            // `op_failure_scope` (an output parameter) is not provided
-            // (set to nullptr) since a failure must be propagated
-            // regardless of its value.
+            // `op_failure_scope` (an output parameter) is not
+            // provided (set to nullptr) since a failure must be
+            // propagated regardless of its value.
             *(s->status) = MergeHelper::TimedFullMerge(
                 merge_operator, s->key->user_key(), nullptr,
                 merge_context->GetOperands(), &result, s->logger, s->statistics,
@@ -1331,10 +1504,10 @@ static bool SaveValue(void* arg, const char* entry) {
           *(s->status) = Status::InvalidArgument(
               "merge_operator is not properly initialized.");
           // Normally we continue the loop (return true) when we see a
-          // merge operand.  But in case of an error, we should stop the
-          // loop immediately and pretend we have found the value to stop
-          // further seek.  Otherwise, the later call will override this
-          // error status.
+          // merge operand.  But in case of an error, we should stop
+          // the loop immediately and pretend we have found the value
+          // to stop further seek.  Otherwise, the later call will
+          // override this error status.
           *(s->found_final_value) = true;
           return false;
         }
@@ -1348,9 +1521,9 @@ static bool SaveValue(void* arg, const char* entry) {
                                merge_context->GetOperandsDirectionBackward())) {
           if (s->value || s->columns) {
             std::string result;
-            // `op_failure_scope` (an output parameter) is not provided
-            // (set to nullptr) since a failure must be propagated
-            // regardless of its value.
+            // `op_failure_scope` (an output parameter) is not
+            // provided (set to nullptr) since a failure must be
+            // propagated regardless of its value.
             *(s->status) = MergeHelper::TimedFullMerge(
                 merge_operator, s->key->user_key(), nullptr,
                 merge_context->GetOperands(), &result, s->logger, s->statistics,
@@ -1431,8 +1604,8 @@ bool MemTable::Get(const LookupKey& key, std::string* value,
   Slice user_key_without_ts = StripTimestampFromUserKey(key.user_key(), ts_sz);
   bool bloom_checked = false;
   if (bloom_filter_) {
-    // when both memtable_whole_key_filtering and prefix_extractor_ are
-    // set, only do whole key filtering for Get() to save CPU
+    // when both memtable_whole_key_filtering and prefix_extractor_
+    // are set, only do whole key filtering for Get() to save CPU
     if (moptions_.memtable_whole_key_filtering) {
       may_contain = bloom_filter_->MayContain(user_key_without_ts);
       bloom_checked = true;
@@ -1511,9 +1684,9 @@ void MemTable::MultiGet(const ReadOptions& read_options, MultiGetRange* range,
   }
   PERF_TIMER_GUARD(get_from_memtable_time);
 
-  // For now, memtable Bloom filter is effectively disabled if there are
-  // any range tombstones. This is the simplest way to ensure range
-  // tombstones are handled. TODO: allow Bloom checks where
+  // For now, memtable Bloom filter is effectively disabled if there
+  // are any range tombstones. This is the simplest way to ensure
+  // range tombstones are handled. TODO: allow Bloom checks where
   // max_covering_tombstone_seq==0
   bool no_range_del = read_options.ignore_range_deletions ||
                       is_range_del_table_empty_.load(std::memory_order_relaxed);
@@ -1558,8 +1731,8 @@ void MemTable::MultiGet(const ReadOptions& read_options, MultiGetRange* range,
       if (covering_seq > iter->max_covering_tombstone_seq) {
         iter->max_covering_tombstone_seq = covering_seq;
         if (iter->timestamp) {
-          // Will be overwritten in SaveValue() if there is a point key
-          // with a higher seqno.
+          // Will be overwritten in SaveValue() if there is a point
+          // key with a higher seqno.
           iter->timestamp->assign(range_del_iter->timestamp().data(),
                                   range_del_iter->timestamp().size());
         }
@@ -1745,8 +1918,8 @@ Status MemTable::UpdateCallback(SequenceNumber seq, const Slice& key,
           UpdateFlushState();
           return s;
         } else if (status == UpdateStatus::UPDATE_FAILED) {
-          // `UPDATE_FAILED` is named incorrectly. It indicates no update
-          // happened. It does not indicate a failure happened.
+          // `UPDATE_FAILED` is named incorrectly. It indicates no
+          // update happened. It does not indicate a failure happened.
           UpdateFlushState();
           return Status::OK();
         }
@@ -1761,9 +1934,9 @@ size_t MemTable::CountSuccessiveMergeEntries(const LookupKey& key) {
   Slice memkey = key.memtable_key();
 
   // A total ordered iterator is costly for some memtablerep (prefix
-  // aware reps). By passing in the user key, we allow efficient iterator
-  // creation. The iterator only needs to be ordered within the same user
-  // key.
+  // aware reps). By passing in the user key, we allow efficient
+  // iterator creation. The iterator only needs to be ordered within
+  // the same user key.
   std::unique_ptr<MemTableRep::Iterator> iter(
       table_->GetDynamicPrefixIterator());
   iter->Seek(key.internal_key(), memkey.data());
