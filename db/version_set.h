@@ -129,6 +129,7 @@ enum EpochNumberRequirement {
 // compaction, blob files, etc.
 class VersionStorageInfo {
  public:
+  void check();
   void PackLocal(int sockfd) const;
   static void* UnPackLocal(int sockfd);
   void PackLocal(char*& buf) const;
@@ -827,6 +828,7 @@ using MultiGetRange = MultiGetContext::Range;
 // the column family at a certain point in time.
 class Version {
  public:
+  void check();
   void PackLocal(int sockfd) const;
   static void* UnPackLocal(int sockfd, void* cfd_ptr);
   void PackLocal(char*& buf) const;
@@ -1130,6 +1132,7 @@ class AtomicGroupReadBuffer {
 // column families via ColumnFamilySet, i.e. set of the column families.
 class VersionSet {
  public:
+  void check();
   void PackLocal(int sockfd) const;
   static void* UnPackLocal(int sockfd);
   void PackLocal(char*& buf) const;
@@ -1200,6 +1203,7 @@ class VersionSet {
     mutable_cf_options_list.emplace_back(&mutable_cf_options);
     autovector<autovector<VersionEdit*>> edit_lists;
     edit_lists.emplace_back(edit_list);
+    LOG("");
     return LogAndApply(cfds, mutable_cf_options_list, edit_lists, mu,
                        dir_contains_current_file, new_descriptor_log,
                        column_family_options, {manifest_wcb});
@@ -1562,12 +1566,12 @@ class VersionSet {
 
   // Protected by DB mutex.
   WalSet wals_;
-  std::unique_ptr<ColumnFamilySet> column_family_set_;  // TODO
+  std::unique_ptr<ColumnFamilySet> column_family_set_;
   Cache* table_cache_;
   Env* const env_;
   FileSystemPtr const fs_;
   SystemClock* const clock_;
-  const std::string dbname_;  // TODO
+  const std::string dbname_;
   std::string db_id_;
   const ImmutableDBOptions* const db_options_;
   std::atomic<uint64_t> next_file_number_;

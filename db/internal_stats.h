@@ -10,6 +10,8 @@
 
 #pragma once
 
+#include <cassert>
+#include <cstddef>
 #include <map>
 #include <memory>
 #include <string>
@@ -19,6 +21,7 @@
 #include "db/version_set.h"
 #include "rocksdb/system_clock.h"
 #include "util/hash_containers.h"
+#include "util/socket_api.hpp"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -100,6 +103,50 @@ struct DBStatInfo {
 };
 
 class InternalStats {
+ public:
+  void PackRemote(int sockfd) const {
+    size_t ret_num = 0;
+    size_t comp_stats_size = comp_stats_.size();
+    write(sockfd, &comp_stats_size, sizeof(size_t));
+    read_data(sockfd, &ret_num, sizeof(size_t));
+    for (size_t i = 0; i < comp_stats_size; ++i) {
+      write(sockfd, &comp_stats_[i], sizeof(CompactionStats));
+      read_data(sockfd, &ret_num, sizeof(size_t));
+    }
+    size_t comp_stats_by_pri_size = comp_stats_by_pri_.size();
+    write(sockfd, &comp_stats_by_pri_size, sizeof(size_t));
+    read_data(sockfd, &ret_num, sizeof(size_t));
+    for (size_t i = 0; i < comp_stats_by_pri_size; ++i) {
+      write(sockfd, &comp_stats_by_pri_[i], sizeof(CompactionStats));
+      read_data(sockfd, &ret_num, sizeof(size_t));
+    }
+  }
+
+  void UnPackRemote(int sockfd) {
+    size_t comp_stats_size = 0;
+    read_data(sockfd, &comp_stats_size, sizeof(size_t));
+    write(sockfd, &comp_stats_size, sizeof(size_t));
+    assert(comp_stats_size == comp_stats_.size());
+    for (size_t i = 0; i < comp_stats_size; ++i) {
+      CompactionStats comp_stat;
+      size_t ret_val = 0;
+      read_data(sockfd, &comp_stat, sizeof(CompactionStats));
+      write(sockfd, &ret_val, sizeof(size_t));
+      comp_stats_[i].Add(comp_stat);
+    }
+    size_t comp_stats_by_pri_size = 0;
+    read_data(sockfd, &comp_stats_by_pri_size, sizeof(size_t));
+    write(sockfd, &comp_stats_by_pri_size, sizeof(size_t));
+    assert(comp_stats_by_pri_size == comp_stats_by_pri_.size());
+    for (size_t i = 0; i < comp_stats_by_pri_size; ++i) {
+      CompactionStats comp_stat;
+      size_t ret_val = 0;
+      read_data(sockfd, &comp_stat, sizeof(CompactionStats));
+      write(sockfd, &ret_val, sizeof(size_t));
+      comp_stats_by_pri_[i].Add(comp_stat);
+    }
+  }
+
  public:
   static const std::map<LevelStatType, LevelStat> compaction_level_stats;
 
@@ -869,6 +916,5 @@ class InternalStats {
   ColumnFamilyData* cfd_;
   uint64_t started_at_;
 };
-
 
 }  // namespace ROCKSDB_NAMESPACE

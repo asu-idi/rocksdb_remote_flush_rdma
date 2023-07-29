@@ -26,8 +26,12 @@
 #include "memory/concurrent_arena.h"
 #include "monitoring/instrumented_mutex.h"
 #include "options/cf_options.h"
+#include "rocksdb/compression_type.h"
 #include "rocksdb/db.h"
+#include "rocksdb/listener.h"
 #include "rocksdb/memtablerep.h"
+#include "rocksdb/table_properties.h"
+#include "rocksdb/types.h"
 #include "table/multiget_context.h"
 #include "util/dynamic_bloom.h"
 #include "util/hash.h"
@@ -116,10 +120,13 @@ using MultiGetRange = MultiGetContext::Range;
 // written to (aka the 'immutable memtables').
 class MemTable {
  public:
+  void check();
   static void* UnPackLocal(int sock_fd);
   void PackLocal(int sock_fd) const;
   static void* UnPackLocal(char*& buf);
   void PackLocal(char*& buf) const;
+  void PackRemote(int sock_fd) const;
+  void UnPackRemote(int sock_fd);
 
  public:
   struct KeyComparator : public MemTableRep::KeyComparator {
