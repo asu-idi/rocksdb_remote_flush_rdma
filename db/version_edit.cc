@@ -9,6 +9,9 @@
 
 #include "db/version_edit.h"
 
+#include "rocksdb/types.h"
+#include "util/socket_api.hpp"
+
 #ifdef __linux__
 #include <sys/socket.h>
 #include <unistd.h>
@@ -41,6 +44,148 @@ uint64_t PackFileNumberAndPathId(uint64_t number, uint64_t path_id) {
   return number | (path_id * (kFileNumberMask + 1));
 }
 
+void FileMetaData::PackRemote(int sockfd) const {
+  LOG("FileMetaData::PackRemote");
+  assert(fd.table_reader == nullptr);
+  fd.PackRemote(sockfd);
+  assert(table_reader_handle == nullptr);
+
+  size_t file_checksum_len = file_checksum.size();
+  write(sockfd, &file_checksum_len, sizeof(size_t));
+  read_data(sockfd, &file_checksum_len, sizeof(size_t));
+  if (file_checksum_len > 0) {
+    write(sockfd, file_checksum.c_str(), file_checksum_len);
+    read_data(sockfd, &file_checksum_len, sizeof(size_t));
+  }
+
+  size_t file_checksum_func_name_len = file_checksum_func_name.size();
+  write(sockfd, &file_checksum_func_name_len, sizeof(size_t));
+  read_data(sockfd, &file_checksum_func_name_len, sizeof(size_t));
+  if (file_checksum_func_name_len > 0) {
+    write(sockfd, file_checksum_func_name.c_str(), file_checksum_func_name_len);
+    read_data(sockfd, &file_checksum_func_name_len, sizeof(size_t));
+  }
+
+  size_t ret_val = smallest.size();
+  send(sockfd, &ret_val, sizeof(size_t), 0);
+  if (ret_val > 0) {
+    ret_val = 0;
+    read_data(sockfd, &ret_val, sizeof(size_t));
+    send(sockfd, smallest.get_rep()->data(), smallest.size(), 0);
+  }
+  ret_val = 0;
+  read_data(sockfd, &ret_val, sizeof(size_t));
+
+  ret_val = largest.size();
+  send(sockfd, &ret_val, sizeof(size_t), 0);
+  LOG("FileMetaData::PackRemote largest_len ", ret_val);
+  if (ret_val > 0) {
+    ret_val = 0;
+    read_data(sockfd, &ret_val, sizeof(size_t));
+    send(sockfd, largest.get_rep()->data(), largest.size(), 0);
+    LOG("FileMetaData::PackRemote largest: ",
+        largest.get_rep()->substr(0, largest.size()));
+    ret_val = 0;
+    read_data(sockfd, &ret_val, sizeof(size_t));
+  } else {
+    ret_val = 0;
+    read_data(sockfd, &ret_val, sizeof(size_t));
+  }
+
+  uint64_t uid[2] = {unique_id.at(0), unique_id.at(1)};
+  send(sockfd, uid, sizeof(uint64_t) * 2, 0);
+  ret_val = 0;
+  read_data(sockfd, &ret_val, sizeof(size_t));
+  send(sockfd, reinterpret_cast<const char*>(this), sizeof(FileMetaData), 0);
+  ret_val = 0;
+  read_data(sockfd, &ret_val, sizeof(int64_t));
+  LOG("FileMetaData::PackRemote done.");
+}
+
+void* FileMetaData::UnPackRemote(int sockfd) {
+  LOG("server FileMetaData::UnPackRemote");
+  void* mem = malloc(sizeof(FileMetaData));
+  auto ptr = reinterpret_cast<FileMetaData*>(mem);
+  size_t ret_val = 0;
+  void* local_fd = FileDescriptor::UnPackRemote(sockfd);
+  std::string remote_file_checksum;
+  size_t file_checksum_len = 0;
+  read_data(sockfd, &file_checksum_len, sizeof(size_t));
+  send(sockfd, &file_checksum_len, sizeof(size_t), 0);
+  if (file_checksum_len > 0) {
+    remote_file_checksum.resize(file_checksum_len);
+    read_data(sockfd, remote_file_checksum.data(), file_checksum_len);
+    write(sockfd, &file_checksum_len, sizeof(size_t));
+  }
+
+  std::string remote_file_checksum_func_name;
+  size_t file_checksum_func_name_len = 0;
+  read_data(sockfd, &file_checksum_func_name_len, sizeof(size_t));
+  send(sockfd, &file_checksum_func_name_len, sizeof(size_t), 0);
+  if (file_checksum_func_name_len > 0) {
+    remote_file_checksum_func_name.resize(file_checksum_func_name_len);
+    read_data(sockfd, remote_file_checksum_func_name.data(),
+              file_checksum_func_name_len);
+    write(sockfd, &file_checksum_func_name_len, sizeof(size_t));
+  }
+
+  void* local_smallest = nullptr;
+  size_t smallest_len = 0;
+  read_data(sockfd, &smallest_len, sizeof(size_t));
+  LOG("server FileMetaData::UnPackRemote smallest_len ", smallest_len);
+  send(sockfd, &smallest_len, sizeof(size_t), 0);
+  if (smallest_len > 0) {
+    local_smallest = malloc(smallest_len);
+    read_data(sockfd, local_smallest, smallest_len);
+    LOG("FileMetaData::UnPackRemote smallest: ",
+        reinterpret_cast<char*>(local_smallest));
+    write(sockfd, &smallest_len, sizeof(size_t));
+  }
+  LOG("BREAK POINT");
+  void* local_largest = nullptr;
+  size_t largest_len = 0;
+  read_data(sockfd, &largest_len, sizeof(size_t));
+  LOG("server FileMetaData::UnPackRemote largest_len ", largest_len);
+  send(sockfd, &largest_len, sizeof(size_t), 0);
+  if (largest_len > 0) {
+    local_largest = malloc(largest_len);
+    read_data(sockfd, local_largest, largest_len);
+    write(sockfd, &largest_len, sizeof(size_t));
+    LOG("FileMetaData::PackRemote largest: ",
+        reinterpret_cast<char*>(local_largest));
+  }
+
+  void* local_uid = malloc(2 * sizeof(uint64_t));
+  read_data(sockfd, local_uid, 2 * sizeof(uint64_t));
+  send(sockfd, &local_uid, sizeof(size_t), 0);
+
+  read_data(sockfd, mem, sizeof(FileMetaData));
+  new (&ptr->file_checksum) std::string(remote_file_checksum);
+  new (&ptr->file_checksum_func_name)
+      std::string(remote_file_checksum_func_name);
+  new (ptr->smallest.get_rep()) std::string();
+  ptr->smallest.get_rep()->resize(smallest_len);
+  memcpy(const_cast<char*>(ptr->smallest.get_rep()->data()),
+         reinterpret_cast<char*>(local_smallest), smallest_len);
+  LOG("server FileMetaData::UnPackRemote smallest: ",
+      ptr->smallest.get_rep()->substr(0, smallest_len));
+  new (ptr->largest.get_rep()) std::string();
+  ptr->largest.get_rep()->resize(largest_len);
+  memcpy(const_cast<char*>(ptr->largest.get_rep()->data()),
+         reinterpret_cast<char*>(local_largest), largest_len);
+  LOG("server FileMetaData::UnPackRemote largest: ",
+      ptr->largest.get_rep()->substr(0, largest_len));
+
+  new (&ptr->unique_id) std::array<uint64_t, 2>();
+  ptr->unique_id.at(0) = reinterpret_cast<uint64_t*>(local_uid)[0];
+  ptr->unique_id.at(1) = reinterpret_cast<uint64_t*>(local_uid)[1];
+  ptr->fd = *reinterpret_cast<FileDescriptor*>(local_fd);
+  send(sockfd, &ret_val, sizeof(size_t), 0);
+
+  LOG("server FileMetaData::UnPackRemote done.");
+  return mem;
+}
+
 void FileMetaData::PackLocal(int sockfd) const {
   LOG("server FileMetaData::PackLocal");
   fd.PackLocal(sockfd);
@@ -48,17 +193,12 @@ void FileMetaData::PackLocal(int sockfd) const {
   assert(table_reader_handle == nullptr);
   assert(file_checksum == kUnknownFileChecksum);
   assert(file_checksum_func_name == kUnknownFileChecksumFuncName);
-  void* mptr = reinterpret_cast<void*>(smallest.get_rep());
-  LOG("check data before PACK:", std::hex, *reinterpret_cast<int64_t*>(mptr),
-      ' ', *(reinterpret_cast<int64_t*>(mptr) + 1), ' ',
-      *(reinterpret_cast<int64_t*>(mptr) + 2), std::dec)
-  size_t ret_val = 0;
-  ret_val = smallest.size();
+  size_t ret_val = smallest.size();
   send(sockfd, &ret_val, sizeof(size_t), 0);
   if (ret_val > 0) {
     ret_val = 0;
     read_data(sockfd, &ret_val, sizeof(size_t));
-    send(sockfd, smallest.get_rep(), smallest.size(), 0);
+    send(sockfd, smallest.get_rep()->data(), smallest.size(), 0);
     ret_val = 0;
     read_data(sockfd, &ret_val, sizeof(size_t));
   } else {
@@ -70,7 +210,7 @@ void FileMetaData::PackLocal(int sockfd) const {
   if (ret_val > 0) {
     ret_val = 0;
     read_data(sockfd, &ret_val, sizeof(size_t));
-    send(sockfd, largest.get_rep(), largest.size(), 0);
+    send(sockfd, largest.get_rep()->data(), largest.size(), 0);
     ret_val = 0;
     read_data(sockfd, &ret_val, sizeof(size_t));
   } else {
@@ -588,6 +728,49 @@ void VersionEdit::PackLocal(char*& buf) const {
   }
 }
 
+void VersionEdit::PackRemote(int sockfd) const {
+  LOG("VersionEdit::PackRemote");
+  size_t ret_val = 0;
+  size_t new_file_size_ = new_files_.size();
+  write(sockfd, &new_file_size_, sizeof(size_t));
+  read_data(sockfd, &ret_val, sizeof(size_t));
+  for (size_t i = 0; i < new_file_size_; i++) {
+    send(sockfd, &new_files_[i].first, sizeof(int), 0);
+    read_data(sockfd, &ret_val, sizeof(size_t));
+    new_files_[i].second.PackRemote(sockfd);
+  }
+  write(sockfd, &has_last_sequence_, sizeof(bool));
+  read_data(sockfd, &ret_val, sizeof(size_t));
+  write(sockfd, &last_sequence_, sizeof(SequenceNumber));
+  read_data(sockfd, &ret_val, sizeof(size_t));
+  LOG("VersionEdit::PackRemote done.");
+}
+
+void VersionEdit::UnPackRemote(int sockfd) {
+  LOG("VersionEdit::UnPackRemote");
+  size_t ret_val = 0;
+  size_t new_file_size_ = 0;
+  NewFiles remote_new_files_;
+  read_data(sockfd, &new_file_size_, sizeof(size_t));
+  write(sockfd, &new_file_size_, sizeof(size_t));
+  for (size_t i = 0; i < new_file_size_; i++) {
+    int level = 0;
+    read_data(sockfd, &level, sizeof(int));
+    write(sockfd, &level, sizeof(size_t));
+    auto local_file_meta_data =
+        reinterpret_cast<FileMetaData*>(FileMetaData::UnPackRemote(sockfd));
+    remote_new_files_.emplace_back(level, *local_file_meta_data);
+  }
+  new_files_ = remote_new_files_;
+
+  read_data(sockfd, &has_last_sequence_, sizeof(bool));
+  write(sockfd, &ret_val, sizeof(size_t));
+
+  read_data(sockfd, &last_sequence_, sizeof(SequenceNumber));
+  write(sockfd, &ret_val, sizeof(size_t));
+  LOG("VersionEdit::UnPackRemote done.");
+}
+
 void VersionEdit::Clear() {
   max_level_ = 0;
   db_id_.clear();
@@ -662,12 +845,14 @@ bool VersionEdit::EncodeTo(std::string* dst) const {
   }
 
   bool min_log_num_written = false;
+  LOG("CRASH POINT");
   for (size_t i = 0; i < new_files_.size(); i++) {
     const FileMetaData& f = new_files_[i].second;
     if (!f.smallest.Valid() || !f.largest.Valid() ||
         f.epoch_number == kUnknownEpochNumber) {
       return false;
     }
+    LOG("CRASH POINT");
     PutVarint32(dst, kNewFile4);
     PutVarint32Varint64(dst, new_files_[i].first /* level */, f.fd.GetNumber());
     PutVarint64(dst, f.fd.GetFileSize());
@@ -753,6 +938,7 @@ bool VersionEdit::EncodeTo(std::string* dst) const {
       PutVarint64(&oldest_blob_file_number, f.oldest_blob_file_number);
       PutLengthPrefixedSlice(dst, Slice(oldest_blob_file_number));
     }
+    LOG("CRASH POINT");
     UniqueId64x2 unique_id = f.unique_id;
     TEST_SYNC_POINT_CALLBACK("VersionEdit::EncodeTo:UniqueId", &unique_id);
     if (unique_id != kNullUniqueId64x2) {
@@ -760,6 +946,7 @@ bool VersionEdit::EncodeTo(std::string* dst) const {
       std::string unique_id_str = EncodeUniqueIdBytes(&unique_id);
       PutLengthPrefixedSlice(dst, Slice(unique_id_str));
     }
+    LOG("CRASH POINT");
     if (f.compensated_range_deletion_size) {
       PutVarint32(dst, kCompensatedRangeDeletionSize);
       std::string compensated_range_deletion_size;
@@ -773,6 +960,7 @@ bool VersionEdit::EncodeTo(std::string* dst) const {
 
     PutVarint32(dst, NewFileCustomTag::kTerminate);
   }
+  LOG("CRASH POINT");
 
   for (const auto& blob_file_addition : blob_file_additions_) {
     PutVarint32(dst, kBlobFileAddition);

@@ -21,7 +21,9 @@ namespace ROCKSDB_NAMESPACE {
 // Convenience methods
 Status DBImpl::Put(const WriteOptions& o, ColumnFamilyHandle* column_family,
                    const Slice& key, const Slice& val) {
+  LOG("DBImpl::Put");
   const Status s = FailIfCfHasTs(column_family);
+  LOG("DBImpl::Put FailIfCfHasTs");
   if (!s.ok()) {
     return s;
   }
@@ -138,13 +140,18 @@ void DBImpl::SetRecoverableStatePreReleaseCallback(
 
 Status DBImpl::Write(const WriteOptions& write_options, WriteBatch* my_batch) {
   Status s;
+  LOG("DBImpl::Write");
   if (write_options.protection_bytes_per_key > 0) {
+    LOG("DBImpl::Write");
     s = WriteBatchInternal::UpdateProtectionInfo(
         my_batch, write_options.protection_bytes_per_key);
+    LOG("DBImpl::Write");
   }
   if (s.ok()) {
+    LOG("DBImpl::Write");
     s = WriteImpl(write_options, my_batch, /*callback=*/nullptr,
                   /*log_used=*/nullptr);
+    LOG("DBImpl::Write");
   }
   return s;
 }
@@ -173,12 +180,15 @@ Status DBImpl::WriteImpl(const WriteOptions& write_options,
                          size_t batch_cnt,
                          PreReleaseCallback* pre_release_callback,
                          PostMemTableCallback* post_memtable_callback) {
+  LOG("DBImpl::Write");
   assert(!seq_per_batch_ || batch_cnt != 0);
   assert(my_batch == nullptr || my_batch->Count() == 0 ||
          write_options.protection_bytes_per_key == 0 ||
          write_options.protection_bytes_per_key ==
              my_batch->GetProtectionBytesPerKey());
+  LOG("DBImpl::Write");
   if (my_batch == nullptr) {
+    LOG("DBImpl::Write");
     return Status::InvalidArgument("Batch is nullptr!");
   } else if (!disable_memtable &&
              WriteBatchInternal::TimestampsUpdateNeeded(*my_batch)) {
@@ -213,6 +223,7 @@ Status DBImpl::WriteImpl(const WriteOptions& write_options,
   // TODO: this use of operator bool on `tracer_` can avoid unnecessary lock
   // grabs but does not seem thread-safe.
   if (tracer_) {
+    LOG("DBImpl::Write");
     InstrumentedMutexLock lock(&trace_mutex_);
     if (tracer_ && !tracer_->IsWriteOrderPreserved()) {
       // We don't have to preserve write order so can trace anywhere. It's more
@@ -223,6 +234,7 @@ Status DBImpl::WriteImpl(const WriteOptions& write_options,
     }
   }
   if (write_options.sync && write_options.disableWAL) {
+    LOG("DBImpl::Write");
     return Status::InvalidArgument("Sync writes has to enable WAL.");
   }
   if (two_write_queues_ && immutable_db_options_.enable_pipelined_write) {
@@ -258,12 +270,13 @@ Status DBImpl::WriteImpl(const WriteOptions& write_options,
       return s;
     }
   }
-
+  LOG("DBImpl::Write");
   if (two_write_queues_ && disable_memtable) {
     AssignOrder assign_order =
         seq_per_batch_ ? kDoAssignOrder : kDontAssignOrder;
     // Otherwise it is WAL-only Prepare batches in WriteCommitted policy and
     // they don't consume sequence.
+    LOG("DBImpl::Write");
     return WriteImplWALOnly(&nonmem_write_thread_, write_options, my_batch,
                             callback, log_used, log_ref, seq_used, batch_cnt,
                             pre_release_callback, assign_order,
@@ -2320,12 +2333,16 @@ Status DB::Put(const WriteOptions& opt, ColumnFamilyHandle* column_family,
   // Pre-allocate size of write batch conservatively.
   // 8 bytes are taken by header, 4 bytes for count, 1 byte for type,
   // and we allocate 11 extra bytes for key length, as well as value length.
+  LOG("Put() on column family %s", column_family->GetName().c_str());
   WriteBatch batch(key.size() + value.size() + 24, 0 /* max_bytes */,
                    opt.protection_bytes_per_key, 0 /* default_cf_ts_sz */);
+  LOG("Put() on column family %s", column_family->GetName().c_str());
   Status s = batch.Put(column_family, key, value);
+  LOG("Put() on column family %s", column_family->GetName().c_str());
   if (!s.ok()) {
     return s;
   }
+  LOG("Write");
   return Write(opt, &batch);
 }
 

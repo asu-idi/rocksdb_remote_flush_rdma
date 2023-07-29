@@ -217,6 +217,9 @@ class MemTableListVersion {
 // mutex or being on the write thread.)
 class MemTableList {
  public:
+  void check();
+
+ public:
   // A list of memtables.
   explicit MemTableList(int min_write_buffer_number_to_merge,
                         int max_write_buffer_number_to_maintain,

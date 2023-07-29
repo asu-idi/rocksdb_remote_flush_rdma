@@ -1544,6 +1544,19 @@ void LevelIterator::InitFileIterator(size_t new_file_index) {
 }
 }  // anonymous namespace
 
+void Version::check() {
+  LOG("Version::check", cfd_->GetName().c_str());
+  // table_cache_->get_cache().get().
+  storage_info_.check();
+  LOG("vset:", std::hex, vset_, std::dec);
+  if (vset_ != nullptr) vset_->check();
+  LOG("next_: ", std::hex, next_, std::dec);
+  LOG("prev_: ", std::hex, prev_, std::dec);
+  LOG("refs_: ", refs_);
+  LOG("version_number: ", version_number_);
+  LOG("Version::check done");
+}
+
 void Version::PackLocal(int sockfd) const {
   storage_info_.PackLocal(sockfd);
   send(sockfd, reinterpret_cast<const void*>(this), sizeof(Version), 0);
@@ -3139,6 +3152,30 @@ void Version::UpdateAccumulatedStats() {
       }
     }
   }
+}
+
+void VersionStorageInfo::check() {
+  LOG("VersionStorageInfo::check");
+  LOG("  num_levels: ", num_levels_);
+  LOG("  num_non_empty_levels: ", num_non_empty_levels_);
+  LOG(" level_files_brief_:", level_files_brief_.size());
+  LOG("files_:", files_->size());
+  for (int level = 0; level < num_levels_; level++) {
+    LOG("  level: ", level);
+    LOG("    files: ", files_[level].size());
+    for (auto* file_meta : files_[level]) {
+      LOG("      file: ", file_meta->fd.GetNumber());
+    }
+  }
+  LOG("accumulated_file_size: ", accumulated_file_size_);
+  LOG("accumulated_raw_key_size: ", accumulated_raw_key_size_);
+  LOG("accumulated_raw_value_size: ", accumulated_raw_value_size_);
+  LOG("accumulated_num_non_deletions: ", accumulated_num_non_deletions_);
+  LOG("accumulated_num_deletions: ", accumulated_num_deletions_);
+  LOG("current_num_non_deletions: ", current_num_non_deletions_);
+  LOG("current_num_deletions: ", current_num_deletions_);
+  LOG("current_num_samples: ", current_num_samples_);
+  LOG("finalized_: ", finalized_);
 }
 
 void VersionStorageInfo::PackLocal(int sockfd) const {
@@ -4812,6 +4849,21 @@ std::string Version::DebugString(bool hex, bool print_stats) const {
   return r;
 }
 
+void VersionSet::check() {
+  LOG("VersionSet::check");
+  LOG("table_cache_:", std::hex, table_cache_, std::dec);
+  // column_family_set_->check();
+  LOG("db_id_:", db_id_);
+  LOG("current_version_number_:", current_version_number_);
+  LOG("min_log_number_to_keep_:", min_log_number_to_keep_.load());
+  LOG("prev_log_number_:", prev_log_number_);
+  LOG("manifest_file_number_:", manifest_file_number_);
+  LOG("next_file_number_:", next_file_number_.load());
+  LOG("last_sequence_:", last_sequence_.load());
+  LOG("obsolete_files_:", obsolete_files_.size());
+  LOG("VersionSet::check done.");
+}
+
 void VersionSet::PackLocal(int sockfd) const {
   LOG("VersionSet::PackLocal dump ImmutablDBOptions file");
   db_options_->PackLocal(sockfd);
@@ -5066,12 +5118,13 @@ Status VersionSet::ProcessManifestWrites(
   // `descriptor_last_sequence_` until the apply phase, after the log phase
   // succeeds.
   SequenceNumber max_last_sequence = descriptor_last_sequence_;
-
+    LOG("");
   if (first_writer.edit_list.front()->IsColumnFamilyManipulation()) {
     // No group commits for column family add or drop
     LogAndApplyCFHelper(first_writer.edit_list.front(), &max_last_sequence);
     batch_edits.push_back(first_writer.edit_list.front());
   } else {
+        LOG("");
     auto it = manifest_writers_.cbegin();
     size_t group_start = std::numeric_limits<size_t>::max();
     while (it != manifest_writers_.cend()) {
@@ -5169,6 +5222,7 @@ Status VersionSet::ProcessManifestWrites(
         batch_edits.push_back(e);
       }
     }
+    LOG("");
     for (int i = 0; i < static_cast<int>(versions.size()); ++i) {
       assert(!builder_guards.empty() &&
              builder_guards.size() == versions.size());
@@ -5182,6 +5236,7 @@ Status VersionSet::ProcessManifestWrites(
         return s;
       }
     }
+    LOG("");
   }
 
 #ifndef NDEBUG
@@ -5228,7 +5283,7 @@ Status VersionSet::ProcessManifestWrites(
   } else {
     pending_manifest_file_number_ = manifest_file_number_;
   }
-
+  LOG("");
   // Local cached copy of state variable(s). WriteCurrentStateToManifest()
   // reads its content after releasing db mutex to avoid race with
   // SwitchMemtable().
@@ -5250,11 +5305,12 @@ Status VersionSet::ProcessManifestWrites(
           cfd->GetID(),
           MutableCFState(cfd->GetLogNumber(), cfd->GetFullHistoryTsLow())));
     }
-
+    LOG("");
     for (const auto& wal : wals_.GetWals()) {
       wal_additions.AddWal(wal.first, wal.second);
     }
   }
+  LOG("");
 
   uint64_t new_manifest_file_size = 0;
   Status s;
@@ -5286,7 +5342,7 @@ Status VersionSet::ProcessManifestWrites(
         }
       }
     }
-
+    LOG("");
     if (s.ok() && new_descriptor_log) {
       // This is fine because everything inside of this block is serialized --
       // only one thread can be here at the same time
@@ -5316,7 +5372,7 @@ Status VersionSet::ProcessManifestWrites(
         s = io_s;
       }
     }
-
+    LOG("");
     if (s.ok()) {
       if (!first_writer.edit_list.front()->IsColumnFamilyManipulation()) {
         constexpr bool update_stats = true;
@@ -5325,7 +5381,7 @@ Status VersionSet::ProcessManifestWrites(
           versions[i]->PrepareAppend(*mutable_cf_options_ptrs[i], update_stats);
         }
       }
-
+      LOG("");
       // Write new records to MANIFEST log
 #ifndef NDEBUG
       size_t idx = 0;
@@ -5356,7 +5412,7 @@ Status VersionSet::ProcessManifestWrites(
           break;
         }
       }
-
+      LOG("");
       if (s.ok()) {
         io_s = SyncManifest(db_options_, descriptor_log_->file());
         manifest_io_status = io_s;
@@ -5369,7 +5425,7 @@ Status VersionSet::ProcessManifestWrites(
                         s.ToString().c_str());
       }
     }
-
+    LOG("");
     // If we just created a new descriptor file, install it by writing a
     // new CURRENT file that points to it.
     if (s.ok()) {
@@ -5382,7 +5438,7 @@ Status VersionSet::ProcessManifestWrites(
         s = io_s;
       }
     }
-
+    LOG("");
     if (s.ok()) {
       // find offset in manifest file where this version is stored.
       new_manifest_file_size = descriptor_log_->file()->GetFileSize();
@@ -5398,7 +5454,7 @@ Status VersionSet::ProcessManifestWrites(
     TEST_SYNC_POINT("VersionSet::LogAndApply:WriteManifestDone");
     mu->Lock();
   }
-
+  LOG("");
   if (s.ok()) {
     // Apply WAL edits, DB mutex must be held.
     for (auto& e : batch_edits) {
@@ -5412,7 +5468,7 @@ Status VersionSet::ProcessManifestWrites(
       }
     }
   }
-
+  LOG("");
   if (!io_s.ok()) {
     if (io_status_.ok()) {
       io_status_ = io_s;
@@ -5427,7 +5483,7 @@ Status VersionSet::ProcessManifestWrites(
     obsolete_manifests_.emplace_back(
         DescriptorFileName("", manifest_file_number_));
   }
-
+  LOG("");
   // Install the new versions
   if (s.ok()) {
     if (first_writer.edit_list.front()->is_column_family_add_) {
@@ -5681,6 +5737,7 @@ Status VersionSet::LogAndApply(
     }
     return Status::ColumnFamilyDropped();
   }
+  LOG("");
   return ProcessManifestWrites(writers, mu, dir_contains_current_file,
                                new_descriptor_log, new_cf_options);
 }

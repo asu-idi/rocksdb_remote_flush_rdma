@@ -62,10 +62,6 @@ class Arena;
 
 class RemoteFlushJob {
  public:
-  struct install_info {
-    uint64_t start_micros_;
-    uint64_t start_cpu_micros_;
-  };
   int server_socket_fd_;
   int worker_socket_fd_;
 
@@ -94,9 +90,9 @@ class RemoteFlushJob {
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf, DBImpl* remote_db);
   void PackRemote(int sockfd) const;
-  static void* UnPackRemote(int sockfd);
   void PackRemote(char*& buf) const;
   static void* UnPackRemote(char*& buf);
+  void UnPackRemote(int sockfd);
 
  private:
   // TODO(icanadi) make effort to reduce number of parameters here
@@ -133,7 +129,8 @@ class RemoteFlushJob {
   Status RunLocal(LogsWithPrepTracker* prep_tracker = nullptr,
                   FileMetaData* file_meta = nullptr,
                   bool* switched_to_mempurge = nullptr);
-  Status RunRemote(RDMAClient* rdma, LogsWithPrepTracker* prep_tracker = nullptr,
+  Status RunRemote(RDMAClient* rdma,
+                   LogsWithPrepTracker* prep_tracker = nullptr,
                    FileMetaData* file_meta = nullptr,
                    bool* switched_to_mempurge = nullptr);
   Status MatchRemoteWorker();

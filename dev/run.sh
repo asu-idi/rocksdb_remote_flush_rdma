@@ -15,24 +15,13 @@ cmake ..
 make rdma_server -j 18
 make remote_flush_worker -j 18
 make db_remote_flush_test -j 18
+make remote_flush_test_server -j 18
 cd $PROJECT_ROOT/dev
 
 cp ../build/db_remote_flush_test ./
 cp ../build/remote_flush_worker ./
 cp ../build/rdma_server ./
-# cp ../build/shared_std_test ./
-# cp ../build/memtable_list_test ./
-# cp ../build/memtable_tracer_parser ./
-# cp ../build/trace_memtable_test ./
-# cp ../build/trace_io_test ./
-# cp ../build/io_tracer_parser ./
-# cp ../build/shared_memory_* ./
-# cp ../build/memtable_refactor_test ./
-# cp ../build/open_secondary_test ./
-# cp ../build/inlineskiplist_test ./
-# cp ../build/db_memtable_test ./
-# cp ../build/db_test3 ./
-# cp ../build/db_test4 ./
+cp ../build/remote_flush_test_server ./
 
 rm Log-*
 rm -rf memtable_result/

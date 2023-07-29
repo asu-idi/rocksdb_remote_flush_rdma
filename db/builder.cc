@@ -474,7 +474,7 @@ Status RemoteBuildTable(
       mutable_cf_options.check_flush_compaction_key_order,
       /*enable_hash=*/paranoid_file_checks);
   Status s;
-  meta->fd.file_size = 0;
+  meta->fd.file_size = 0;  // packremote
   iter->SeekToFirst();
   std::unique_ptr<CompactionRangeDelAggregator> range_del_agg(
       new CompactionRangeDelAggregator(&tboptions.internal_comparator,
@@ -591,7 +591,8 @@ Status RemoteBuildTable(
         break;
       }
       builder->Add(key, value);
-      s = meta->UpdateBoundaries(key, value, ikey.sequence, ikey.type);
+      s = meta->UpdateBoundaries(key, value, ikey.sequence,
+                                 ikey.type);  // packremote
       if (!s.ok()) {
         break;
       }
@@ -618,8 +619,9 @@ Status RemoteBuildTable(
         auto kv = tombstone.Serialize();
         builder->Add(kv.first.Encode(), kv.second);
         InternalKey tombstone_end = tombstone.SerializeEndKey();
-        meta->UpdateBoundariesForRange(kv.first, tombstone_end, tombstone.seq_,
-                                       tboptions.internal_comparator);
+        meta->UpdateBoundariesForRange(
+            kv.first, tombstone_end, tombstone.seq_,
+            tboptions.internal_comparator);  // packremote
         if (version) {
           if (last_tombstone_start_user_key.empty() ||
               ucmp->CompareWithoutTimestamp(last_tombstone_start_user_key,
@@ -629,7 +631,7 @@ Status RemoteBuildTable(
             meta->compensated_range_deletion_size += versions->ApproximateSize(
                 approx_opts, version, kv.first.Encode(), tombstone_end.Encode(),
                 0 /* start_level */, -1 /* end_level */,
-                TableReaderCaller::kFlush);
+                TableReaderCaller::kFlush);  // packremote
           }
           last_tombstone_start_user_key = range_del_it->start_key();
         }
@@ -662,8 +664,8 @@ Status RemoteBuildTable(
 
     if (s.ok() && !empty) {
       uint64_t file_size = builder->FileSize();
-      meta->fd.file_size = file_size;
-      meta->marked_for_compaction = builder->NeedCompact();
+      meta->fd.file_size = file_size;                        // packremote
+      meta->marked_for_compaction = builder->NeedCompact();  // packremote
       assert(meta->fd.GetFileSize() > 0);
       tp = builder
                ->GetTableProperties();  // refresh now that builder is finished
@@ -687,7 +689,7 @@ Status RemoteBuildTable(
         }
       }
       if (table_properties) {
-        *table_properties = tp;
+        *table_properties = tp;  // packremote
       }
     }
     delete builder;
@@ -704,8 +706,9 @@ Status RemoteBuildTable(
     }
     if (s.ok() && io_status->ok() && !empty) {
       // Add the checksum information to file metadata.
-      meta->file_checksum = file_writer->GetFileChecksum();
-      meta->file_checksum_func_name = file_writer->GetFileChecksumFuncName();
+      meta->file_checksum = file_writer->GetFileChecksum();  // packremote
+      meta->file_checksum_func_name =
+          file_writer->GetFileChecksumFuncName();  // packremote
       file_checksum = meta->file_checksum;
       file_checksum_func_name = meta->file_checksum_func_name;
       // Set unique_id only if db_id and db_session_id exist
@@ -714,7 +717,7 @@ Status RemoteBuildTable(
                                     meta->fd.GetNumber(), &(meta->unique_id))
                  .ok()) {
           // if failed to get unique id, just set it Null
-          meta->unique_id = kNullUniqueId64x2;
+          meta->unique_id = kNullUniqueId64x2;  // packremote
         }
       }
     }

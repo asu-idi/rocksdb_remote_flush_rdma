@@ -28,8 +28,10 @@
 #include "options/cf_options.h"
 #include "rocksdb/file_system.h"
 #include "rocksdb/system_clock.h"
+#include "rocksdb/table_properties.h"
 #include "table/internal_iterator.h"
 #include "util/autovector.h"
+#include "util/socket_api.hpp"
 
 // for socket API
 #ifdef __linux
@@ -480,8 +482,7 @@ void RemoteFlushJob::PackLocal(char*& buf) const {
     snapshot_checker_->PackLocal(buf);
   }
 
-  PACK_TO_BUF(reinterpret_cast<const void*>(this), buf,
-       sizeof(RemoteFlushJob));
+  PACK_TO_BUF(reinterpret_cast<const void*>(this), buf, sizeof(RemoteFlushJob));
 }
 
 void* RemoteFlushJob::UnPackLocal(char*& buf, DBImpl* remote_db) {
@@ -507,10 +508,8 @@ void* RemoteFlushJob::UnPackLocal(char*& buf, DBImpl* remote_db) {
   void* versions_ret = VersionSet::UnPackLocal(buf);
   void* edit_ret = VersionEdit::UnPackLocal(buf);
   void* job_context_ret = JobContext::UnPackLocal(buf);
-  void* db_impl_seqno_time_mapping_ret =
-      SeqnoToTimeMapping::UnPackLocal(buf);
-  void* seqno_to_time_mapping_ret =
-      SeqnoToTimeMapping::UnPackLocal(buf);
+  void* db_impl_seqno_time_mapping_ret = SeqnoToTimeMapping::UnPackLocal(buf);
+  void* seqno_to_time_mapping_ret = SeqnoToTimeMapping::UnPackLocal(buf);
   void* cfd_ret = ColumnFamilyData::UnPackLocal(buf);
   void* meta_ret = FileMetaData::UnPackLocal(buf);
   void* file_options_ret = FileOptions::UnPackLocal(buf);
@@ -544,7 +543,7 @@ void* RemoteFlushJob::UnPackLocal(char*& buf, DBImpl* remote_db) {
   local_db_session_id.resize(db_session_id_len);
   if (local_db_session_id.size()) {
     UNPACK_FROM_BUF(buf, local_db_session_id.data(),
-         local_db_session_id.size());
+                    local_db_session_id.size());
   }
 
   size_t existing_snapshots_len = 0;
@@ -629,48 +628,69 @@ void* RemoteFlushJob::UnPackLocal(char*& buf, DBImpl* remote_db) {
 void RemoteFlushJob::PackRemote(int worker_socket_fd) const {
   LOG("RemoteFlushJob::PackRemote thread_id:", std::this_thread::get_id(),
       "Pack data from remote side");
-  void* install_needed = malloc(sizeof(install_info));
-  send(worker_socket_fd, install_needed, sizeof(install_info), 0);
-  LOG("worker send ", std::hex, install_needed, std::dec);
-
-  int64_t remote_install_addr = 0;
-  read_data(worker_socket_fd, &remote_install_addr, sizeof(int64_t));
-  LOG("worker recv ", std::hex, remote_install_addr, std::dec);
-
+  // send+read
+  assert(mems_.size() > 0);
+  mems_[0]->PackRemote(worker_socket_fd);
+  cfd_->PackRemote(worker_socket_fd);
+  table_properties_.PackRemote(worker_socket_fd);
+  edit_->PackRemote(worker_socket_fd);
+  LOG("PP RemoteFlushJob::UnPackRemote meta_.smallest: ", "\"",
+      *meta_.smallest.get_rep(), "\" ");
+  LOG("PP RemoteFlushJob::UnPackRemote meta_.largest: ", "\"",
+      *meta_.largest.get_rep(), "\" ");
+  meta_.PackRemote(worker_socket_fd);
   LOG("RemoteFlushJob::PackRemote done");
 }
-void* RemoteFlushJob::UnPackRemote(int server_socket_fd) {
+void RemoteFlushJob::UnPackRemote(int server_socket_fd) {
   LOG("RemoteFlushJob::UnPackRemote thread_id:", std::this_thread::get_id(),
       "UnPack data from remote side");
-  void* mem = malloc(sizeof(install_info));
-  auto* install_info_ = reinterpret_cast<install_info*>(mem);
-  read_data(server_socket_fd, install_info_, sizeof(install_info));
-  LOG("server recv ", std::hex, &install_info_, std::dec);
-  // unpack install_info
-  send(server_socket_fd, &install_info_, sizeof(int64_t), 0);
-  LOG("server send ", std::hex, install_info_, std::dec);
-  LOG("RemoteFlushJob::UnPackRemote done");
-  return install_info_;
-}
-void RemoteFlushJob::PackRemote(char*& buf) const {
-  LOG("RemoteFlushJob::PackRemote thread_id:", std::this_thread::get_id(),
-      "Pack data from remote side");
-  void* install_needed = malloc(sizeof(install_info));
-  PACK_TO_BUF(install_needed, buf, sizeof(install_info));
-  LOG("worker send ", std::hex, install_needed, std::dec);
+  assert(mems_.size() > 0);
+  LOG("RemoteFlushJob::UnPackRemote mems_[0]");
+  mems_[0]->UnPackRemote(server_socket_fd);
+  LOG("RemoteFlushJob::UnPackRemote cfd_");
+  cfd_->UnPackRemote(server_socket_fd);
+  auto new_table_properties = reinterpret_cast<TableProperties*>(
+      TableProperties::UnPackRemote(server_socket_fd));
+  table_properties_ = *new_table_properties;
+  delete new_table_properties;
+  edit_->UnPackRemote(server_socket_fd);
+  auto remote_metadata = reinterpret_cast<FileMetaData*>(
+      FileMetaData::UnPackRemote(server_socket_fd));
+  meta_.fd.file_size = remote_metadata->fd.file_size;
+  meta_.fd.smallest_seqno = remote_metadata->fd.smallest_seqno;
+  meta_.fd.largest_seqno = remote_metadata->fd.largest_seqno;
+  LOG("RemoteFlushJob::UnPackRemote meta_.smallest: ", "\"",
+      *meta_.smallest.get_rep(), "\" \"", *remote_metadata->smallest.get_rep(),
+      "\"");
+  LOG("RemoteFlushJob::UnPackRemote meta_.largest: ", "\"",
+      *meta_.largest.get_rep(), "\" \"", *remote_metadata->largest.get_rep(),
+      "\"");
+  meta_.smallest = remote_metadata->smallest;
+  meta_.largest = remote_metadata->largest;
+  LOG("RemoteFlushJob::UnPackRemote meta_.epoch_number: ", meta_.epoch_number,
+      ' ', remote_metadata->epoch_number);
+  meta_.epoch_number = remote_metadata->epoch_number;
+  assert(meta_.smallest.Valid());
+  assert(meta_.largest.Valid());
+  // meta_.oldest_blob_file_number = remote_metadata->oldest_blob_file_number;
+  meta_.compensated_range_deletion_size =
+      remote_metadata->compensated_range_deletion_size;
+  meta_.file_creation_time = remote_metadata->file_creation_time;
+  meta_.marked_for_compaction = remote_metadata->marked_for_compaction;
+  meta_.file_checksum = remote_metadata->file_checksum;
+  meta_.file_checksum_func_name = remote_metadata->file_checksum_func_name;
+  meta_.unique_id = remote_metadata->unique_id;
+  delete remote_metadata;
 
-  LOG("RemoteFlushJob::PackRemote done");
+  LOG("RemoteFlushJob::UnPackRemote done");
 }
+void RemoteFlushJob::PackRemote(char*& buf) const { assert(false); }
 void* RemoteFlushJob::UnPackRemote(char*& buf) {
   LOG("RemoteFlushJob::UnPackRemote thread_id:", std::this_thread::get_id(),
       "UnPack data from remote side");
-  void* mem = malloc(sizeof(install_info));
-  auto* install_info_ = reinterpret_cast<install_info*>(mem);
-  UNPACK_FROM_BUF(buf, install_info_, sizeof(install_info));
-  LOG("server recv ", std::hex, &install_info_, std::dec);
-  // unpack install_info
+  assert(false);
   LOG("RemoteFlushJob::UnPackRemote done");
-  return install_info_;
+  return nullptr;
 }
 
 std::shared_ptr<RemoteFlushJob> RemoteFlushJob::CreateRemoteFlushJob(
@@ -770,7 +790,8 @@ void RemoteFlushJob::PickMemTable() {
   base_->Ref();  // it is likely that we do not need this reference
 }
 
-Status RemoteFlushJob::RunRemote(RDMAClient* rdma, LogsWithPrepTracker* prep_tracker,
+Status RemoteFlushJob::RunRemote(RDMAClient* rdma,
+                                 LogsWithPrepTracker* prep_tracker,
                                  FileMetaData* file_meta,
                                  bool* switched_to_mempurge) {
   TEST_SYNC_POINT("RemoteFlushJob::Start");
@@ -841,7 +862,7 @@ Status RemoteFlushJob::RunRemote(RDMAClient* rdma, LogsWithPrepTracker* prep_tra
 
     // s = WriteLevel0Table();
 
-    void* local_install_handler = UnPackRemote(server_socket_fd_);
+    UnPackRemote(server_socket_fd_);
     assert(QuitRemoteWorker() == Status::OK());
     LOG("Run job: write l0table done");
   }
@@ -855,8 +876,10 @@ Status RemoteFlushJob::RunRemote(RDMAClient* rdma, LogsWithPrepTracker* prep_tra
   }
 
   if (!s.ok()) {
+    LOG("Run job: write l0table failed, rollback");
     cfd_->imm()->RollbackMemtableFlush(mems_, meta_.fd.GetNumber());
   } else if (write_manifest_) {
+    LOG("Run job: write l0table success, install results");
     TEST_SYNC_POINT("RemoteFlushJob::InstallResults");
     // Replace immutable memtable with the generated Table
     s = cfd_->imm()->TryInstallMemtableFlushResults(
@@ -866,6 +889,7 @@ Status RemoteFlushJob::RunRemote(RDMAClient* rdma, LogsWithPrepTracker* prep_tra
         !(mempurge_s.ok()) /* write_edit : true if no mempurge happened (or if aborted),
                               but 'false' if mempurge successful: no new min log number
                               or new level 0 file path to write to manifest. */);
+    LOG("Run job: write l0table success, install results done");
   }
 
   if (s.ok() && file_meta != nullptr) {
@@ -1559,10 +1583,11 @@ Status RemoteFlushJob::WriteLevel0Table() {
                    meta_.oldest_blob_file_number, meta_.oldest_ancester_time,
                    meta_.file_creation_time, meta_.epoch_number,
                    meta_.file_checksum, meta_.file_checksum_func_name,
-                   meta_.unique_id, meta_.compensated_range_deletion_size);
+                   meta_.unique_id,
+                   meta_.compensated_range_deletion_size);  // packremote
   }
   // Piggyback RemoteFlushJobInfo on the first first flushed memtable.
-  mems_[0]->SetFlushJobInfo(GetFlushJobInfo());
+  mems_[0]->SetFlushJobInfo(GetFlushJobInfo());  // packremote
 
   // Note that here we treat flush as level 0 compaction in internal stats
   InternalStats::CompactionStats stats(CompactionReason::kFlush, 1);
@@ -1589,10 +1614,11 @@ Status RemoteFlushJob::WriteLevel0Table() {
 
   stats.num_output_files_blob = static_cast<int>(blobs.size());
 
-  cfd_->internal_stats()->AddCompactionStats(0 /* level */, thread_pri_, stats);
+  cfd_->internal_stats()->AddCompactionStats(0 /* level */, thread_pri_,
+                                             stats);  // packremote
   cfd_->internal_stats()->AddCFStats(
       InternalStats::BYTES_FLUSHED,
-      stats.bytes_written + stats.bytes_written_blob);
+      stats.bytes_written + stats.bytes_written_blob);  // packremote
   RecordFlushIOStats();
   return s;
 }

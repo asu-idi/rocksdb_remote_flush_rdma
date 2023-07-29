@@ -741,7 +741,21 @@ ColumnFamilyData::~ColumnFamilyData() {
   }
 }
 
-void* ColumnFamilyData::PackLocal(int sockfd) const {
+void ColumnFamilyData::PackRemote(int sockfd) const {
+  LOG("ColumnFamilyData::PackRemote");
+  assert(internal_stats_ != nullptr);
+  internal_stats_->PackRemote(sockfd);
+  LOG("ColumnFamilyData::PackRemote done.");
+}
+void ColumnFamilyData::UnPackRemote(int sockfd) {
+  auto* install_info = new ColumnFamilyData::cfd_pack_remote_data;
+  LOG("ColumnFamilyData::UnPackRemote");
+  internal_stats_->UnPackRemote(sockfd);
+
+  LOG("ColumnFamilyData::UnPackRemote done.");
+}
+
+void ColumnFamilyData::PackLocal(int sockfd) const {
   initial_cf_options_.PackLocal(sockfd);
   current_->PackLocal(sockfd);
   assert(current_->cfd() == this);
@@ -776,7 +790,6 @@ void* ColumnFamilyData::PackLocal(int sockfd) const {
 
   int64_t ret_addr = 0;
   read_data(sockfd, reinterpret_cast<void*>(&ret_addr), sizeof(int64_t));
-  return reinterpret_cast<void*>(ret_addr);
 }
 
 void* ColumnFamilyData::UnPackLocal(int sockfd) {
