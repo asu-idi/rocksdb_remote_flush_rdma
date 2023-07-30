@@ -1970,7 +1970,6 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
       assert(impl->logs_.empty());
       impl->logs_.emplace_back(new_log_number, new_log);
     }
-    LOG("CRASH POINT");
     if (s.ok()) {
       impl->alive_log_files_.push_back(
           DBImpl::LogFileNumberSize(impl->logfile_number_));
@@ -1983,7 +1982,6 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
       // empty, and thus missing the consecutive seq hint to distinguish
       // middle-log corruption to corrupted-log-remained-after-recovery. This
       // case also will be addressed by a dummy write.
-      LOG("CRASH POINT");
       if (recovered_seq != kMaxSequenceNumber) {
         WriteBatch empty_batch;
         WriteBatchInternal::SetSequence(&empty_batch, recovered_seq);
@@ -1996,7 +1994,6 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
         impl->mutex_.AssertHeld();
         s = impl->WriteToWAL(empty_batch, log_writer, &log_used, &log_size,
                              Env::IO_TOTAL, log_file_number_size);
-        LOG("CRASH POINT");
         if (s.ok()) {
           // Need to fsync, otherwise it might get lost after a power reset.
           s = impl->FlushWAL(false);
@@ -2008,16 +2005,14 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
       }
     }
   }
-  LOG("CRASH POINT");
+
   if (s.ok()) {
     s = impl->LogAndApplyForRecovery(recovery_ctx);
   }
-  LOG("CRASH POINT");
   if (s.ok() && impl->immutable_db_options_.persist_stats_to_disk) {
     impl->mutex_.AssertHeld();
     s = impl->InitPersistStatsColumnFamily();
   }
-  LOG("CRASH POINT");
   if (s.ok()) {
     // set column family handles
     for (auto cf : column_families) {
@@ -2046,7 +2041,6 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
       }
     }
   }
-  LOG("CRASH POINT");
   if (s.ok()) {
     SuperVersionContext sv_context(/* create_superversion */ true);
     for (auto cfd : *impl->versions_->GetColumnFamilySet()) {
@@ -2055,12 +2049,10 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
     }
     sv_context.Clean();
   }
-  LOG("CRASH POINT");
   if (s.ok() && impl->immutable_db_options_.persist_stats_to_disk) {
     // try to read format version
     s = impl->PersistentStatsProcessFormatVersion();
   }
-  LOG("CRASH POINT");
   if (s.ok()) {
     for (auto cfd : *impl->versions_->GetColumnFamilySet()) {
       if (!cfd->mem()->IsSnapshotSupported()) {
@@ -2078,7 +2070,6 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
       }
     }
   }
-  LOG("CRASH POINT");
   TEST_SYNC_POINT("DBImpl::Open:Opened");
   Status persist_options_status;
   if (s.ok()) {
@@ -2096,7 +2087,6 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
     persist_options_status.PermitUncheckedError();
   }
   impl->mutex_.Unlock();
-  LOG("CRASH POINT");
   auto sfm = static_cast<SstFileManagerImpl*>(
       impl->immutable_db_options_.sst_file_manager.get());
   if (s.ok() && sfm) {
@@ -2105,7 +2095,6 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
     sfm->SetStatisticsPtr(impl->immutable_db_options_.statistics);
     ROCKS_LOG_INFO(impl->immutable_db_options_.info_log,
                    "SstFileManager instance %p", sfm);
-    LOG("CRASH POINT");
     // Notify SstFileManager about all sst files that already exist in
     // db_paths[0] and cf_paths[0] when the DB is opened.
 
@@ -2133,7 +2122,6 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
         known_file_sizes[name] = bmd.blob_file_size;
       }
     }
-    LOG("CRASH POINT");
     std::vector<std::string> paths;
     paths.emplace_back(impl->immutable_db_options_.db_paths[0].path);
     for (auto& cf : column_families) {
@@ -2170,7 +2158,6 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
         }
       }
     }
-    LOG("CRASH POINT");
     // Reserve some disk buffer space. This is a heuristic - when we run out
     // of disk space, this ensures that there is atleast write_buffer_size
     // amount of free space before we resume DB writes. In low disk space

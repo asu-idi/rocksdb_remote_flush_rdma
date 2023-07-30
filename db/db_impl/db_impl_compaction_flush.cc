@@ -291,7 +291,6 @@ Status DBImpl::FlushMemTableToOutputFile(
     // and EventListener callback will be called when the db_mutex
     // is unlocked by the current thread.
     if (s.ok()) {
-      // TODO(iaIm14)
       LOG("flush job run remote: ptr = ", std::hex, flush_job.get(), std::dec);
       s = flush_job->RunRemote(&rdma_, &logs_with_prep_tracker_, &file_meta,
                                &switched_to_mempurge);
@@ -3125,7 +3124,6 @@ Status DBImpl::BackgroundFlush(bool* made_progress, JobContext* job_context,
     auto bg_job_limits = GetBGJobLimits();
     for (const auto& arg : bg_flush_args) {
       ColumnFamilyData* cfd = arg.cfd_;
-      // TODO(iaIm14):remove this
       ROCKS_LOG_BUFFER(
           log_buffer,
           "Calling FlushMemTableToOutputFile with column "
@@ -3204,10 +3202,9 @@ void DBImpl::BackgroundCallFlush(Env::Priority thread_pri) {
       immutable_db_options_.clock->SleepForMicroseconds(1000000);
       mutex_.Lock();
     }
-    LOG("BackgroundFlush done 2");
+
     TEST_SYNC_POINT("DBImpl::BackgroundCallFlush:FlushFinish:0");
     ReleaseFileNumberFromPendingOutputs(pending_outputs_inserted_elem);
-    LOG("BackgroundFlush done 3");
     // If flush failed, we want to delete all temporary files that we might have
     // created. Thus, we force full scan in FindObsoleteFiles()
     FindObsoleteFiles(&job_context, !s.ok() && !s.IsShutdownInProgress() &&
@@ -3225,9 +3222,7 @@ void DBImpl::BackgroundCallFlush(Env::Priority thread_pri) {
       log_buffer.FlushBufferToLog();
       if (job_context.HaveSomethingToDelete()) {
         PurgeObsoleteFiles(job_context);
-        LOG("BackgroundFlush done 4");
       }
-      LOG("traccking test");
       job_context.Clean();
       mutex_.Lock();
     }
@@ -3238,7 +3233,6 @@ void DBImpl::BackgroundCallFlush(Env::Priority thread_pri) {
     bg_flush_scheduled_--;
     // See if there's more work to be done
     MaybeScheduleFlushOrCompaction();
-    LOG("BackgroundFlush done 5");
     atomic_flush_install_cv_.SignalAll();
     bg_cv_.SignalAll();
     // IMPORTANT: there should be no code after calling SignalAll. This call may
@@ -3327,7 +3321,6 @@ void DBImpl::BackgroundCallCompaction(PrepickedCompaction* prepicked_compaction,
         PurgeObsoleteFiles(job_context);
         TEST_SYNC_POINT("DBImpl::BackgroundCallCompaction:PurgedObsoleteFiles");
       }
-      LOG("traccking test");
       job_context.Clean();
       mutex_.Lock();
     }

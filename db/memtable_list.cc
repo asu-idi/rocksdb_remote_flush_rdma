@@ -91,9 +91,7 @@ void MemTableListVersion::Unref(autovector<MemTable*>* to_delete) {
     for (const auto& m : memlist_history_) {
       UnrefMemTable(to_delete, m);
     }
-    LOG("MemTableListVersion::Unref");
     delete this;
-    LOG("MemTableListVersion::Unref done");
   }
 }
 
@@ -441,12 +439,6 @@ void MemTableList::PickMemtablesToFlush(uint64_t max_memtable_id,
   }
 }
 
-void MemTableList::check() {
-  LOG("MemTableList::check");
-
-  LOG("MemTableList::check done");
-}
-
 void MemTableList::RollbackMemtableFlush(const autovector<MemTable*>& mems,
                                          uint64_t /*file_number*/) {
   AutoThreadOperationStageUpdater stage_updater(
@@ -480,7 +472,6 @@ Status MemTableList::TryInstallMemtableFlushResults(
   AutoThreadOperationStageUpdater stage_updater(
       ThreadStatus::STAGE_MEMTABLE_INSTALL_FLUSH_RESULTS);
   mu->AssertHeld();
-  LOG("");
   // Flush was successful
   // Record the status on the memtable object. Either this call or a call by a
   // concurrent flush thread will read the status and write it to manifest.
@@ -491,7 +482,7 @@ Status MemTableList::TryInstallMemtableFlushResults(
     mems[i]->flush_completed_ = true;
     mems[i]->file_number_ = file_number;
   }
-  LOG("");
+
   // if some other thread is already committing, then return
   Status s;
   if (commit_in_progress_) {
@@ -541,15 +532,11 @@ Status MemTableList::TryInstallMemtableFlushResults(
                            cfd->GetName().c_str(), m->file_number_,
                            m->edit_.GetBlobFileAdditions().size());
         }
-        LOG("");
         edit_list.push_back(&m->edit_);
         memtables_to_flush.push_back(m);
-        LOG("");
         std::unique_ptr<FlushJobInfo> info = m->ReleaseFlushJobInfo();
         if (info != nullptr) {
-          LOG("");
           committed_flush_jobs_info->push_back(std::move(info));
-          LOG("");
         }
       }
       batch_count++;
@@ -595,13 +582,11 @@ Status MemTableList::TryInstallMemtableFlushResults(
                                       to_delete, mu);
       };
       if (write_edits) {
-        LOG("");
         // this can release and reacquire the mutex.
         s = vset->LogAndApply(cfd, mutable_cf_options, edit_list, mu,
                               db_directory, /*new_descriptor_log=*/false,
                               /*column_family_options=*/nullptr,
                               manifest_write_cb);
-        LOG("");
       } else {
         // If write_edit is false (e.g: successful mempurge),
         // then remove old memtables, wake up manifest write queue threads,

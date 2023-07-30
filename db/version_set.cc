@@ -5069,6 +5069,8 @@ void VersionSet::Reset() {
 void VersionSet::AppendVersion(ColumnFamilyData* column_family_data,
                                Version* v) {
   // compute new compaction score
+  LOG("Append Version:", std::hex, v, std::dec);
+  v->check();
   v->storage_info()->ComputeCompactionScore(
       *column_family_data->ioptions(),
       *column_family_data->GetLatestMutableCFOptions());
@@ -5118,13 +5120,12 @@ Status VersionSet::ProcessManifestWrites(
   // `descriptor_last_sequence_` until the apply phase, after the log phase
   // succeeds.
   SequenceNumber max_last_sequence = descriptor_last_sequence_;
-    LOG("");
+
   if (first_writer.edit_list.front()->IsColumnFamilyManipulation()) {
     // No group commits for column family add or drop
     LogAndApplyCFHelper(first_writer.edit_list.front(), &max_last_sequence);
     batch_edits.push_back(first_writer.edit_list.front());
   } else {
-        LOG("");
     auto it = manifest_writers_.cbegin();
     size_t group_start = std::numeric_limits<size_t>::max();
     while (it != manifest_writers_.cend()) {
@@ -5222,7 +5223,7 @@ Status VersionSet::ProcessManifestWrites(
         batch_edits.push_back(e);
       }
     }
-    LOG("");
+
     for (int i = 0; i < static_cast<int>(versions.size()); ++i) {
       assert(!builder_guards.empty() &&
              builder_guards.size() == versions.size());
@@ -5236,7 +5237,6 @@ Status VersionSet::ProcessManifestWrites(
         return s;
       }
     }
-    LOG("");
   }
 
 #ifndef NDEBUG
@@ -5283,7 +5283,6 @@ Status VersionSet::ProcessManifestWrites(
   } else {
     pending_manifest_file_number_ = manifest_file_number_;
   }
-  LOG("");
   // Local cached copy of state variable(s). WriteCurrentStateToManifest()
   // reads its content after releasing db mutex to avoid race with
   // SwitchMemtable().
@@ -5305,13 +5304,10 @@ Status VersionSet::ProcessManifestWrites(
           cfd->GetID(),
           MutableCFState(cfd->GetLogNumber(), cfd->GetFullHistoryTsLow())));
     }
-    LOG("");
     for (const auto& wal : wals_.GetWals()) {
       wal_additions.AddWal(wal.first, wal.second);
     }
   }
-  LOG("");
-
   uint64_t new_manifest_file_size = 0;
   Status s;
   IOStatus io_s;
@@ -5342,7 +5338,7 @@ Status VersionSet::ProcessManifestWrites(
         }
       }
     }
-    LOG("");
+
     if (s.ok() && new_descriptor_log) {
       // This is fine because everything inside of this block is serialized --
       // only one thread can be here at the same time
@@ -5372,7 +5368,7 @@ Status VersionSet::ProcessManifestWrites(
         s = io_s;
       }
     }
-    LOG("");
+
     if (s.ok()) {
       if (!first_writer.edit_list.front()->IsColumnFamilyManipulation()) {
         constexpr bool update_stats = true;
@@ -5381,7 +5377,6 @@ Status VersionSet::ProcessManifestWrites(
           versions[i]->PrepareAppend(*mutable_cf_options_ptrs[i], update_stats);
         }
       }
-      LOG("");
       // Write new records to MANIFEST log
 #ifndef NDEBUG
       size_t idx = 0;
@@ -5412,7 +5407,6 @@ Status VersionSet::ProcessManifestWrites(
           break;
         }
       }
-      LOG("");
       if (s.ok()) {
         io_s = SyncManifest(db_options_, descriptor_log_->file());
         manifest_io_status = io_s;
@@ -5425,7 +5419,7 @@ Status VersionSet::ProcessManifestWrites(
                         s.ToString().c_str());
       }
     }
-    LOG("");
+
     // If we just created a new descriptor file, install it by writing a
     // new CURRENT file that points to it.
     if (s.ok()) {
@@ -5438,7 +5432,6 @@ Status VersionSet::ProcessManifestWrites(
         s = io_s;
       }
     }
-    LOG("");
     if (s.ok()) {
       // find offset in manifest file where this version is stored.
       new_manifest_file_size = descriptor_log_->file()->GetFileSize();
@@ -5454,7 +5447,7 @@ Status VersionSet::ProcessManifestWrites(
     TEST_SYNC_POINT("VersionSet::LogAndApply:WriteManifestDone");
     mu->Lock();
   }
-  LOG("");
+
   if (s.ok()) {
     // Apply WAL edits, DB mutex must be held.
     for (auto& e : batch_edits) {
@@ -5468,7 +5461,7 @@ Status VersionSet::ProcessManifestWrites(
       }
     }
   }
-  LOG("");
+
   if (!io_s.ok()) {
     if (io_status_.ok()) {
       io_status_ = io_s;
@@ -5483,15 +5476,13 @@ Status VersionSet::ProcessManifestWrites(
     obsolete_manifests_.emplace_back(
         DescriptorFileName("", manifest_file_number_));
   }
-  LOG("");
+
   // Install the new versions
   if (s.ok()) {
     if (first_writer.edit_list.front()->is_column_family_add_) {
       assert(batch_edits.size() == 1);
       assert(new_cf_options != nullptr);
       assert(max_last_sequence == descriptor_last_sequence_);
-      LOG("ProcessManifestWrites checkpoint 1: carry cf_option remote_flush: ",
-          new_cf_options->server_use_remote_flush ? "true" : "false");
       CreateColumnFamily(*new_cf_options, first_writer.edit_list.front());
     } else if (first_writer.edit_list.front()->is_column_family_drop_) {
       assert(batch_edits.size() == 1);
@@ -5528,7 +5519,6 @@ Status VersionSet::ProcessManifestWrites(
       if (last_min_log_number_to_keep != 0) {
         MarkMinLogNumberToKeep(last_min_log_number_to_keep);
       }
-
       for (int i = 0; i < static_cast<int>(versions.size()); ++i) {
         ColumnFamilyData* cfd = versions[i]->cfd_;
         AppendVersion(cfd, versions[i]);
@@ -5700,6 +5690,8 @@ Status VersionSet::LogAndApply(
                          *mutable_cf_options_list[i], edit_lists[i], wcb);
     manifest_writers_.push_back(&writers[i]);
   }
+  LOG("");
+  GetColumnFamilySet()->GetDefault()->current()->storage_info()->check();
   assert(!writers.empty());
   ManifestWriter& first_writer = writers.front();
   TEST_SYNC_POINT_CALLBACK("VersionSet::LogAndApply:BeforeWriterWaiting",
@@ -5707,6 +5699,8 @@ Status VersionSet::LogAndApply(
   while (!first_writer.done && &first_writer != manifest_writers_.front()) {
     first_writer.cv.Wait();
   }
+  LOG("");
+  GetColumnFamilySet()->GetDefault()->current()->storage_info()->check();
   if (first_writer.done) {
     // All non-CF-manipulation operations can be grouped together and committed
     // to MANIFEST. They should all have finished. The status code is stored in
@@ -6517,15 +6511,10 @@ uint64_t VersionSet::ApproximateSize(const SizeApproximationOptions& options,
   const auto& icmp = v->cfd_->internal_comparator();
   LOG("VersionSet::ApproximateSize start");
   // pre-condition
-  // todo(iaIm14): need fix
-  // assert(icmp.Compare(start, end) <= 0);
-  LOG("VersionSet::ApproximateSize start");
+  assert(icmp.Compare(start, end) <= 0);
   uint64_t total_full_size = 0;
-  LOG("VersionSet::ApproximateSize start");
   const auto* vstorage = v->storage_info();
-  LOG("VersionSet::ApproximateSize start");
   const int num_non_empty_levels = vstorage->num_non_empty_levels();
-  LOG("VersionSet::ApproximateSize start");
   end_level = (end_level == -1) ? num_non_empty_levels
                                 : std::min(end_level, num_non_empty_levels);
   if (end_level <= start_level) {

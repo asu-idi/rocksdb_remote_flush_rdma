@@ -14,6 +14,7 @@
 #include "logging/logging.h"
 #include "monitoring/perf_context_imp.h"
 #include "options/options_helper.h"
+#include "rocksdb/file_system.h"
 #include "test_util/sync_point.h"
 #include "util/cast_util.h"
 
@@ -21,9 +22,7 @@ namespace ROCKSDB_NAMESPACE {
 // Convenience methods
 Status DBImpl::Put(const WriteOptions& o, ColumnFamilyHandle* column_family,
                    const Slice& key, const Slice& val) {
-  LOG("DBImpl::Put");
   const Status s = FailIfCfHasTs(column_family);
-  LOG("DBImpl::Put FailIfCfHasTs");
   if (!s.ok()) {
     return s;
   }
@@ -140,18 +139,13 @@ void DBImpl::SetRecoverableStatePreReleaseCallback(
 
 Status DBImpl::Write(const WriteOptions& write_options, WriteBatch* my_batch) {
   Status s;
-  LOG("DBImpl::Write");
   if (write_options.protection_bytes_per_key > 0) {
-    LOG("DBImpl::Write");
     s = WriteBatchInternal::UpdateProtectionInfo(
         my_batch, write_options.protection_bytes_per_key);
-    LOG("DBImpl::Write");
   }
   if (s.ok()) {
-    LOG("DBImpl::Write");
     s = WriteImpl(write_options, my_batch, /*callback=*/nullptr,
                   /*log_used=*/nullptr);
-    LOG("DBImpl::Write");
   }
   return s;
 }
@@ -180,13 +174,11 @@ Status DBImpl::WriteImpl(const WriteOptions& write_options,
                          size_t batch_cnt,
                          PreReleaseCallback* pre_release_callback,
                          PostMemTableCallback* post_memtable_callback) {
-  LOG("DBImpl::Write");
   assert(!seq_per_batch_ || batch_cnt != 0);
   assert(my_batch == nullptr || my_batch->Count() == 0 ||
          write_options.protection_bytes_per_key == 0 ||
          write_options.protection_bytes_per_key ==
              my_batch->GetProtectionBytesPerKey());
-  LOG("DBImpl::Write");
   if (my_batch == nullptr) {
     LOG("DBImpl::Write");
     return Status::InvalidArgument("Batch is nullptr!");
@@ -2333,16 +2325,12 @@ Status DB::Put(const WriteOptions& opt, ColumnFamilyHandle* column_family,
   // Pre-allocate size of write batch conservatively.
   // 8 bytes are taken by header, 4 bytes for count, 1 byte for type,
   // and we allocate 11 extra bytes for key length, as well as value length.
-  LOG("Put() on column family %s", column_family->GetName().c_str());
   WriteBatch batch(key.size() + value.size() + 24, 0 /* max_bytes */,
                    opt.protection_bytes_per_key, 0 /* default_cf_ts_sz */);
-  LOG("Put() on column family %s", column_family->GetName().c_str());
   Status s = batch.Put(column_family, key, value);
-  LOG("Put() on column family %s", column_family->GetName().c_str());
   if (!s.ok()) {
     return s;
   }
-  LOG("Write");
   return Write(opt, &batch);
 }
 

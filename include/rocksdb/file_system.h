@@ -1357,6 +1357,12 @@ class FSMemoryMappedFileBuffer {
 // filesystem operations that can be executed on directories.
 class FSDirectory {
  public:
+  virtual void PackLocal(int sockfd) const {
+    LOG("FSDirectory::PackLocal not implemented");
+    assert(false);
+  }
+
+ public:
   virtual ~FSDirectory() {}
   // Fsync directory. Can be called concurrently from multiple threads.
   virtual IOStatus Fsync(const IOOptions& options, IODebugContext* dbg) = 0;
@@ -1896,6 +1902,15 @@ class FSRandomRWFileOwnerWrapper : public FSRandomRWFileWrapper {
 };
 
 class FSDirectoryWrapper : public FSDirectory {
+ public:
+  void PackLocal(int sockfd) const override {
+    LOG("FSDirectoryWrapper::PackLocal");
+    size_t msg = 0x01;
+    write(sockfd, &msg, sizeof(msg));
+    read_data(sockfd, &msg, sizeof(msg));
+    target_->PackLocal(sockfd);
+  }
+
  public:
   // Creates a FileWrapper around the input File object and takes
   // ownership of the object
