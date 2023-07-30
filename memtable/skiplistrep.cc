@@ -30,8 +30,8 @@ class SkipListRep : public MemTableRep {
   friend ReadOnlySkipListRep;
 
  public:
-  void PackLocal(int sockfd) const override;
   void PackLocal(char*& buf) const override;
+  void PackLocal(int sockfd, size_t protection_bytes_per_key) const override;
 
  private:
   InlineSkipList<const MemTableRep::KeyComparator&> skip_list_;
@@ -361,17 +361,15 @@ class SkipListRep : public MemTableRep {
   }
 };
 
-void SkipListRep::PackLocal(int sockfd) const {
+void SkipListRep::PackLocal(int sockfd, size_t protection_bytes_per_key) const {
   LOG("SkipListRep::PackLocal sockfd=", sockfd);
   int64_t msg = 0x1;
   assert(write(sockfd, &msg, sizeof(msg)) == sizeof(msg));
-  LOG("SkipListRep::PackLocal:: send msg:", msg);
   int64_t ret_val = 0;
   assert(read_data(sockfd, &ret_val, sizeof(int64_t)) == sizeof(int64_t));
-  LOG("SkipListRep::PackLocal recv data: ", ret_val);
   ret_val = 0;
   ReadOnlyInlineSkipList<const MemTableRep::KeyComparator&>* ptr =
-      skip_list_.Clone();
+      skip_list_.Clone(protection_bytes_per_key);
   ReadOnlySkipListRep::PackLocal(sockfd, ptr);
   LOG("SkipListRep::PackLocal finish");
 }
@@ -394,13 +392,14 @@ void SkipListRep::PackLocal(char*& buf) const {
   int64_t msg = 0;
   msg += (0x01);
   PACK_TO_BUF(&msg, buf, sizeof(msg));
-  ReadOnlyInlineSkipList<const MemTableRep::KeyComparator&>* ptr =
-      skip_list_.Clone();
-  LOG("server clone readonly skiplistrep: check data:");
-  ptr->check_data();
-  LOG("server clone readonly skiplistrep: check data finish");
+  assert(false);  // todo: fix this later
+  // ReadOnlyInlineSkipList<const MemTableRep::KeyComparator&>* ptr =
+  //     skip_list_.Clone();
+  // LOG("server clone readonly skiplistrep: check data:");
+  // ptr->check_data();
+  // LOG("server clone readonly skiplistrep: check data finish");
 
-  ReadOnlySkipListRep::PackLocal(buf, ptr);
+  // ReadOnlySkipListRep::PackLocal(buf, ptr);
   LOG("SkipListRep::PackLocal rdma", " finish");
 }
 

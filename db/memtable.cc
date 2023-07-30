@@ -235,10 +235,10 @@ void MemTable::PackLocal(int sock_fd) const {
   // bloom_filter_->PackLocal(sock_fd);
   assert(table_ != nullptr);
   LOG("start MemTable::PackLocal table_");
-  table_->PackLocal(sock_fd);
+  table_->PackLocal(sock_fd, moptions_.protection_bytes_per_key);
   LOG("start MemTable::PackLocal range_del_table_");
   assert(range_del_table_ != nullptr);
-  range_del_table_->PackLocal(sock_fd);
+  range_del_table_->PackLocal(sock_fd, moptions_.protection_bytes_per_key);
   LOG("range_del_table_->PackLocal done");
 
   assert(write(sock_fd, reinterpret_cast<const void*>(this),
@@ -334,57 +334,43 @@ void MemTable::PackRemote(int sock_fd) const {
   write(sock_fd,
         reinterpret_cast<const void*>(flush_job_info_->cf_name.c_str()),
         cf_name_len);
-  LOG("");
   read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
   size_t file_path_len = flush_job_info_->file_path.size();
   write(sock_fd, reinterpret_cast<const void*>(&file_path_len), sizeof(size_t));
   read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
-  LOG("");
   write(sock_fd,
         reinterpret_cast<const void*>(flush_job_info_->file_path.c_str()),
         file_path_len);
   read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
-  LOG("");
-  LOG("file_number:", flush_job_info_->file_number);
   write(sock_fd, reinterpret_cast<const void*>(&flush_job_info_->file_number),
         sizeof(uint64_t));
   read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
-  LOG("");
   write(
       sock_fd,
       reinterpret_cast<const void*>(&flush_job_info_->oldest_blob_file_number),
       sizeof(uint64_t));
   read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
-  LOG("");
   write(sock_fd, reinterpret_cast<const void*>(&flush_job_info_->thread_id),
         sizeof(uint64_t));
   read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
-  LOG("");
   write(sock_fd, reinterpret_cast<const void*>(&flush_job_info_->job_id),
         sizeof(uint64_t));
   read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
-  LOG("");
   write(sock_fd,
         reinterpret_cast<const void*>(&flush_job_info_->smallest_seqno),
         sizeof(SequenceNumber));
   read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
-  LOG("");
   write(sock_fd, reinterpret_cast<const void*>(&flush_job_info_->largest_seqno),
         sizeof(SequenceNumber));
   read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
-  LOG("MemTable::PackRemote start waiting table_properties");
   flush_job_info_->table_properties.PackRemote(sock_fd);
-  LOG("MemTable::PackRemote table_properties done");
   write(sock_fd, reinterpret_cast<const void*>(&flush_job_info_->flush_reason),
         sizeof(FlushReason));
-  LOG("MemTable::PackRemote write flush_reason done");
   read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
-  LOG("MemTable::PackRemote read ret_num done");
   write(sock_fd,
         reinterpret_cast<const void*>(&flush_job_info_->blob_compression_type),
         sizeof(CompressionType));
   read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
-  LOG("MemTable::PackRemote read ret_num done");
   // todo: blob_files_info update
   LOG("MemTable::PackRemote done");
 }
@@ -396,70 +382,53 @@ void MemTable::UnPackRemote(int sock_fd) {
   LOG("MemTable::UnPackRemote start waiting read");
   read_data(sock_fd, reinterpret_cast<void*>(&flush_job_info->cf_id),
             sizeof(uint32_t));
-  LOG("MemTable::UnPackRemote read cf_id done");
   write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
   size_t cf_name_len = 0;
   read_data(sock_fd, reinterpret_cast<void*>(&cf_name_len), sizeof(size_t));
-  LOG("");
   write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
   char* cf_name = reinterpret_cast<char*>(malloc(cf_name_len));
   read_data(sock_fd, reinterpret_cast<void*>(cf_name), cf_name_len);
-  LOG("");
   write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
-  LOG("");
   flush_job_info->cf_name = std::string(cf_name, cf_name_len);
-  LOG("");
   free(cf_name);
   size_t file_path_len = 0;
   read_data(sock_fd, reinterpret_cast<void*>(&file_path_len), sizeof(size_t));
   write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
-  LOG("");
   char* file_path = reinterpret_cast<char*>(malloc(file_path_len));
   read_data(sock_fd, reinterpret_cast<void*>(file_path), file_path_len);
   write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
-  LOG("");
   flush_job_info->file_path = std::string(file_path, file_path_len);
   free(file_path);
-  LOG("");
   read_data(sock_fd, reinterpret_cast<void*>(&flush_job_info->file_number),
             sizeof(uint64_t));
   write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
-  LOG("");
   read_data(sock_fd,
             reinterpret_cast<void*>(&flush_job_info->oldest_blob_file_number),
             sizeof(uint64_t));
   write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
-  LOG("");
   read_data(sock_fd, reinterpret_cast<void*>(&flush_job_info->thread_id),
             sizeof(uint64_t));
   write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
-  LOG("");
   read_data(sock_fd, reinterpret_cast<void*>(&flush_job_info->job_id),
             sizeof(uint64_t));
   write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
-  LOG("");
   read_data(sock_fd, reinterpret_cast<void*>(&flush_job_info->smallest_seqno),
             sizeof(SequenceNumber));
   write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
-  LOG("");
   read_data(sock_fd, reinterpret_cast<void*>(&flush_job_info->largest_seqno),
             sizeof(SequenceNumber));
   write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
-  LOG("MemTable::UnPackRemote start waiting table_properties");
   void* local_table_properties = TableProperties::UnPackRemote(sock_fd);
-  LOG("MemTable::UnPackRemote table_properties done");
   flush_job_info->table_properties =
       *reinterpret_cast<TableProperties*>(local_table_properties);
 
   read_data(sock_fd, reinterpret_cast<void*>(&flush_job_info->flush_reason),
             sizeof(FlushReason));
   write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
-  LOG("MemTable::UnPackRemote read flush_reason done");
   read_data(sock_fd,
             reinterpret_cast<void*>(&flush_job_info->blob_compression_type),
             sizeof(CompressionType));
   write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
-  LOG("MemTable::UnPackRemote read blob_compression_type done");
   flush_job_info_ = std::make_unique<FlushJobInfo>();
   flush_job_info_->cf_id = flush_job_info->cf_id;
   flush_job_info_->cf_name = flush_job_info->cf_name;
@@ -717,11 +686,9 @@ class MemTableIterator : public InternalIterator {
         status_(Status::OK()),
         logger_(mem.moptions_.info_log) {
     if (use_range_del_table) {
-      LOG("error: uncheck branch");
       iter_ = mem.range_del_table_->GetIterator(arena);
     } else if (prefix_extractor_ != nullptr && !read_options.total_order_seek &&
                !read_options.auto_prefix_mode) {
-      LOG("error: uncheck branch");
       // Auto prefix mode is not implemented in memtable yet.
       bloom_ = mem.bloom_filter_.get();
       iter_ = mem.table_->GetDynamicPrefixIterator(arena);
@@ -895,12 +862,10 @@ InternalIterator* MemTable::NewIterator(const ReadOptions& read_options,
 FragmentedRangeTombstoneIterator* MemTable::NewRangeTombstoneIterator(
     const ReadOptions& read_options, SequenceNumber read_seq,
     bool immutable_memtable) {
-  LOG("start MemTable::NewRangeTombstoneIterator");
   if (read_options.ignore_range_deletions ||
       is_range_del_table_empty_.load(std::memory_order_relaxed)) {
     return nullptr;
   }
-  LOG("start MemTable::NewRangeTombstoneIteratorInternal");
   return NewRangeTombstoneIteratorInternal(read_options, read_seq,
                                            immutable_memtable);
 }
@@ -911,9 +876,7 @@ FragmentedRangeTombstoneIterator* MemTable::NewRangeTombstoneIteratorInternal(
   if (immutable_memtable) {
     // Note that caller should already have verified that
     // !is_range_del_table_empty_
-    LOG("check IsFragmentedRangeTombstonesConstructed");
     assert(IsFragmentedRangeTombstonesConstructed());
-    LOG("new FragmentedRangeTombstoneIterator");
     return new FragmentedRangeTombstoneIterator(
         fragmented_range_tombstone_list_.get(), comparator_.comparator,
         read_seq, read_options.timestamp);

@@ -46,9 +46,7 @@ void AppendProperty(std::string& props, const std::string& key,
 void TableProperties::PackRemote(int sockfd) const {
   LOG("TableProperties::PackRemote");
   size_t ret_num = 0;
-  LOG("");
   write(sockfd, reinterpret_cast<const void*>(this), sizeof(TableProperties));
-  LOG("");
   read_data(sockfd, &ret_num, sizeof(size_t));
   size_t db_id_len = db_id.size();
   write(sockfd, &db_id_len, sizeof(size_t));
@@ -146,14 +144,11 @@ void TableProperties::PackRemote(int sockfd) const {
 }
 
 void* TableProperties::UnPackRemote(int sockfd) {
-  LOG("TableProperties::UnPackRemote");
   size_t ret_num = 0;
   auto* ret_ptr = new TableProperties();
   void* mem = reinterpret_cast<void*>(ret_ptr);
 
-  LOG("");
   read_data(sockfd, mem, sizeof(TableProperties));
-  LOG("");
   write(sockfd, &ret_num, sizeof(size_t));
   size_t db_id_len = 0;
   read_data(sockfd, &db_id_len, sizeof(size_t));
@@ -162,9 +157,7 @@ void* TableProperties::UnPackRemote(int sockfd) {
   read_data(sockfd, db_id, db_id_len);
   write(sockfd, &ret_num, sizeof(size_t));
   LOG("TableProperties::UnPackRemote");
-  LOG("db_id_len=", db_id_len, "db_id=", db_id);
   new (&ret_ptr->db_id) std::string(db_id, db_id_len);
-  LOG("TableProperties::UnPackRemote");
   size_t db_session_id_len = 0;
   read_data(sockfd, &db_session_id_len, sizeof(size_t));
   write(sockfd, &ret_num, sizeof(size_t));
@@ -172,16 +165,13 @@ void* TableProperties::UnPackRemote(int sockfd) {
   read_data(sockfd, db_session_id, db_session_id_len);
   write(sockfd, &ret_num, sizeof(size_t));
   new (&ret_ptr->db_session_id) std::string(db_session_id, db_session_id_len);
-  LOG("");
   size_t db_host_id_len = 0;
   read_data(sockfd, &db_host_id_len, sizeof(size_t));
   write(sockfd, &ret_num, sizeof(size_t));
   char* db_host_id = new char[db_host_id_len];
   read_data(sockfd, db_host_id, db_host_id_len);
   write(sockfd, &ret_num, sizeof(size_t));
-  LOG("");
   new (&ret_ptr->db_host_id) std::string(db_host_id, db_host_id_len);
-  LOG("");
 
   size_t column_family_name_len = 0;
   read_data(sockfd, &column_family_name_len, sizeof(size_t));
@@ -189,10 +179,8 @@ void* TableProperties::UnPackRemote(int sockfd) {
   char* column_family_name = new char[column_family_name_len];
   read_data(sockfd, column_family_name, column_family_name_len);
   write(sockfd, &ret_num, sizeof(size_t));
-  LOG("");
   new (&ret_ptr->column_family_name)
       std::string(column_family_name, column_family_name_len);
-  LOG("");
 
   size_t filter_policy_name_len = 0;
   read_data(sockfd, &filter_policy_name_len, sizeof(size_t));
@@ -248,7 +236,6 @@ void* TableProperties::UnPackRemote(int sockfd) {
   new (&ret_ptr->compression_name)
       std::string(compression_name, compression_name_len);
 
-  LOG("TableProperties::UnPackRemote");
   size_t compression_options_len = 0;
   read_data(sockfd, &compression_options_len, sizeof(size_t));
   write(sockfd, &ret_num, sizeof(size_t));
@@ -257,7 +244,6 @@ void* TableProperties::UnPackRemote(int sockfd) {
   write(sockfd, &ret_num, sizeof(size_t));
   new (&ret_ptr->compression_options)
       std::string(compression_options, compression_options_len);
-  LOG("TableProperties::UnPackRemote");
   size_t seqno_to_time_mapping_len = 0;
   read_data(sockfd, &seqno_to_time_mapping_len, sizeof(size_t));
   write(sockfd, &ret_num, sizeof(size_t));
@@ -266,11 +252,9 @@ void* TableProperties::UnPackRemote(int sockfd) {
   write(sockfd, &ret_num, sizeof(size_t));
   new (&ret_ptr->seqno_to_time_mapping)
       std::string(seqno_to_time_mapping, seqno_to_time_mapping_len);
-  LOG("TableProperties::UnPackRemote");
   size_t user_collected_properties_len = 0;
   read_data(sockfd, &user_collected_properties_len, sizeof(size_t));
   write(sockfd, &ret_num, sizeof(size_t));
-  LOG("TableProperties::UnPackRemote");
   new (&ret_ptr->user_collected_properties)
       std::map<std::string, std::string>();
   new (&ret_ptr->readable_properties) std::map<std::string, std::string>();
@@ -294,7 +278,6 @@ void* TableProperties::UnPackRemote(int sockfd) {
     value = value_cp;
     ret_ptr->user_collected_properties[key] = value;
   }
-  LOG("TableProperties::UnPackRemote");
   size_t readable_properties_len = 0;
   read_data(sockfd, &readable_properties_len, sizeof(size_t));
   write(sockfd, &ret_num, sizeof(size_t));

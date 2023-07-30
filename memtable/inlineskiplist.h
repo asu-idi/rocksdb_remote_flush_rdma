@@ -94,7 +94,8 @@ class ReadOnlyInlineSkipList {
   using DecodedKey =
       typename std::remove_reference<Comparator>::type::DecodedType;
   explicit ReadOnlyInlineSkipList(const InlineSkipList<Comparator>&,
-                                  const Comparator cmp);
+                                  const Comparator cmp,
+                                  size_t protection_bytes_per_key);
   ~ReadOnlyInlineSkipList() {
     if (data_ != nullptr) {
       LOG("destruct ReadOnlyInlineSkipList");
@@ -146,15 +147,10 @@ inline void* ReadOnlyInlineSkipList<Comparator>::UnPackLocal(int sockfd) {
   // void* local_cmp_ = MemTable::KeyComparator::UnPackLocal(sockfd);
   int64_t total_len = 0;
   int64_t ret_val = 0;
-  LOG("ReadOnlyInlineSkipList::UnPackLocal read tot_len start.");
   assert(read_data(sockfd, &total_len, sizeof(total_len)) == sizeof(total_len));
-  LOG("ReadOnlyInlineSkipList::UnPackLocal read tot_len:", total_len);
   void* data = malloc(total_len);
   assert(write_data(sockfd, &ret_val, sizeof(ret_val)) == sizeof(ret_val));
-  LOG("ReadOnlyInlineSkipList::UnPackLocal send ret_val:", ret_val);
   ssize_t sbyte = read_data(sockfd, data, total_len);
-  LOG("ReadOnlyInlineSkipList::UnPackLocal read data len:", sbyte, ' ',
-      total_len);
   assert(sbyte == total_len);
   assert(write_data(sockfd, &ret_val, sizeof(ret_val)) == sizeof(ret_val));
   LOG("ReadOnlyInlineSkipList::UnPackLocal send ret_val:", ret_val);
@@ -321,14 +317,15 @@ inline void ReadOnlyInlineSkipList<Comparator>::Iterator::SeekToFirst() {
 
 template <class Comparator>
 ReadOnlyInlineSkipList<Comparator>::ReadOnlyInlineSkipList(
-    const InlineSkipList<Comparator>& raw_skip_list_, const Comparator cmp) {
+    const InlineSkipList<Comparator>& raw_skip_list_, const Comparator cmp,
+    size_t protection_bytes_per_key) {
   LOG("construct ReadOnlyInlineSkipList");
   typename InlineSkipList<Comparator>::Iterator iter(&raw_skip_list_);
   int64_t total_len = 0;
   iter.SeekToFirst();
   while (iter.Valid()) {
     const char* key_ptr = iter.key();
-    size_t key_len = cmp.decode_len(key_ptr);
+    size_t key_len = cmp.decode_len(key_ptr, protection_bytes_per_key);
     total_len += (int64_t)(key_len + 2 * sizeof(size_t));
     iter.Next();
   }
@@ -340,7 +337,7 @@ ReadOnlyInlineSkipList<Comparator>::ReadOnlyInlineSkipList(
   iter.SeekToFirst();
   while (iter.Valid()) {
     const char* key_ptr = iter.key();
-    size_t key_len = cmp.decode_len(key_ptr);
+    size_t key_len = cmp.decode_len(key_ptr, protection_bytes_per_key);
     memcpy(data_ptr, &key_len, sizeof(size_t));
     data_ptr += sizeof(size_t);
     memcpy(data_ptr, key_ptr, key_len);
@@ -358,8 +355,10 @@ class InlineSkipList {
   friend ReadOnlyInlineSkipList<Comparator>;
 
  public:
-  ReadOnlyInlineSkipList<Comparator>* Clone() const {
-    return new ReadOnlyInlineSkipList<Comparator>(*this, compare_);
+  ReadOnlyInlineSkipList<Comparator>* Clone(
+      size_t protection_bytes_per_key) const {
+    return new ReadOnlyInlineSkipList<Comparator>(*this, compare_,
+                                                  protection_bytes_per_key);
   }
 
  private:
@@ -1366,7 +1365,6 @@ void InlineSkipList<Comparator>::TEST_Validate() const {
 
 template <class Comparator>
 void InlineSkipList<Comparator>::CHECK_all_addr() {
-  LOG("CHECK InlineSkipList core: ");
   Iterator iter(this);
   iter.SeekToFirst();
   while (iter.Valid()) {
@@ -1375,7 +1373,6 @@ void InlineSkipList<Comparator>::CHECK_all_addr() {
     LOG(std::hex, (long long)key_ptr, std::dec, ' ', key_val);
     iter.Next();
   }
-  LOG("CHECK end")
 }
 
 }  // namespace ROCKSDB_NAMESPACE

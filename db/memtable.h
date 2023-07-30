@@ -136,9 +136,7 @@ class MemTable {
       comparator.PackLocal(sockfd);
       int64_t ret_val = 0;
       send(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t), 0);
-      LOG("send KeyComparator");
       read_data(sockfd, &ret_val, sizeof(int64_t));
-      LOG("read KeyComparator");
     }
     static void* UnPackLocal(int sockfd) {
       LOG("KeyComparator::UnPackLocal");
@@ -148,12 +146,10 @@ class MemTable {
       auto* kcmp = reinterpret_cast<KeyComparator*>(mem);
       int64_t ret_val = 0;
       read_data(sockfd, &ret_val, sizeof(int64_t));
-      LOG("read KeyComparator");
       memcpy(reinterpret_cast<void*>(
                  const_cast<InternalKeyComparator*>(&kcmp->comparator)),
              internal_key_comparator, sizeof(InternalKeyComparator));
       send(sockfd, &kcmp, sizeof(int64_t), 0);
-      LOG("send KeyComparator");
       return mem;
     }
     void PackLocal(char*& buf) const override {

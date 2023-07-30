@@ -449,7 +449,6 @@ struct BlockBasedTableBuilder::Rep {
                            compression_type == kZSTDNotFinalCompression),
         status_ok(true),
         io_status_ok(true) {
-    LOG("BlockBasedTableBuilder::Rep::Rep()");
     if (tbo.target_file_size == 0) {
       buffer_limit = compression_opts.max_dict_buffer_bytes;
     } else if (compression_opts.max_dict_buffer_bytes == 0) {
@@ -898,9 +897,7 @@ BlockBasedTableBuilder::BlockBasedTableBuilder(
     // behavior
     sanitized_table_options.format_version = 1;
   }
-  LOG("BlockBasedTableBuilder::BlockBasedTableBuilder:Sanitized");
   rep_ = new Rep(sanitized_table_options, tbo, file);
-  LOG("BlockBasedTableBuilder::BlockBasedTableBuilder:Rep");
 
   TEST_SYNC_POINT_CALLBACK(
       "BlockBasedTableBuilder::BlockBasedTableBuilder:PreSetupBaseCacheKey",

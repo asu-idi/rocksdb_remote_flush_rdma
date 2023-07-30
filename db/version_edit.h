@@ -213,6 +213,7 @@ struct FileMetaData {
   static void* UnPackLocal(char*& buf);
   void PackRemote(int sockfd) const;
   static void* UnPackRemote(int sockfd);
+  std::string DebugString() const;
 
  public:
   FileDescriptor fd;

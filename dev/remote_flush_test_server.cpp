@@ -38,21 +38,20 @@ auto main(int argc, char** argv) -> signed {
   opt.write_buffer_size = 1024 * 1024;
   opt.max_write_buffer_number = 4;
   opt.min_write_buffer_number_to_merge = 2;
-  LOG("db_name open=", db_name);
   DB::Open(opt, db_name, &db);
   assert(db != nullptr);
-  LOG("db_open success");
   // ColumnFamilyOptions cfo;
   // ColumnFamilyHandle* cf = nullptr;
 
   // db->CreateColumnFamily(cfo, "cf_pre", &cf);
   std::map<std::string, std::string> kv_pairs;
+  int all[5] = {10101010, 21212121, 32323232, 43434343, 54545454};
   for (size_t i = 0; i < 5; i++) {
     std::random_device rd;
     // std::mt19937 gen(rd());
     // std::uniform_int_distribution<> dis(0, 100000000);
     std::string key = std::to_string(i);
-    std::string value = std::to_string(i * 3);
+    std::string value = std::to_string(all[i]);
     if (kv_pairs.find(key) != kv_pairs.end()) {
       continue;
     }
@@ -60,7 +59,6 @@ auto main(int argc, char** argv) -> signed {
     db->Put(WriteOptions(), key, value);
     kv_pairs.insert(std::make_pair(key, value));
   }
-  LOG("finish put");
   std::this_thread::sleep_for(std::chrono::seconds(2));
   LOG("begin Flush, thread_id=", std::this_thread::get_id());
   db->Flush(FlushOptions());
@@ -86,6 +84,5 @@ auto main(int argc, char** argv) -> signed {
 
   db->DisableFileDeletions();
   db->Close();
-  LOG("db closed");
   return 0;
 }

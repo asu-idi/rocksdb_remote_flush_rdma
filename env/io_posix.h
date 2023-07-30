@@ -8,6 +8,8 @@
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 #pragma once
 #include <errno.h>
+
+#include "util/socket_api.hpp"
 #if defined(ROCKSDB_IOURING_PRESENT)
 #include <liburing.h>
 #include <sys/uio.h>
@@ -503,6 +505,23 @@ struct PosixMemoryMappedFileBuffer : public MemoryMappedFileBuffer {
 };
 
 class PosixDirectory : public FSDirectory {
+ public:
+  void PackLocal(int sockfd) const override {
+    LOG("PosixDirectory::PackLocal");
+    size_t msg = 0x02;
+    write(sockfd, &msg, sizeof(msg));
+    read_data(sockfd, &msg, sizeof(msg));
+    write(sockfd, &fd_, sizeof(int));
+    // read_data(sockfd, &msg, sizeof(msg));
+    // write(sockfd, &is_btrfs_, sizeof(bool));
+    read(sockfd, &msg, sizeof(msg));
+    size_t directory_name_size = directory_name_.length();
+    write(sockfd, &directory_name_size, sizeof(size_t));
+    read_data(sockfd, &msg, sizeof(msg));
+    write(sockfd, directory_name_.c_str(), directory_name_size);
+    read_data(sockfd, &msg, sizeof(msg));
+  }
+
  public:
   explicit PosixDirectory(int fd, const std::string& directory_name);
   ~PosixDirectory();
