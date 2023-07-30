@@ -27,6 +27,7 @@
 #include "monitoring/instrumented_mutex.h"
 #include "options/cf_options.h"
 #include "rocksdb/file_system.h"
+#include "rocksdb/file_system_directory_factory.h"
 #include "rocksdb/system_clock.h"
 #include "rocksdb/table_properties.h"
 #include "table/internal_iterator.h"
@@ -138,15 +139,27 @@ RemoteFlushJob::RemoteFlushJob(
 void RemoteFlushJob::PackLocal(int server_socket_fd) const {
   LOG("RemoteFlushJob::PackLocal thread_id:", std::this_thread::get_id(),
       "Pack data from local side");
+  // if (output_file_directory_ != nullptr) {
+  //   output_file_directory_->PackLocal(server_socket_fd);
+  // } else {
+  //   size_t msg = 0;
+  //   send(server_socket_fd, &msg, sizeof(size_t), 0);
+  //   read_data(server_socket_fd, &msg, sizeof(size_t));
+  // }
+  // if (db_directory_ != nullptr) {
+  //   db_directory_->PackLocal(server_socket_fd);
+  // } else {
+  //   size_t msg = 0;
+  //   send(server_socket_fd, &msg, sizeof(size_t), 0);
+  //   read_data(server_socket_fd, &msg, sizeof(size_t));
+  // }
   // Pack clock
   clock_->PackLocal(server_socket_fd);
   // Pack mems_
   size_t mem_size = mems_.size();
   send(server_socket_fd, &mem_size, sizeof(size_t), 0);
-  LOG("server send mems size: ", mem_size);
   size_t mem_size_ret = 0;
   read_data(server_socket_fd, &mem_size_ret, sizeof(size_t));
-  LOG("server recv mems size: ", mem_size_ret);
   assert(mem_size == mem_size_ret);
   for (auto& memtable : mems_) {
     memtable->PackLocal(server_socket_fd);
@@ -251,6 +264,9 @@ void* RemoteFlushJob::UnPackLocal(int worker_socket_fd, DBImpl* remote_db) {
   void* mem = malloc(sizeof(RemoteFlushJob));
   auto* local_handler = reinterpret_cast<RemoteFlushJob*>(mem);
 
+  // void* output_file_directory_ret =
+  //     FSDirectoryFactory::UnPackLocal(worker_socket_fd);
+  // void* db_directory_ret = FSDirectoryFactory::UnPackLocal(worker_socket_fd);
   std::string clock_info_;
   clock_info_.resize(20);
   read_data(worker_socket_fd, clock_info_.data(), clock_info_.length());
@@ -352,6 +368,13 @@ void* RemoteFlushJob::UnPackLocal(int worker_socket_fd, DBImpl* remote_db) {
   local_handler->mems_ = autovector<MemTable*>();
   local_handler->job_context_ = reinterpret_cast<JobContext*>(job_context_ret);
   local_handler->output_file_directory_ = nullptr;
+
+  // local_handler->output_file_directory_ =
+  //     reinterpret_cast<FSDirectory*>(output_file_directory_ret);
+  // assert(local_handler->sync_output_directory_);
+  // local_handler->db_directory_ =
+  //     reinterpret_cast<FSDirectory*>(db_directory_ret);
+
   local_handler->db_directory_ = nullptr;
   LOG("local_handler copy FileMetaData");
   new (&local_handler->meta_)
@@ -414,16 +437,11 @@ void* RemoteFlushJob::UnPackLocal(int worker_socket_fd, DBImpl* remote_db) {
 void RemoteFlushJob::PackRemote(int worker_socket_fd) const {
   LOG("RemoteFlushJob::PackRemote thread_id:", std::this_thread::get_id(),
       "Pack data from remote side");
-  // send+read
   assert(mems_.size() > 0);
   mems_[0]->PackRemote(worker_socket_fd);
   cfd_->PackRemote(worker_socket_fd);
   table_properties_.PackRemote(worker_socket_fd);
   edit_->PackRemote(worker_socket_fd);
-  LOG("PP RemoteFlushJob::UnPackRemote meta_.smallest: ", "\"",
-      *meta_.smallest.get_rep(), "\" ");
-  LOG("PP RemoteFlushJob::UnPackRemote meta_.largest: ", "\"",
-      *meta_.largest.get_rep(), "\" ");
   meta_.PackRemote(worker_socket_fd);
   LOG("RemoteFlushJob::PackRemote done");
 }
@@ -445,12 +463,6 @@ void RemoteFlushJob::UnPackRemote(int server_socket_fd) {
   meta_.fd.file_size = remote_metadata->fd.file_size;
   meta_.fd.smallest_seqno = remote_metadata->fd.smallest_seqno;
   meta_.fd.largest_seqno = remote_metadata->fd.largest_seqno;
-  LOG("RemoteFlushJob::UnPackRemote meta_.smallest: ", "\"",
-      *meta_.smallest.get_rep(), "\" \"", *remote_metadata->smallest.get_rep(),
-      "\"");
-  LOG("RemoteFlushJob::UnPackRemote meta_.largest: ", "\"",
-      *meta_.largest.get_rep(), "\" \"", *remote_metadata->largest.get_rep(),
-      "\"");
   meta_.smallest = remote_metadata->smallest;
   meta_.largest = remote_metadata->largest;
   LOG("RemoteFlushJob::UnPackRemote meta_.epoch_number: ", meta_.epoch_number,
@@ -466,8 +478,10 @@ void RemoteFlushJob::UnPackRemote(int server_socket_fd) {
   meta_.file_checksum = remote_metadata->file_checksum;
   meta_.file_checksum_func_name = remote_metadata->file_checksum_func_name;
   meta_.unique_id = remote_metadata->unique_id;
+  meta_.oldest_ancester_time = remote_metadata->oldest_ancester_time;
   delete remote_metadata;
 
+  base_->Unref();
   LOG("RemoteFlushJob::UnPackRemote done");
 }
 
@@ -622,6 +636,10 @@ Status RemoteFlushJob::RunRemote(LogsWithPrepTracker* prep_tracker,
   } else {
     // This will release and re-acquire the mutex.
     LOG("Run job: write l0table");
+    LOG(edit_->DebugString());
+    LOG(meta_.DebugString());
+    LOG(table_properties_.ToString());
+
     assert(MatchRemoteWorker() == Status::OK());
     PackLocal(server_socket_fd_);
     int64_t signal = 4321;
@@ -629,10 +647,16 @@ Status RemoteFlushJob::RunRemote(LogsWithPrepTracker* prep_tracker,
     LOG("server Message sent2: ", signal, ' ', server_socket_fd_);
 
     // s = WriteLevel0Table();
+    // assert(s == Status::OK());
 
+    s = Status::OK();
     UnPackRemote(server_socket_fd_);
     assert(QuitRemoteWorker() == Status::OK());
+
     LOG("Run job: write l0table done");
+    LOG(edit_->DebugString());
+    LOG(meta_.DebugString());
+    LOG(table_properties_.ToString());
   }
 
   if (s.ok() && cfd_->IsDropped()) {
@@ -1331,7 +1355,7 @@ Status RemoteFlushJob::WriteLevel0Table() {
     TEST_SYNC_POINT_CALLBACK("RemoteFlushJob::WriteLevel0Table", &mems_);
     // db_mutex_->Lock();
   }
-  // base_->Unref();
+  base_->Unref();
 
   // Note that if file_size is zero, the file has been deleted and
   // should not be added to the manifest.
@@ -1392,13 +1416,24 @@ Status RemoteFlushJob::WriteLevel0Table() {
 }
 
 Env::IOPriority RemoteFlushJob::GetRateLimiterPriorityForWrite() {
-  if (remote_db_->GetVersionSet() &&
-      remote_db_->GetVersionSet()->GetColumnFamilySet() &&
-      remote_db_->GetVersionSet()->GetColumnFamilySet()->write_controller()) {
-    WriteController* write_controller =
-        remote_db_->GetVersionSet()->GetColumnFamilySet()->write_controller();
-    if (write_controller->IsStopped() || write_controller->NeedsDelay()) {
-      return Env::IO_USER;
+  if (remote_db_ == nullptr) {
+    if (versions_ && versions_->GetColumnFamilySet() &&
+        versions_->GetColumnFamilySet()->write_controller()) {
+      WriteController* write_controller =
+          versions_->GetColumnFamilySet()->write_controller();
+      if (write_controller->IsStopped() || write_controller->NeedsDelay()) {
+        return Env::IO_USER;
+      }
+    }
+  } else {
+    if (remote_db_->GetVersionSet() &&
+        remote_db_->GetVersionSet()->GetColumnFamilySet() &&
+        remote_db_->GetVersionSet()->GetColumnFamilySet()->write_controller()) {
+      WriteController* write_controller =
+          remote_db_->GetVersionSet()->GetColumnFamilySet()->write_controller();
+      if (write_controller->IsStopped() || write_controller->NeedsDelay()) {
+        return Env::IO_USER;
+      }
     }
   }
 

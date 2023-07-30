@@ -44,6 +44,69 @@ uint64_t PackFileNumberAndPathId(uint64_t number, uint64_t path_id) {
   return number | (path_id * (kFileNumberMask + 1));
 }
 
+std::string FileMetaData::DebugString() const {
+  std::string r;
+  r.append("\n FileMetaData #");
+  r.append("\n fd.GetNumber packed_number_and_path_id" +
+           std::to_string(fd.GetNumber()));
+  r.append("\n fd.file_size " + std::to_string(fd.file_size));
+  r.append("\n fd.smallest_seqno " + std::to_string(fd.smallest_seqno));
+  r.append("\n fd.largest_seqno " + std::to_string(fd.largest_seqno));
+  if (fd.table_reader == nullptr) {
+    r.append("\n fd.table_reader == nullptr");
+  } else {
+    r.append("\n fd.table_reader != nullptr :" +
+             fd.table_reader->GetTableProperties()->column_family_name);
+  }
+  r.append("\n smallest: " + smallest.DebugString(false));
+  r.append("\n largest: " + largest.DebugString(false));
+  if (table_reader_handle == nullptr) {
+    r.append("\n table_reader_handle==nullptr");
+  } else {
+    r.append("\n table_reader_handle!=nullptr :" +
+             std::to_string(reinterpret_cast<size_t>(table_reader_handle)));
+  }
+  r.append("\n stats: " + std::to_string(stats.num_reads_sampled.load()));
+  r.append("\n compensated_file_size: " +
+           std::to_string(compensated_file_size));
+  r.append("\n num_entries: " + std::to_string(num_entries));
+  r.append("\n num_deletions: " + std::to_string(num_deletions));
+  r.append("\n raw_key_size: " + std::to_string(raw_key_size));
+  r.append("\n raw_value_size: " + std::to_string(raw_value_size));
+  r.append("\n num_range_deletions: " + std::to_string(num_range_deletions));
+  r.append("\n compensated_range_deletion_size: " +
+           std::to_string(compensated_range_deletion_size));
+  r.append("\n refs: " + std::to_string(refs));
+  if (being_compacted) {
+    r.append("\n being_compacted: true");
+  } else {
+    r.append("\n being_compacted: false");
+  }
+  if (init_stats_from_file) {
+    r.append("\n init_stats_from_file: true");
+  } else {
+    r.append("\n init_stats_from_file: false");
+  }
+  if (marked_for_compaction) {
+    r.append("\n marked_for_compaction: true");
+  } else {
+    r.append("\n marked_for_compaction: false");
+  }
+  r.append("\n temperature: " + std::to_string((size_t)temperature));
+  r.append("\n oldest_blob_file_number: " +
+           std::to_string(oldest_blob_file_number));
+
+  r.append("\n oldest_ancester_time : " + std::to_string(oldest_ancester_time));
+  r.append("\n file_creation_time : " + std::to_string(file_creation_time));
+  r.append("\n epoch_number : " + std::to_string(epoch_number));
+  r.append("\n file_checksum : " + file_checksum);
+  r.append("\n file_checksum_func_name : " + file_checksum_func_name);
+  r.append("\n unique_id : " + std::to_string(unique_id.at(0)) + " " +
+           std::to_string(unique_id.at(1)));
+  r.append("\n");
+  return r;
+}
+
 void FileMetaData::PackRemote(int sockfd) const {
   LOG("FileMetaData::PackRemote");
   assert(fd.table_reader == nullptr);
@@ -132,27 +195,20 @@ void* FileMetaData::UnPackRemote(int sockfd) {
   void* local_smallest = nullptr;
   size_t smallest_len = 0;
   read_data(sockfd, &smallest_len, sizeof(size_t));
-  LOG("server FileMetaData::UnPackRemote smallest_len ", smallest_len);
   send(sockfd, &smallest_len, sizeof(size_t), 0);
   if (smallest_len > 0) {
     local_smallest = malloc(smallest_len);
     read_data(sockfd, local_smallest, smallest_len);
-    LOG("FileMetaData::UnPackRemote smallest: ",
-        reinterpret_cast<char*>(local_smallest));
     write(sockfd, &smallest_len, sizeof(size_t));
   }
-  LOG("BREAK POINT");
   void* local_largest = nullptr;
   size_t largest_len = 0;
   read_data(sockfd, &largest_len, sizeof(size_t));
-  LOG("server FileMetaData::UnPackRemote largest_len ", largest_len);
   send(sockfd, &largest_len, sizeof(size_t), 0);
   if (largest_len > 0) {
     local_largest = malloc(largest_len);
     read_data(sockfd, local_largest, largest_len);
     write(sockfd, &largest_len, sizeof(size_t));
-    LOG("FileMetaData::PackRemote largest: ",
-        reinterpret_cast<char*>(local_largest));
   }
 
   void* local_uid = malloc(2 * sizeof(uint64_t));
@@ -167,14 +223,10 @@ void* FileMetaData::UnPackRemote(int sockfd) {
   ptr->smallest.get_rep()->resize(smallest_len);
   memcpy(const_cast<char*>(ptr->smallest.get_rep()->data()),
          reinterpret_cast<char*>(local_smallest), smallest_len);
-  LOG("server FileMetaData::UnPackRemote smallest: ",
-      ptr->smallest.get_rep()->substr(0, smallest_len));
   new (ptr->largest.get_rep()) std::string();
   ptr->largest.get_rep()->resize(largest_len);
   memcpy(const_cast<char*>(ptr->largest.get_rep()->data()),
          reinterpret_cast<char*>(local_largest), largest_len);
-  LOG("server FileMetaData::UnPackRemote largest: ",
-      ptr->largest.get_rep()->substr(0, largest_len));
 
   new (&ptr->unique_id) std::array<uint64_t, 2>();
   ptr->unique_id.at(0) = reinterpret_cast<uint64_t*>(local_uid)[0];
@@ -618,14 +670,13 @@ bool VersionEdit::EncodeTo(std::string* dst) const {
   }
 
   bool min_log_num_written = false;
-  LOG("CRASH POINT");
   for (size_t i = 0; i < new_files_.size(); i++) {
     const FileMetaData& f = new_files_[i].second;
     if (!f.smallest.Valid() || !f.largest.Valid() ||
         f.epoch_number == kUnknownEpochNumber) {
       return false;
     }
-    LOG("CRASH POINT");
+
     PutVarint32(dst, kNewFile4);
     PutVarint32Varint64(dst, new_files_[i].first /* level */, f.fd.GetNumber());
     PutVarint64(dst, f.fd.GetFileSize());
@@ -711,7 +762,6 @@ bool VersionEdit::EncodeTo(std::string* dst) const {
       PutVarint64(&oldest_blob_file_number, f.oldest_blob_file_number);
       PutLengthPrefixedSlice(dst, Slice(oldest_blob_file_number));
     }
-    LOG("CRASH POINT");
     UniqueId64x2 unique_id = f.unique_id;
     TEST_SYNC_POINT_CALLBACK("VersionEdit::EncodeTo:UniqueId", &unique_id);
     if (unique_id != kNullUniqueId64x2) {
@@ -719,7 +769,7 @@ bool VersionEdit::EncodeTo(std::string* dst) const {
       std::string unique_id_str = EncodeUniqueIdBytes(&unique_id);
       PutLengthPrefixedSlice(dst, Slice(unique_id_str));
     }
-    LOG("CRASH POINT");
+
     if (f.compensated_range_deletion_size) {
       PutVarint32(dst, kCompensatedRangeDeletionSize);
       std::string compensated_range_deletion_size;
@@ -733,7 +783,6 @@ bool VersionEdit::EncodeTo(std::string* dst) const {
 
     PutVarint32(dst, NewFileCustomTag::kTerminate);
   }
-  LOG("CRASH POINT");
 
   for (const auto& blob_file_addition : blob_file_additions_) {
     PutVarint32(dst, kBlobFileAddition);

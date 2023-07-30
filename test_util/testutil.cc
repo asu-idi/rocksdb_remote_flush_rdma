@@ -554,20 +554,15 @@ namespace {
 // A hacky skip list mem table that triggers flush after number of entries.
 class SpecialMemTableRep : public MemTableRep {
  public:
-  void PackLocal(int sockfd) const override {
+  void PackLocal(int sockfd, size_t protection_bytes_per_key) const override {
     int64_t msg = 0x2;
     msg += (num_entries_flush_ << 8);
     LOG("SpecialMemTableRep::PackLocal: start send", msg, " ",
         num_entries_flush_);
     send(sockfd, &msg, sizeof(msg), 0);
-    LOG("SpecialMemTableRep::PackLocal: after send", msg, " ",
-        num_entries_flush_);
     msg = 0;
     read(sockfd, &msg, sizeof(msg));
-    LOG("SpecialMemTableRep::PackLocal: after recv, start wrapped "
-        "memtable::PackLocal ",
-        msg);
-    memtable_->PackLocal(sockfd);
+    memtable_->PackLocal(sockfd, protection_bytes_per_key);
   }
 
  public:

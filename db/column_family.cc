@@ -710,7 +710,7 @@ ColumnFamilyData::~ColumnFamilyData() {
   assert(super_version_ == nullptr);
   if (dummy_versions_ != nullptr) {
     // List must be empty
-    // assert(dummy_versions_->Next() == dummy_versions_);
+    assert(dummy_versions_->Next() == dummy_versions_);
     bool deleted __attribute__((__unused__));
     deleted = dummy_versions_->Unref();
     assert(deleted);

@@ -1162,6 +1162,12 @@ class MemoryMappedFileBuffer {
 // filesystem operations that can be executed on directories.
 class Directory {
  public:
+  virtual void PackLocal(int sockfd) const {
+    LOG("Directory::PackLocal not supported");
+    assert(false);
+  }
+
+ public:
   virtual ~Directory() {}
   // Fsync directory. Can be called concurrently from multiple threads.
   virtual Status Fsync() = 0;
@@ -1832,6 +1838,12 @@ class RandomRWFileWrapper : public RandomRWFile {
 };
 
 class DirectoryWrapper : public Directory {
+ public:
+  void PackLocal(int sockfd) const override {
+    LOG("DirectoryWrapper::PackLocal");
+    assert(false);
+  }
+
  public:
   explicit DirectoryWrapper(Directory* target) : target_(target) {}
 

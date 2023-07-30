@@ -45,10 +45,12 @@
 #include <stdexcept>
 #include <unordered_set>
 
+#include "db/dbformat.h"
 #include "memtable/skiplist.h"
 #include "rocksdb/customizable.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/status.h"
+#include "util/coding.h"
 #include "util/logger.hpp"
 namespace ROCKSDB_NAMESPACE {
 
@@ -65,7 +67,7 @@ extern Slice GetLengthPrefixedSlice(const char* data);
 
 class MemTableRep {
  public:
-  virtual void PackLocal(int sockfd) const {
+  virtual void PackLocal(int sockfd, size_t protection_bytes_per_key) const {
     LOG("MemTableRep::PackLocal: error: not implemented");
     assert(false);
   }
@@ -88,8 +90,20 @@ class MemTableRep {
       // contract. Refer to MemTable::Add for details.
       return GetLengthPrefixedSlice(key);
     }
-    virtual size_t decode_len(const char* key) const {
-      return GetLengthPrefixedSlice(key).size();
+
+    virtual size_t decode_len(const char* key,
+                              size_t protection_bytes_per_key) const {
+      // format: MemTable::Add
+      size_t ret = 0;
+      char* buf = const_cast<char*>(key);
+      Slice ikey = GetLengthPrefixedSlice(key);
+      uint32_t ikey_len = ikey.size();
+      ret += ikey_len + VarintLength(ikey_len);
+      buf += ret;
+      Slice value = GetLengthPrefixedSlice(buf);
+      uint32_t value_len = value.size();
+      ret += value_len + VarintLength(value_len);
+      return ret + protection_bytes_per_key;
     }
     // Compare a and b. Return a negative value if a is less than b, 0 if they
     // are equal, and a positive value if a is greater than b

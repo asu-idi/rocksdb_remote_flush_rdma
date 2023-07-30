@@ -28,14 +28,11 @@ void* SeqnoToTimeMapping::PackLocal(int sockfd) const {
   assert(mp_size == mp_size_);
   for (auto& it : seqno_time_mapping_) {
     send(sockfd, &it, sizeof(SeqnoTimePair), 0);
-    // LOG("server send SeqnoToTimeMapping::it:",
-    //     reinterpret_cast<void*>(const_cast<SeqnoTimePair*>(&it)));
     ret = 0;
     read_data(sockfd, &ret, sizeof(int64_t));
   }
   send(sockfd, reinterpret_cast<void*>(const_cast<SeqnoToTimeMapping*>(this)),
        sizeof(SeqnoToTimeMapping), 0);
-  // LOG("server send SeqnoToTimeMapping::this:", this);
   ret = 0;
   read_data(sockfd, &ret, sizeof(int64_t));
   LOG("server recv SeqnoToTimeMapping::ret:", ret);
@@ -47,16 +44,12 @@ void* SeqnoToTimeMapping::UnPackLocal(int sockfd) {
   int64_t ret = 0;
   size_t mp_size = 0;
   read_data(sockfd, &mp_size, sizeof(size_t));
-  LOG("client recv SeqnoToTimeMapping::mp_size:", mp_size);
   send(sockfd, &mp_size, sizeof(size_t), 0);
-  LOG("client send SeqnoToTimeMapping::mp_size:", mp_size);
   std::deque<SeqnoTimePair> prs;
   for (size_t i = 0; i < mp_size; i++) {
     SeqnoTimePair it;
     read_data(sockfd, &it, sizeof(SeqnoTimePair));
-    // LOG("client recv SeqnoToTimeMapping::it:", it);
     send(sockfd, &ret, sizeof(int64_t), 0);
-    LOG("client send SeqnoToTimeMapping::ret:", ret);
     prs.emplace_back(it);
   }
   read_data(sockfd, mem, sizeof(SeqnoToTimeMapping));

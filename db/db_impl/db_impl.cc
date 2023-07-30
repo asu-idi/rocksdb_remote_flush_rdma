@@ -638,7 +638,6 @@ Status DBImpl::ResumeImpl(DBRecoverContext context) {
   if (job_context.HaveSomethingToDelete()) {
     PurgeObsoleteFiles(job_context);
   }
-  LOG("traccking test");
   job_context.Clean();
 
   if (s.ok()) {
@@ -846,7 +845,6 @@ Status DBImpl::CloseHelper() {
   // manifest file), it is not able to identify live files correctly. As a
   // result, all "live" files can get deleted by accident. However, corrupted
   // manifest is recoverable by RepairDB().
-  LOG("DB close checkpoint 1");
   if (opened_successfully_) {
     JobContext job_context(next_job_id_.fetch_add(1));
     FindObsoleteFiles(&job_context, true);
@@ -857,12 +855,9 @@ Status DBImpl::CloseHelper() {
     if (job_context.HaveSomethingToDelete()) {
       PurgeObsoleteFiles(job_context);
     }
-    LOG("traccking test");
     job_context.Clean();
-    LOG("traccking test finish");
     mutex_.Lock();
   }
-  LOG("DB close checkpoint 2");
   {
     InstrumentedMutexLock lock(&log_write_mutex_);
     for (auto l : logs_to_free_) {
@@ -883,7 +878,6 @@ Status DBImpl::CloseHelper() {
         }
       }
     }
-    LOG("DB close checkpoint 3");
     logs_.clear();
   }
 
@@ -905,11 +899,9 @@ Status DBImpl::CloseHelper() {
   for (auto& txn_entry : recovered_transactions_) {
     delete txn_entry.second;
   }
-  LOG("DB close checkpoint 4");
   // versions need to be destroyed before table_cache since it can hold
   // references to table_cache.
   versions_.reset();
-  LOG("DB close checkpoint 5");
   mutex_.Unlock();
   if (db_lock_ != nullptr) {
     // TODO: Check for unlock error
@@ -934,11 +926,9 @@ Status DBImpl::CloseHelper() {
       ret = s;
     }
   }
-  LOG("DB close checkpoint 6");
   if (write_buffer_manager_ && wbm_stall_) {
     write_buffer_manager_->RemoveDBFromQueue(wbm_stall_.get());
   }
-  LOG("DB close checkpoint 7");
   IOStatus io_s = directories_.Close(IOOptions(), nullptr /* dbg */);
   if (!io_s.ok()) {
     ret = io_s;
@@ -2041,7 +2031,6 @@ static void CleanupSuperVersionHandle(void* arg1, void* /*arg2*/) {
       sv_handle->db->PurgeObsoleteFiles(job_context,
                                         sv_handle->background_purge);
     }
-    LOG("traccking test");
     job_context.Clean();
   }
 
@@ -4495,7 +4484,6 @@ Status DBImpl::DeleteFile(std::string name) {
     if (!status.ok()) {
       ROCKS_LOG_WARN(immutable_db_options_.info_log,
                      "DeleteFile %s failed. File not found\n", name.c_str());
-      LOG("traccking test");
       job_context.Clean();
       return Status::InvalidArgument("File not found");
     }
@@ -4506,7 +4494,6 @@ Status DBImpl::DeleteFile(std::string name) {
       ROCKS_LOG_INFO(immutable_db_options_.info_log,
                      "DeleteFile %s Skipped. File about to be compacted\n",
                      name.c_str());
-      LOG("traccking test");
       job_context.Clean();
       return Status::OK();
     }
@@ -4520,7 +4507,6 @@ Status DBImpl::DeleteFile(std::string name) {
         ROCKS_LOG_WARN(immutable_db_options_.info_log,
                        "DeleteFile %s FAILED. File not in last level\n",
                        name.c_str());
-        LOG("traccking test");
         job_context.Clean();
         return Status::InvalidArgument("File not in last level");
       }
@@ -4532,7 +4518,6 @@ Status DBImpl::DeleteFile(std::string name) {
                      "DeleteFile %s failed ---"
                      " target file in level 0 must be the oldest.",
                      name.c_str());
-      LOG("traccking test");
       job_context.Clean();
       return Status::InvalidArgument("File in level 0, but not oldest");
     }
@@ -4554,7 +4539,6 @@ Status DBImpl::DeleteFile(std::string name) {
     // Call PurgeObsoleteFiles() without holding mutex.
     PurgeObsoleteFiles(job_context);
   }
-  LOG("traccking test");
   job_context.Clean();
   return status;
 }
@@ -4647,7 +4631,6 @@ Status DBImpl::DeleteFilesInRanges(ColumnFamilyHandle* column_family,
     // Call PurgeObsoleteFiles() without holding mutex.
     PurgeObsoleteFiles(job_context);
   }
-  LOG("traccking test");
   job_context.Clean();
   return status;
 }

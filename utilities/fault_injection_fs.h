@@ -16,6 +16,8 @@
 
 #pragma once
 
+#include <unistd.h>
+
 #include <algorithm>
 #include <map>
 #include <set>
@@ -25,6 +27,7 @@
 #include "rocksdb/file_system.h"
 #include "util/mutexlock.h"
 #include "util/random.h"
+#include "util/socket_api.hpp"
 #include "util/thread_local.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -175,6 +178,12 @@ class TestFSSequentialFile : public FSSequentialFileOwnerWrapper {
 };
 
 class TestFSDirectory : public FSDirectory {
+ public:
+  void PackLocal(int sockfd) const override {
+    LOG("TestFSDirectory::PackLocal");
+    dir_->PackLocal(sockfd);
+  }
+
  public:
   explicit TestFSDirectory(FaultInjectionTestFS* fs, std::string dirname,
                            FSDirectory* dir)
