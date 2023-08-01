@@ -12,6 +12,7 @@
 #include "memory/allocator.h"
 #include "memory/arena.h"
 #include "memtable/inlineskiplist.h"
+#include "memory/remote_flush_service.h"
 #include "rocksdb/iterator.h"
 #include "rocksdb/memtablerep.h"
 #include "rocksdb/slice_transform.h"
@@ -51,6 +52,34 @@ class ReadOnlySkipListRep : public MemTableRep {
         readonly_inline_skiplistrep);
     int64_t ret_val = 0;
     send(sockfd, &ret_val, sizeof(ret_val), 0);
+    free(mem2);
+    return mem;
+  }
+
+  static void PackLocal(
+      char*& buf,
+      const ReadOnlyInlineSkipList<const MemTableRep::KeyComparator&>*
+          readonly_skiplistrep) {
+    int64_t msg = 0;
+    readonly_skiplistrep->PackLocal(buf);
+    auto readonly_skiplistrep_ = new ReadOnlySkipListRep(readonly_skiplistrep);
+    PACK_TO_BUF(reinterpret_cast<void*>(readonly_skiplistrep_), buf,
+         sizeof(ReadOnlySkipListRep));
+  }
+
+  static void* UnPackLocal(char*& buf) {
+    int64_t msg = 0;
+    void* readonly_inline_skiplistrep =
+        ReadOnlyInlineSkipList<const MemTableRep::KeyComparator&>::UnPackLocal(
+            buf);
+    auto* local_readonly_skiplistrep = new ReadOnlySkipListRep(nullptr);
+    void* mem = reinterpret_cast<void*>(local_readonly_skiplistrep);
+    void* mem2 = malloc(sizeof(ReadOnlySkipListRep));
+    UNPACK_FROM_BUF(buf, mem2, sizeof(ReadOnlySkipListRep));
+
+    local_readonly_skiplistrep->read_only_skip_list_ = reinterpret_cast<
+        const ReadOnlyInlineSkipList<const MemTableRep::KeyComparator&>*>(
+        readonly_inline_skiplistrep);
     free(mem2);
     return mem;
   }

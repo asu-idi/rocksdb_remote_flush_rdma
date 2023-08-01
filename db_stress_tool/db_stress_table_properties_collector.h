@@ -9,6 +9,7 @@
 #include <sys/socket.h>
 #endif
 
+#include "memory/remote_flush_service.h"
 #include "rocksdb/table.h"
 #include "util/gflags_compat.h"
 #include "util/random.h"
@@ -63,6 +64,12 @@ class DbStressTablePropertiesCollectorFactory
     send(sockfd, msg, msg_len, 0);
     size_t ret_val = 0;
     read(sockfd, &ret_val, sizeof(ret_val));
+  }
+  void PackLocal(char*& buf) const override {
+    size_t msg_len = sizeof(size_t) + sizeof(size_t) * 2 + sizeof(double);
+    char* msg = reinterpret_cast<char*>(malloc(msg_len));
+    *reinterpret_cast<size_t*>(msg) = 1;
+    PACK_TO_BUF(msg, buf, msg_len);
   }
 
  public:

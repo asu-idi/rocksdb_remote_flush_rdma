@@ -25,6 +25,7 @@
 #include <cstring>
 #include <memory>
 
+#include "memory/remote_flush_service.h"
 #include "rocksdb/customizable.h"
 #include "rocksdb/rocksdb_namespace.h"
 #include "rocksdb/status.h"
@@ -51,6 +52,13 @@ class SystemClock : public Customizable {
     read(sockfd, &ret_addr, sizeof(int64_t));
     LOG("recv ", ret_addr);
     return reinterpret_cast<void*>(ret_addr);
+  }
+  virtual void PackLocal(char*& buf) const {
+    std::string mem(Name());
+    mem.resize(20);
+    assert(mem.length() == 20);
+    PACK_TO_BUF(mem.c_str(), buf, mem.length());
+    LOG("send ", mem.c_str());
   }
 
  public:

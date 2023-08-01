@@ -23,6 +23,7 @@
 #include <string>
 #include <unordered_map>
 
+#include "memory/remote_flush_service.h"
 #include "rocksdb/cache.h"
 #include "rocksdb/customizable.h"
 #include "rocksdb/env.h"
@@ -836,6 +837,10 @@ class TableFactory : public Customizable {
     LOG("TableFactory::PackLocal not implemented");
     assert(false);
   }
+  virtual void PackLocal(char*& buf) const {
+    LOG("TableFactory::PackLocal not implemented");
+    assert(false);
+  }
 
  public:
   virtual ~TableFactory() override {}
@@ -931,6 +936,7 @@ extern TableFactory* NewAdaptiveTableFactory(
 class TablePackFactory {
  public:
   static void* UnPackLocal(int sockfd);
+  static void* UnPackLocal(char*& buf);
 
  public:
   TablePackFactory& operator=(const TablePackFactory&) = delete;
@@ -950,6 +956,24 @@ inline void* TablePackFactory::UnPackLocal(int sockfd) {
     return nullptr;
   }
   send(sockfd, &msg, sizeof(msg), 0);
+  if (msg == 0x01) {
+    return NewBlockBasedTableFactory();
+  } else if (msg == 0x02) {
+    return NewCuckooTableFactory();
+  } else if (msg == 0x03) {
+    return NewPlainTableFactory();
+  } else {
+    LOG("TablePackFactory::UnPackLocal: msg: ", msg);
+    assert(false);
+  }
+}
+inline void* TablePackFactory::UnPackLocal(char*& buf) {
+  size_t msg = 0;
+  UNPACK_FROM_BUF(buf, &msg, sizeof(msg));
+  if (msg == 0) {
+    LOG("TablePackFactory::UnPackLocal: msg == 0 : nullptr");
+    return nullptr;
+  }
   if (msg == 0x01) {
     return NewBlockBasedTableFactory();
   } else if (msg == 0x02) {

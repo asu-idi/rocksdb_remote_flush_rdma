@@ -46,6 +46,7 @@
 #include <unordered_set>
 
 #include "memory/concurrent_shared_arena.h"
+#include "memory/remote_flush_service.h"
 #include "memtable/skiplist.h"
 #include "rocksdb/customizable.h"
 #include "rocksdb/slice.h"
@@ -70,6 +71,10 @@ class MemTableRep {
     LOG("MemTableRep::PackLocal: error: not implemented");
     assert(false);
   }
+  virtual void PackLocal(char*& buf) const {
+    LOG("MemTableRep::PackLocal: error: not implemented");
+    assert(false);
+  }
 
  public:
   // KeyComparator provides a means to compare keys, which are internal keys
@@ -77,6 +82,10 @@ class MemTableRep {
   class KeyComparator {
    public:
     virtual void PackLocal(int sockfd) const {
+      LOG("MemTableRep::KeyComparator::PackLocal: error: not implemented");
+      assert(false);
+    }
+    virtual void PackLocal(char*& buf) const {
       LOG("MemTableRep::KeyComparator::PackLocal: error: not implemented");
       assert(false);
     }
@@ -376,6 +385,7 @@ class MemTableRepFactory : public Customizable {
 class SkipListFactory : public MemTableRepFactory {
  public:
   static void* UnPackLocal(int sockfd);
+  static void* UnPackLocal(char*& buf);
 
  public:
   explicit SkipListFactory(size_t lookahead = 0);

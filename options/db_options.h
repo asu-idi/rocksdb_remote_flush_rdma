@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "rocksdb/options.h"
+#include "memory/remote_flush_service.h"
 
 namespace ROCKSDB_NAMESPACE {
 class SystemClock;
@@ -18,6 +19,8 @@ struct ImmutableDBOptions {
  public:
   void PackLocal(int sockfd) const;
   static void* UnPackLocal(int sockfd);
+  void PackLocal(char*& buf) const;
+  static void* UnPackLocal(char*& buf);
 
  public:
   static const char* kName() { return "ImmutableDBOptions"; }

@@ -15,6 +15,7 @@
 #include <string>
 
 #include "cache/cache_reservation_manager.h"
+#include "memory/remote_flush_service.h"
 #include "port/port.h"
 #include "rocksdb/flush_block_policy.h"
 #include "rocksdb/table.h"
@@ -52,6 +53,10 @@ class BlockBasedTableFactory : public TableFactory {
     send(sockfd, &msg, sizeof(msg), 0);
     msg = 0;
     read(sockfd, &msg, sizeof(size_t));
+  }
+  void PackLocal(char*& buf) const override {
+    size_t msg = 1;
+    PACK_TO_BUF(&msg, buf, sizeof(msg));
   }
 
  public:

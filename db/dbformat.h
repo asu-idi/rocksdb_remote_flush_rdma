@@ -15,6 +15,7 @@
 #include <string>
 #include <utility>
 
+#include "memory/remote_flush_service.h"
 #include "rocksdb/comparator.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/slice_transform.h"
@@ -270,6 +271,17 @@ class InternalKeyComparator
            sizeof(UserComparatorWrapper));
     int ret_val = 1234;
     send(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t), 0);
+    return mem;
+  }
+  void PackLocal(char*& buf) const override {
+    user_comparator_.PackLocal(buf);
+  }
+  static void* UnPackLocal(char*& buf) {
+    void* ucmp = UserComparatorWrapper::UnPackLocal(buf);
+    auto ptr = new InternalKeyComparator();
+    void* mem = reinterpret_cast<void*>(ptr);
+    memcpy(reinterpret_cast<void*>(&ptr->user_comparator_), ucmp,
+           sizeof(UserComparatorWrapper));
     return mem;
   }
 
@@ -701,6 +713,14 @@ class InternalKeySliceTransform : public SliceTransform {
     transform_->PackLocal(sockfd);
   }
   static void* UnPackLocal(void* transform, int sockfd);
+  void PackLocal(char*& buf) const override {
+    LOG("InternalKeySliceTransform::PackLocal");
+    int64_t info = 0;
+    info += (0x00);
+    PACK_TO_BUF(&info, buf, sizeof(info));
+    transform_->PackLocal(buf);
+  }
+  static void* UnPackLocal(void* transform, char*& buf);
 
  public:
   explicit InternalKeySliceTransform(const SliceTransform* transform)
@@ -732,6 +752,12 @@ class InternalKeySliceTransform : public SliceTransform {
 };
 inline void* InternalKeySliceTransform::UnPackLocal(void* transform,
                                                     int sockfd) {
+  void* mem = reinterpret_cast<void*>(new InternalKeySliceTransform(
+      reinterpret_cast<SliceTransform*>(transform)));
+  return mem;
+}
+inline void* InternalKeySliceTransform::UnPackLocal(void* transform,
+                                                    char*& buf) {
   void* mem = reinterpret_cast<void*>(new InternalKeySliceTransform(
       reinterpret_cast<SliceTransform*>(transform)));
   return mem;

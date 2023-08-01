@@ -411,7 +411,7 @@ void DBImpl::TEST_RemoteFlushListener() {
     }
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(8080);
+    address.sin_port = htons(8980);
     if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
       LOG("bind failed");
       assert(false);
@@ -464,7 +464,7 @@ Status DBImpl::ListenAndScheduleFlushJob() {
   }
   address.sin_family = AF_INET;
   address.sin_addr.s_addr = INADDR_ANY;
-  address.sin_port = htons(8080);
+  address.sin_port = htons(8980);
   if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
     LOG("bind failed");
     return Status::IOError("bind failed");

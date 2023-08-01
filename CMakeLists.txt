@@ -33,8 +33,8 @@
 # 4. make -j
 
 cmake_minimum_required(VERSION 3.10)
-set(CMAKE_CXX_COMPILER /usr/bin/clang++)
-set(CMAKE_C_COMPILER /usr/bin/clang)
+set(CMAKE_CXX_COMPILER g++)
+set(CMAKE_C_COMPILER gcc)
 message(STATUS "cxx_compiler: ${CMAKE_CXX_COMPILER}")
 message(STATUS "c_compiler: ${CMAKE_C_COMPILER}")
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake/modules/")
@@ -789,6 +789,7 @@ set(SOURCES
         memory/memkind_kmem_allocator.cc
         memory/memory_allocator.cc
         memory/shared_package.cc
+        memory/remote_flush_service.cc
         memtable/alloc_tracker.cc
         memtable/hash_linklist_rep.cc
         memtable/hash_skiplist_rep.cc
@@ -1150,12 +1151,12 @@ configure_file(util/build_version.cc.in ${BUILD_VERSION_CC} @ONLY)
 
 add_library(${ROCKSDB_STATIC_LIB} STATIC ${SOURCES} ${BUILD_VERSION_CC})
 target_link_libraries(${ROCKSDB_STATIC_LIB} PRIVATE
-  ${THIRDPARTY_LIBS} ${SYSTEM_LIBS})
+  ${THIRDPARTY_LIBS} ${SYSTEM_LIBS} -lstdc++ -libverbs)
 
 if(ROCKSDB_BUILD_SHARED)
   add_library(${ROCKSDB_SHARED_LIB} SHARED ${SOURCES} ${BUILD_VERSION_CC})
   target_link_libraries(${ROCKSDB_SHARED_LIB} PRIVATE
-    ${THIRDPARTY_LIBS} ${SYSTEM_LIBS})
+    ${THIRDPARTY_LIBS} ${SYSTEM_LIBS} -lstdc++ -libverbs)
 
   if(WIN32)
     set_target_properties(${ROCKSDB_SHARED_LIB} PROPERTIES
@@ -1577,6 +1578,7 @@ if(WITH_DEV)
   # dev/shared_memory_reader_test.cpp
   # dev/open_secondary_test.cpp
   dev/remote_flush_worker.cpp
+  dev/rdma_server.cc
   )
   foreach(sourcefile ${DEVELOP})
     message(STATUS "CHECK DEV: ${sourcefile}")

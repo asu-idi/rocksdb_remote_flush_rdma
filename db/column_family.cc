@@ -1072,6 +1072,94 @@ void* ColumnFamilyData::UnPackLocal(int sockfd) {
   return mem;
 }
 
+void ColumnFamilyData::PackLocal(char*& buf) const {
+  initial_cf_options_.PackLocal(buf);
+  current_->PackLocal(buf);
+  ioptions_.PackLocal(buf);
+  mutable_cf_options_.PackLocal(buf);
+  // int_tbl_prop_collector_factories_.PackLocal(sockfd);
+  size_t int_tbl_prop_collector_factories_size =
+      int_tbl_prop_collector_factories_.size();
+  PACK_TO_BUF(reinterpret_cast<void*>(&int_tbl_prop_collector_factories_size), buf,
+       sizeof(size_t));
+  LOG("server check int_tbl_prop_collector_factories_: ");
+  for (auto& factory : int_tbl_prop_collector_factories_) {
+    factory->PackLocal(buf);
+  }
+  LOG("server check int_tbl_prop_collector_factories_ done.");
+
+  int64_t ret_val = name_.size();
+  PACK_TO_BUF(reinterpret_cast<const void*>(&ret_val), buf, sizeof(int64_t));
+  PACK_TO_BUF(reinterpret_cast<const void*>(name_.data()), buf, name_.size());
+
+  PACK_TO_BUF(reinterpret_cast<const void*>(this), buf, sizeof(ColumnFamilyData));
+  //  todo: remove this
+  LOG("server CHECK cfd_ Comparator: ");
+  assert(internal_comparator_.user_comparator() ==
+         initial_cf_options_.comparator);
+}
+
+void* ColumnFamilyData::UnPackLocal(char*& buf) {
+  auto* worker_initial_cf_options_ = reinterpret_cast<ColumnFamilyOptions*>(
+      ColumnFamilyOptions::UnPackLocal(buf));
+  auto* worker_current_ =
+      reinterpret_cast<Version*>(Version::UnPackLocal(buf));
+  auto* worker_ioptions_ = reinterpret_cast<ImmutableOptions*>(
+      ImmutableOptions::UnPackLocal(buf, *worker_initial_cf_options_));
+  auto* worker_mutable_cf_options_ = reinterpret_cast<MutableCFOptions*>(
+      MutableCFOptions::UnPackLocal(buf));
+  size_t int_tbl_prop_collector_factories_size = 0;
+  UNPACK_FROM_BUF(buf, reinterpret_cast<void*>(&int_tbl_prop_collector_factories_size),
+       sizeof(size_t));
+  std::vector<IntTblPropCollectorFactory*> temp_factories;
+  for (size_t i = 0; i < int_tbl_prop_collector_factories_size; i++) {
+    auto* int_tbl_prop_factory = reinterpret_cast<IntTblPropCollectorFactory*>(
+        IntTblPropCollectorPackFactory::UnPackLocal(buf));
+    temp_factories.emplace_back(int_tbl_prop_factory);
+  }
+  int64_t ret_val = 0;
+  UNPACK_FROM_BUF(buf, reinterpret_cast<void*>(&ret_val), sizeof(int64_t));
+  std::string worker_name_(ret_val, '\0');
+  UNPACK_FROM_BUF(buf, reinterpret_cast<void*>(worker_name_.data()),
+       worker_name_.size());
+
+  void* mem = malloc(sizeof(ColumnFamilyData));
+  UNPACK_FROM_BUF(buf, mem, sizeof(ColumnFamilyData));
+  auto* worker_cfd_ = reinterpret_cast<ColumnFamilyData*>(mem);
+  memcpy(reinterpret_cast<void*>(const_cast<ColumnFamilyOptions*>(
+             &worker_cfd_->initial_cf_options_)),
+         reinterpret_cast<void*>(worker_initial_cf_options_),
+         sizeof(ColumnFamilyOptions));
+  memcpy(reinterpret_cast<void*>(
+             const_cast<ImmutableOptions*>(&worker_cfd_->ioptions_)),
+         reinterpret_cast<void*>(worker_ioptions_), sizeof(ImmutableOptions));
+  memcpy(reinterpret_cast<void*>(
+             const_cast<MutableCFOptions*>(&worker_cfd_->mutable_cf_options_)),
+         reinterpret_cast<void*>(worker_mutable_cf_options_),
+         sizeof(MutableCFOptions));
+  LOG("retrieve Comparator:");
+  auto worker_internal_comparator_ =
+      new InternalKeyComparator(worker_initial_cf_options_->comparator);
+  new (&worker_cfd_->name_) std::string(worker_name_);
+  memcpy(const_cast<void*>(
+             reinterpret_cast<const void*>(&worker_cfd_->internal_comparator_)),
+         reinterpret_cast<void*>(worker_internal_comparator_),
+         sizeof(InternalKeyComparator));
+  delete worker_internal_comparator_;
+  new (&worker_cfd_->int_tbl_prop_collector_factories_)
+      std::vector<std::unique_ptr<IntTblPropCollectorPackFactory>>();
+  worker_cfd_->int_tbl_prop_collector_factories_.resize(temp_factories.size());
+  for (auto factory : temp_factories) {
+    worker_cfd_->int_tbl_prop_collector_factories_.emplace_back(
+        std::unique_ptr<IntTblPropCollectorFactory>(factory));
+  }
+  new (&worker_cfd_->internal_stats_)
+      std::unique_ptr<InternalStats>(std::make_unique<InternalStats>(
+          worker_cfd_->ioptions_.num_levels, worker_cfd_->ioptions_.clock,
+          worker_cfd_));
+  return mem;
+}
+
 // internal_comparator_ ; imm_ ; ioptions_ ; table_cache_ ; internal_stats_ ;
 // local_sv_ ; compaction_picker_ ;
 void ColumnFamilyData::Pack() {

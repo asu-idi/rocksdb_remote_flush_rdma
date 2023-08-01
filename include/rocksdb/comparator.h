@@ -12,6 +12,7 @@
 #include <string>
 
 #include "memory/shared_mem_basic.h"
+#include "memory/remote_flush_service.h"
 #include "rocksdb/customizable.h"
 #include "rocksdb/rocksdb_namespace.h"
 #include "util/coding.h"
@@ -26,6 +27,10 @@ class Slice;
 class CompareInterface {
  public:
   virtual void PackLocal(int sockfd) const {
+    LOG("CompareInterface::PackLocal");
+    assert(false);
+  };
+  virtual void PackLocal(char*& buf) const {
     LOG("CompareInterface::PackLocal");
     assert(false);
   };
@@ -54,6 +59,10 @@ class CompareInterface {
 class Comparator : public Customizable, public CompareInterface {
  public:
   void PackLocal(int sockfd) const override {
+    LOG("Comparator::PackLocal");
+    assert(false);
+  }
+  void PackLocal(char*& buf) const override {
     LOG("Comparator::PackLocal");
     assert(false);
   }
