@@ -40,6 +40,12 @@ class BytewiseComparatorImpl : public Comparator {
     int64_t ret_val = 0;
     read(sockfd, &ret_val, sizeof(int64_t));
   }
+  void PackLocal(char*& buf) const override {
+    LOG("BytewiseComparatorImpl::PackLocal");
+    int64_t msg = 0;
+    msg += (0x00);
+    PACK_TO_BUF(&msg, buf, sizeof(int64_t));
+  }
 
  public:
   BytewiseComparatorImpl() {}
@@ -167,6 +173,12 @@ class ReverseBytewiseComparatorImpl : public BytewiseComparatorImpl {
     send(sockfd, &msg, sizeof(int64_t), 0);
     int64_t ret_val = 0;
     read(sockfd, &ret_val, sizeof(int64_t));
+  }
+  void PackLocal(char*& buf) const override {
+    LOG("ReverseBytewiseComparatorImpl::PackLocal");
+    int64_t msg = 0;
+    msg += (0x01);
+    PACK_TO_BUF(&msg, buf, sizeof(int64_t));
   }
 
  public:

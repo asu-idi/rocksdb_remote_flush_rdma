@@ -68,6 +68,40 @@ void* SeqnoToTimeMapping::UnPackLocal(int sockfd) {
   return mem;
 }
 
+void SeqnoToTimeMapping::PackLocal(char*& buf) const {
+  int64_t ret = 0;
+  size_t mp_size = seqno_time_mapping_.size();
+  PACK_TO_BUF(&mp_size, buf, sizeof(size_t));
+  LOG("server send SeqnoToTimeMapping::mp_size:", mp_size);
+  for (auto& it : seqno_time_mapping_) {
+    PACK_TO_BUF(&it, buf, sizeof(SeqnoTimePair));
+    // LOG("server send SeqnoToTimeMapping::it:",
+    //     reinterpret_cast<void*>(const_cast<SeqnoTimePair*>(&it)));
+  }
+  PACK_TO_BUF(reinterpret_cast<void*>(const_cast<SeqnoToTimeMapping*>(this)), buf,
+       sizeof(SeqnoToTimeMapping));
+  // LOG("server send SeqnoToTimeMapping::this:", this);
+}
+
+void* SeqnoToTimeMapping::UnPackLocal(char*& buf) {
+  void* mem = malloc(sizeof(SeqnoToTimeMapping));
+  size_t mp_size = 0;
+  UNPACK_FROM_BUF(buf, &mp_size, sizeof(size_t));
+  LOG("client recv SeqnoToTimeMapping::mp_size:", mp_size);
+  std::deque<SeqnoTimePair> prs;
+  for (size_t i = 0; i < mp_size; i++) {
+    SeqnoTimePair it;
+    UNPACK_FROM_BUF(buf, &it, sizeof(SeqnoTimePair));
+    // LOG("client recv SeqnoToTimeMapping::it:", it);
+    prs.emplace_back(it);
+  }
+  UNPACK_FROM_BUF(buf, mem, sizeof(SeqnoToTimeMapping));
+  LOG("client recv SeqnoToTimeMapping::mem:", mem);
+  auto* mp = reinterpret_cast<SeqnoToTimeMapping*>(mem);
+  mp->seqno_time_mapping_ = prs;
+  return mem;
+}
+
 uint64_t SeqnoToTimeMapping::GetOldestApproximateTime(
     const SequenceNumber seqno) const {
   assert(is_sorted_);

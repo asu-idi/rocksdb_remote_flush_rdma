@@ -14,6 +14,7 @@
 
 #include "memory/allocator.h"
 #include "memory/arena.h"
+#include "memory/remote_flush_service.h"
 #include "port/lang.h"
 #include "port/likely.h"
 #include "util/core_local.h"
@@ -44,6 +45,8 @@ class ConcurrentArena : public BasicArena {
  public:
   void PackLocal(int sockfd) const override;
   static void* UnPackLocal(int sockfd);
+  void PackLocal(char*& buf) const override;
+  static void* UnPackLocal(char*& buf);
 
  public:
   const char* name() const override { return "ConcurrentArena"; }

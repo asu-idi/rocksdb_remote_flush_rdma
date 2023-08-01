@@ -47,6 +47,10 @@ class IntTblPropCollectorFactory {
     LOG("IntTblPropCollectorFactory::PackLocal not implemented. Name: ",
         Name());
   }
+  virtual void PackLocal(char*& buf) const {
+    LOG("IntTblPropCollectorFactory::PackLocal not implemented. Name: ",
+        Name());
+  }
 
  public:
   virtual ~IntTblPropCollectorFactory() {}
@@ -105,6 +109,12 @@ class UserKeyTablePropertiesCollectorFactory
     int64_t ret_val = 0;
     read(sockfd, &ret_val, sizeof(ret_val));
     user_collector_factory_->PackLocal(sockfd);
+  }
+  void PackLocal(char*& buf) const override {
+    int64_t msg = 0;
+    msg += (0x01);
+    PACK_TO_BUF(&msg, buf, sizeof(msg));
+    user_collector_factory_->PackLocal(buf);
   }
 
  public:

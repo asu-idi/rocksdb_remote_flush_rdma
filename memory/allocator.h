@@ -15,6 +15,7 @@
 #include <cerrno>
 #include <cstddef>
 
+#include "memory/remote_flush_service.h"
 #include "rocksdb/write_buffer_manager.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -36,6 +37,7 @@ class Allocator {
 class BasicArena : public Allocator {
  public:
   virtual void PackLocal(int sockfd) const = 0;
+  virtual void PackLocal(char*& buf) const = 0;
 
  public:
   virtual size_t ApproximateMemoryUsage() const = 0;

@@ -13,6 +13,7 @@
 
 #include <thread>
 
+#include "memory/remote_flush_service.h"
 #include "port/port.h"
 #include "util/random.h"
 
@@ -54,6 +55,15 @@ void ConcurrentArena::PackLocal(int sockfd) const {
 void* ConcurrentArena::UnPackLocal(int sockfd) {
   void* arena = reinterpret_cast<void*>(new ConcurrentArena());
   send(sockfd, &arena, sizeof(void*), 0);
+  return arena;
+}
+void ConcurrentArena::PackLocal(char*& buf) const {
+  std::string name = "ConcurrentArena";
+  name.resize(15);
+  PACK_TO_BUF(name.data(), buf, name.size());
+}
+void* ConcurrentArena::UnPackLocal(char*& buf) {
+  void* arena = reinterpret_cast<void*>(new ConcurrentArena());
   return arena;
 }
 

@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "memory/remote_flush_service.h"
 #include "rocksdb/options.h"
 #include "rocksdb/table.h"
 #include "util/murmurhash.h"
@@ -57,6 +58,10 @@ class CuckooTableFactory : public TableFactory {
     send(sockfd, &msg, sizeof(msg), 0);
     msg = 0;
     read(sockfd, &msg, sizeof(size_t));
+  }
+  void PackLocal(char*& buf) const override {
+    size_t msg = 2;
+    PACK_TO_BUF(&msg, buf, sizeof(msg));
   }
 
  public:

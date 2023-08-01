@@ -34,6 +34,7 @@
 #include "db/write_controller.h"
 #include "db/write_thread.h"
 #include "logging/event_logger.h"
+#include "memory/remote_flush_service.h"
 #include "monitoring/instrumented_mutex.h"
 #include "options/db_options.h"
 #include "port/port.h"
@@ -90,8 +91,12 @@ class RemoteFlushJob {
       BlobFileCompletionCallback* blob_callback = nullptr);
   void PackLocal(int sockfd) const;
   static void* UnPackLocal(int sockfd, DBImpl* remote_db);
+  void PackLocal(char*& buf) const;
+  static void* UnPackLocal(char*& buf, DBImpl* remote_db);
   void PackRemote(int sockfd) const;
   static void* UnPackRemote(int sockfd);
+  void PackRemote(char*& buf) const;
+  static void* UnPackRemote(char*& buf);
 
  private:
   // TODO(icanadi) make effort to reduce number of parameters here

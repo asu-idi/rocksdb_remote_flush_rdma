@@ -12,6 +12,7 @@
 
 #include "memory/shared_mem_basic.h"
 #include "memory/shared_std.hpp"
+#include "memory/remote_flush_service.h"
 #include "monitoring/perf_context_imp.h"
 #include "rocksdb/comparator.h"
 #include "rocksdb/comparator_factory.h"
@@ -36,6 +37,18 @@ class UserComparatorWrapper {
     auto* ret = reinterpret_cast<UserComparatorWrapper*>(mem);
     ret->user_comparator_ = reinterpret_cast<Comparator*>(ucmp);
     send(sockfd, &ret, sizeof(void*), 0);
+    return ret;
+  }
+  void PackLocal(char*& buf) const {
+    user_comparator_->PackLocal(buf);
+    PACK_TO_BUF(this, buf, sizeof(*this));
+  }
+  static void* UnPackLocal(char*& buf) {
+    void* ucmp = ComparatorFactory::UnPackLocal(buf);
+    void* mem = malloc(sizeof(UserComparatorWrapper));
+    UNPACK_FROM_BUF(buf, mem, sizeof(UserComparatorWrapper));
+    auto* ret = reinterpret_cast<UserComparatorWrapper*>(mem);
+    ret->user_comparator_ = reinterpret_cast<Comparator*>(ucmp);
     return ret;
   }
 

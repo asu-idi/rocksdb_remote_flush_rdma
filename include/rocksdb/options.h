@@ -17,6 +17,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "memory/remote_flush_service.h"
 #include "rocksdb/advanced_options.h"
 #include "rocksdb/comparator.h"
 #include "rocksdb/compression_type.h"
@@ -66,6 +67,8 @@ struct ColumnFamilyOptions : public AdvancedColumnFamilyOptions {
  public:
   void PackLocal(int sockfd) const;
   static void* UnPackLocal(int sockfd);
+  void PackLocal(char*& buf) const;
+  static void* UnPackLocal(char*& buf);
 
   // The function recovers options to a previous version. Only 4.6 or later
   // versions are supported.

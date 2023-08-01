@@ -31,6 +31,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "memory/remote_flush_service.h"
 #include "rocksdb/customizable.h"
 #include "rocksdb/env.h"
 #include "rocksdb/io_status.h"
@@ -111,6 +112,24 @@ struct IOOptions {
     new (&ptr->timeout) std::chrono::microseconds(timeout_);
     size_t ret_val = 0;
     send(sockfd, &ret_val, sizeof(size_t), 0);
+    return mem;
+  }
+  void PackLocal(char*& buf) const {
+    assert(property_bag.empty());
+    // assert(timeout.count() >= 0);
+    size_t timeout_ = timeout.count();
+    PACK_TO_BUF(reinterpret_cast<const void*>(&timeout_), buf, sizeof(size_t));
+
+    PACK_TO_BUF(reinterpret_cast<const void*>(this), buf, sizeof(IOOptions));
+  }
+  static void* UnPackLocal(char*& buf) {
+    void* mem = malloc(sizeof(IOOptions));
+    size_t timeout_ = 0;
+    UNPACK_FROM_BUF(buf, &timeout_, sizeof(size_t));
+
+    UNPACK_FROM_BUF(buf, mem, sizeof(IOOptions));
+    auto ptr = reinterpret_cast<IOOptions*>(mem);
+    new (&ptr->timeout) std::chrono::microseconds(timeout_);
     return mem;
   }
   // Timeout for the operation in microseconds
@@ -202,6 +221,27 @@ struct FileOptions : EnvOptions {
     local_file_options->handoff_checksum_type = ptr->handoff_checksum_type;
     int64_t ret_val = 0;
     send(sockfd, &ret_val, sizeof(int64_t), 0);
+    free(mem2);
+    return mem;
+  }
+  void PackLocal(char*& buf) const {
+    EnvOptions::PackLocal(buf);
+    io_options.PackLocal(buf);
+    PACK_TO_BUF(reinterpret_cast<const void*>(this), buf, sizeof(FileOptions));
+  }
+  static void* UnPackLocal(char*& buf) {
+    auto* local_env_options_ =
+        reinterpret_cast<EnvOptions*>(EnvOptions::UnPackLocal(buf));
+    auto* local_io_options =
+        reinterpret_cast<IOOptions*>(IOOptions::UnPackLocal(buf));
+    void* mem = new FileOptions(*local_env_options_);
+    void* mem2 = malloc(sizeof(FileOptions));
+    UNPACK_FROM_BUF(buf, mem2, sizeof(FileOptions));
+    auto ptr = reinterpret_cast<FileOptions*>(mem2);
+    auto local_file_options = reinterpret_cast<FileOptions*>(mem);
+    new (&local_file_options->io_options) IOOptions(*local_io_options);
+    local_file_options->temperature = ptr->temperature;
+    local_file_options->handoff_checksum_type = ptr->handoff_checksum_type;
     free(mem2);
     return mem;
   }

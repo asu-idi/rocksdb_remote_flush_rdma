@@ -8,6 +8,7 @@
 #include <string>
 
 #include "db/table_properties_collector.h"
+#include "memory/remote_flush_service.h"
 #include "rocksdb/types.h"
 #include "util/coding.h"
 #include "util/string_util.h"
@@ -83,6 +84,13 @@ class SstFileWriterPropertiesCollectorFactory
     send(sockfd, msg, msg_len, 0);
     size_t ret_val = 0;
     read(sockfd, &ret_val, sizeof(size_t));
+  }
+  void PackLocal(char*& buf) const override {
+    size_t msg_len = sizeof(size_t) + sizeof(int32_t);
+    char* msg = reinterpret_cast<char*>(malloc(msg_len));
+    *reinterpret_cast<size_t*>(msg) = version_;
+    *reinterpret_cast<size_t*>(msg + sizeof(int32_t)) = global_seqno_;
+    PACK_TO_BUF(msg, buf, msg_len);
   }
 
  public:

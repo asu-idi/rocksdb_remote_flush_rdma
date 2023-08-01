@@ -14,6 +14,7 @@
 #include "memory/arena.h"
 #include "memory/concurrent_shared_arena.h"
 #include "memory/shared_mem_basic.h"
+#include "memory/remote_flush_service.h"
 #include "memtable/inlineskiplist.h"
 #include "memtable/readonly_inlineskiplist.h"
 #include "rocksdb/comparator.h"
@@ -32,6 +33,7 @@ class SkipListRep : public MemTableRep {
 
  public:
   void PackLocal(int sockfd) const override;
+  void PackLocal(char*& buf) const override;
 
  private:
   InlineSkipList<const MemTableRep::KeyComparator&> skip_list_;
@@ -396,6 +398,34 @@ void SkipListRep::PackLocal(int sockfd) const {
   ReadOnlySkipListRep::PackLocal(sockfd, ptr);
   LOG("SkipListRep::PackLocal sockfd=", sockfd, " finish");
 }
+void SkipListRep::PackLocal(char*& buf) const {
+  // cmp_.PackLocal(sockfd);
+  // if (transform_ != nullptr)
+  //   transform_->PackLocal(sockfd);
+  // else {
+  //   msg = 0;
+  //   msg += (0xff);
+  //   send(sockfd, &msg, sizeof(msg), 0);
+  //   ret_val = 0;
+  //   read(sockfd, &ret_val, sizeof(int64_t));
+  // }
+  // skip_list_.PackLocal(sockfd);
+  // send(sockfd, reinterpret_cast<const void*>(this), sizeof(*this), 0);
+  // ret_val = 0;
+  // read(sockfd, &ret_val, sizeof(int64_t));
+  LOG("SkipListRep::PackLocal rdma");
+  int64_t msg = 0;
+  msg += (0x01);
+  PACK_TO_BUF(&msg, buf, sizeof(msg));
+  ReadOnlyInlineSkipList<const MemTableRep::KeyComparator&>* ptr =
+      skip_list_.Clone();
+  LOG("server clone readonly skiplistrep: check data:");
+  ptr->check_data();
+  LOG("server clone readonly skiplistrep: check data finish");
+
+  ReadOnlySkipListRep::PackLocal(buf, ptr);
+  LOG("SkipListRep::PackLocal rdma", " finish");
+}
 
 // TODO: ptr: compare transform
 SkipListRep* SkipListRep::CreateSharedSkipListRep(
@@ -449,6 +479,24 @@ void* SkipListFactory::UnPackLocal(int sockfd) {
       reinterpret_cast<void*>(&ptr->skip_list_), local_skip_list_,
       sizeof(InlineSkipList<MemTable::KeyComparator>));  // todo: check sizeof
   send(sockfd, reinterpret_cast<void*>(&local_skiplistrep), sizeof(int64_t), 0);
+  return nullptr;
+}
+void* SkipListFactory::UnPackLocal(char*& buf) {
+  LOG("SkipListFactory::UnPackLocal ");
+  void* local_cmp_ = MemTable::KeyComparator::UnPackLocal(buf);
+  void* local_transform_ = SliceTransformFactory::UnPackLocal(buf);
+  void* local_skip_list_ = nullptr;
+  // InlineSkipList<MemTable::KeyComparator>::UnPackLocal(sockfd);
+  void* local_skiplistrep = malloc(sizeof(SkipListRep));
+  UNPACK_FROM_BUF(buf, local_skiplistrep, sizeof(SkipListRep));
+  auto* ptr = reinterpret_cast<SkipListRep*>(local_skiplistrep);
+  memcpy(reinterpret_cast<void*>(
+             const_cast<MemTableRep::KeyComparator*>(&ptr->cmp_)),
+         local_cmp_, sizeof(MemTable::KeyComparator));
+  ptr->transform_ = reinterpret_cast<const SliceTransform*>(local_transform_);
+  memcpy(
+      reinterpret_cast<void*>(&ptr->skip_list_), local_skip_list_,
+      sizeof(InlineSkipList<MemTable::KeyComparator>));  // todo: check sizeof
   return nullptr;
 }
 
