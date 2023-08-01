@@ -448,6 +448,29 @@ void MemTable::UnPackRemote(int sock_fd) {
   LOG("MemTable::UnPackRemote done");
 }
 
+int MemTable::Pack(shm_package::PackContext& ctx, int idx) {
+  if (idx == -1) idx = ctx.add_package((void*)this, "MemTable");
+  // table_.Pack(ctx, idx);
+  // range_del_table_.Pack(ctx, idx);
+  edit_.Pack(ctx, idx);
+  if (flush_job_info_ != nullptr) {
+    ctx.append_byte(idx, 1);
+    flush_job_info_->Pack(ctx, idx);
+  } else
+    ctx.append_byte(idx, 0);
+  return idx;
+}
+void MemTable::UnPack(shm_package::PackContext& ctx, int idx, size_t& offset) {
+  // table_.Unpack(package, ptrs, offset);
+  // range_del_table_.Unpack(package, ptrs, offset);
+  edit_.UnPack(ctx, idx, offset);
+  if (ctx.get_byte(idx, offset) != 0) {
+    flush_job_info_ = std::make_unique<rocksdb::FlushJobInfo>();
+    flush_job_info_->UnPack(ctx, idx, offset);
+  } else
+    flush_job_info_ = nullptr;
+}
+
 MemTable::~MemTable() {
   mem_tracker_.FreeMem();
   LOG("Memtable ", GetID(), "destructed");

@@ -2,10 +2,10 @@
 ROCKSDB_ROOT_DEV=/root/code/rocksdb_remote_flush/dev/
 FLAMEGRAPH_DIR=/root/code/FlameGraph/
 ROCKSDB_DIR=/tmp/rrtest/
-username=""
-password=""
+username="huanggangqi"
+password="143519499"
 remote_host="10.12.174.42"
-remote_path=""
+remote_path="/Users/huanggangqi/Desktop/"
 
 if [ $# -ne 1 ]; then
   echo "Usage: $0 {0|1}"

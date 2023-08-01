@@ -24,6 +24,7 @@
 #include "db/version_edit.h"
 #include "memory/allocator.h"
 #include "memory/concurrent_arena.h"
+#include "memory/shared_package.h"
 #include "monitoring/instrumented_mutex.h"
 #include "options/cf_options.h"
 #include "rocksdb/compression_type.h"
@@ -613,6 +614,8 @@ class MemTable {
   static Status VerifyEntryChecksum(const char* entry,
                                     size_t protection_bytes_per_key,
                                     bool allow_data_in_errors = false);
+  int Pack(shm_package::PackContext& ctx, int idx = -1);
+  void UnPack(shm_package::PackContext& ctx, int idx, size_t& offset);
 
  private:
   enum FlushStateEnum { FLUSH_NOT_REQUESTED, FLUSH_REQUESTED, FLUSH_SCHEDULED };

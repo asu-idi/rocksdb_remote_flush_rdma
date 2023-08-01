@@ -860,6 +860,17 @@ void* ColumnFamilyData::UnPackLocal(int sockfd) {
   send(sockfd, reinterpret_cast<const void*>(&mem), sizeof(int64_t), 0);
   return mem;
 }
+int ColumnFamilyData::Pack(shm_package::PackContext& ctx, int idx) {
+  if (idx == -1) idx = ctx.add_package((void*)this, "ColumnFamilyData");
+  internal_comparator_.Pack(ctx, idx);
+  ioptions_.Pack(ctx, idx);
+  return idx;
+}
+void ColumnFamilyData::UnPack(shm_package::PackContext& ctx, int idx,
+                              size_t& offset) {
+  internal_comparator_.UnPack(ctx, idx, offset);
+  ioptions_.UnPack(ctx, idx, offset);
+}
 
 void ColumnFamilyData::PackLocal(char*& buf) const {
   initial_cf_options_.PackLocal(buf);

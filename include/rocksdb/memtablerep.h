@@ -47,6 +47,7 @@
 
 #include "db/dbformat.h"
 #include "memory/remote_flush_service.h"
+#include "memory/shared_package.h"
 #include "memtable/skiplist.h"
 #include "rocksdb/customizable.h"
 #include "rocksdb/slice.h"
@@ -326,6 +327,10 @@ class MemTableRep {
   // Return true if the current MemTableRep supports snapshot
   // Default: true
   virtual bool IsSnapshotSupported() const { return true; }
+
+  // virtual int Pack(shm_package::PackContext& ctx, int idx = -1) = 0;
+  // virtual void UnPack(shm_package::PackContext& ctx, int idx, size_t& offset)
+  // = 0;
 
  protected:
   // When *key is an internal key concatenated with the value, returns the

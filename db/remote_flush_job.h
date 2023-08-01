@@ -35,6 +35,7 @@
 #include "db/write_thread.h"
 #include "logging/event_logger.h"
 #include "memory/remote_flush_service.h"
+#include "memory/shared_package.h"
 #include "monitoring/instrumented_mutex.h"
 #include "options/db_options.h"
 #include "port/port.h"
@@ -142,6 +143,8 @@ class RemoteFlushJob {
   std::list<std::unique_ptr<FlushJobInfo>>* GetCommittedFlushJobsInfo() {
     return &committed_flush_jobs_info_;
   }
+  int Pack(shm_package::PackContext& ctx, int idx = -1);
+  void UnPack(shm_package::PackContext& ctx, int idx, size_t& offset);
 
  private:
   friend class FlushJobTest_GetRateLimiterPriorityForWrite_Test;

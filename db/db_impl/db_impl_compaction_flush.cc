@@ -6,6 +6,7 @@
 // Copyright (c) 2011 The LevelDB Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
+#include <arpa/inet.h>
 #include <unistd.h>
 
 #include <cassert>
@@ -22,6 +23,7 @@
 #include "db/version_edit.h"
 #include "file/sst_file_manager_impl.h"
 #include "logging/logging.h"
+#include "memory/remote_flush_service.h"
 #include "monitoring/iostats_context_imp.h"
 #include "monitoring/perf_context_imp.h"
 #include "monitoring/thread_status_updater.h"
@@ -216,7 +218,7 @@ Status DBImpl::FlushMemTableToOutputFile(
   if (cfd->GetLatestCFOptions().server_use_remote_flush) {
     if (!rdma_init_) {
       size_t mem_size = 1ull << 26;
-      rdma_.config.server_name = "10.145.21.36"; // todo: to be configurable
+      rdma_.config.server_name = "10.145.21.36";  // todo: to be configurable
       rdma_.resources_create(mem_size, 1);
       rdma_.connect_qp(0);
       rdma_init_ = true;

@@ -785,7 +785,9 @@ set(SOURCES
         memory/jemalloc_nodump_allocator.cc
         memory/memkind_kmem_allocator.cc
         memory/memory_allocator.cc
+        memory/shared_package.cc
         memory/remote_flush_service.cc
+        memory/rdma_server.cc
         memtable/alloc_tracker.cc
         memtable/hash_linklist_rep.cc
         memtable/hash_skiplist_rep.cc
@@ -1565,17 +1567,12 @@ set(WITH_DEV true)
 if(WITH_DEV)
   set(DEVELOP 
   dev/remote_flush_test_server.cpp
+  dev/remote_flush_worker.cpp
   # dev/trace_query_test.cpp
   # dev/trace_io_test.cpp
   # dev/trace_block_cache_test.cpp
   # dev/trace_memtable_test.cpp
-  # dev/memtable_refactor_test.cpp
-  # dev/db_test4.cpp
-  # dev/shared_memory_writter_test.cpp
-  # dev/shared_memory_reader_test.cpp
-  # dev/open_secondary_test.cpp
-  dev/remote_flush_worker.cpp
-  dev/rdma_server.cc
+  memory/rdma_server.cc
   )
   foreach(sourcefile ${DEVELOP})
     message(STATUS "CHECK DEV: ${sourcefile}")

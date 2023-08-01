@@ -821,6 +821,42 @@ void* ImmutableDBOptions::UnPackLocal(int sockfd) {
   send(sockfd, &ret_val, sizeof(int64_t), 0);
   return reinterpret_cast<void*>(immutable_dboptions);
 }
+int ImmutableDBOptions::Pack(shm_package::PackContext& ctx, int idx) const {
+  if (idx == -1) idx = ctx.add_package((void*)this, "ImmutableDBOptions");
+  std::function<std::string()> gen = []() {
+    std::string ret = "/tmp/DBOptions-";
+    for (int i = 0; i < 10; i++) {
+      std::random_device rd;
+      std::mt19937 generator(rd());
+      ret += std::to_string(generator() % 10);
+    }
+    return ret;
+  };
+  std::string file_name = gen();
+  ctx.append_str(idx, file_name);
+  DBOptions db_options = BuildDBOptions(*this, MutableDBOptions());
+  std::vector<std::string> cf_names_;
+  // TODO: remove this
+  std::vector<ColumnFamilyOptions> cf_opts_;
+  cf_names_.push_back("default");
+  cf_opts_.push_back(ColumnFamilyOptions());
+  Status ret = PersistRocksDBOptions(db_options, cf_names_, cf_opts_, file_name,
+                                     fs.get());
+  assert(ret.ok());
+  return idx;
+}
+void ImmutableDBOptions::UnPack(shm_package::PackContext& ctx, int idx,
+                                size_t& offset) const {
+  std::string file_name = ctx.get_str(idx, offset);
+  DBOptions db_options;
+  ConfigOptions config_options;
+  std::vector<ColumnFamilyDescriptor> loaded_cf_descs;
+  Status ret = LoadOptionsFromFile(config_options, file_name, &db_options,
+                                   &loaded_cf_descs);
+  assert(ret.ok());
+  // todo: fix const
+  // *this = BuildImmutableDBOptions(db_options);
+}
 
 void ImmutableDBOptions::PackLocal(char*& buf) const {
   std::function<std::string()> gen = []() {

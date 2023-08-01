@@ -15,7 +15,8 @@
 #include "db/db_impl/db_impl.h"
 #include "db/version_set.h"
 #include "file/writable_file_writer.h"
-#include "rocksdb/cache.h"
+#include "gtest/gtest.h"
+#include "memory/remote_flush_service.h"
 #include "rocksdb/file_system.h"
 #include "rocksdb/write_buffer_manager.h"
 #include "table/mock_table.h"
@@ -279,6 +280,257 @@ TEST_F(FlushJobTest, NonEmpty) {
   ASSERT_EQ(17, file_meta.oldest_blob_file_number);
   mock_table_factory_->AssertSingleFile(inserted_keys);
   job_context.Clean();
+}
+
+TEST_F(FlushJobTest, DISABLED_SharedFlushJob) {
+  JobContext job_context(0);
+  auto cfd = versions_->GetColumnFamilySet()->GetDefault();
+  uint32_t new_id = versions_->GetColumnFamilySet()->GetNextColumnFamilyID();
+
+  LOG(cfd->GetLatestCFOptions().server_use_remote_flush == true
+          ? "use_remote_flush"
+          : "not use_remote_flush");
+  auto new_mem = cfd->ConstructNewMemtable(*cfd->GetLatestMutableCFOptions(),
+                                           kMaxSequenceNumber);
+  new_mem->Ref();
+  auto inserted_keys = mock::MakeMockFile();
+  // Test data:
+  //   seqno [    1, 2, 3, 4, 5 ]
+  //   key   [ 1001, 1002, 1003, 1004, 1005 ]
+  for (int i = 1; i < 6; ++i) {
+    std::string key(std::to_string((i + 1000) % 10000));
+    std::string value("value" + key);
+    ASSERT_OK(new_mem->Add(SequenceNumber(i), kTypeValue, key, value,
+                           nullptr /* kv_prot_info */));
+    InternalKey internal_key(key, SequenceNumber(i), kTypeValue);
+    inserted_keys.push_back({internal_key.Encode().ToString(), value});
+  }
+  mock::SortKVVector(&inserted_keys);
+  autovector<MemTable*> to_delete;
+  new_mem->ConstructFragmentedRangeTombstones();
+  cfd->imm()->Add(new_mem, &to_delete);
+  for (auto& m : to_delete) {
+    delete m;
+  }
+
+  RemoteFlushJob* remote_flush_job = nullptr;  // fix
+
+  HistogramData hist;
+  FileMetaData file_meta;
+  mutex_.Lock();
+  remote_flush_job->PickMemTable();
+  // CHECK shared
+  ASSERT_OK(remote_flush_job->RunRemote(nullptr, &file_meta));
+  // worker job
+  ASSERT_OK(remote_flush_job->RunLocal(nullptr, &file_meta));
+  mutex_.Unlock();
+
+  // db_options_.statistics->histogramData(FLUSH_TIME, &hist);
+  // ASSERT_GT(hist.average, 0.0);
+  ASSERT_EQ(std::to_string(1001), file_meta.smallest.user_key().ToString());
+  ASSERT_EQ(1, file_meta.fd.smallest_seqno);
+  ASSERT_EQ(5, file_meta.fd.largest_seqno);
+  mock_table_factory_->AssertSingleFile(inserted_keys);
+  job_context.Clean();
+}
+
+TEST_F(FlushJobTest, SharedFlushWithMultipleColumnFamilies) {
+  rocksdb::RDMANode client;
+  client.config.server_name = "10.145.21.36";
+  client.config.tcp_port = 9876;
+  client.resources_create(1ull << 25);
+  client.connect_qp();
+  char* rdma_buf = client.get_buf();
+  autovector<ColumnFamilyData*> all_cfds;
+  for (auto cfd : *versions_->GetColumnFamilySet()) {
+    all_cfds.push_back(cfd);
+    ASSERT_TRUE(cfd->GetLatestCFOptions().server_use_remote_flush == true);
+  }
+  const std::vector<size_t> num_memtables = {2, 1, 3};
+  assert(num_memtables.size() == column_family_names_.size());
+  const size_t num_keys_per_memtable = 10000;
+  JobContext job_context(0);
+  std::vector<uint64_t> memtable_ids;
+  std::vector<SequenceNumber> smallest_seqs;
+  std::vector<SequenceNumber> largest_seqs;
+  autovector<MemTable*> to_delete;
+  SequenceNumber curr_seqno = 0;
+  size_t k = 0;
+  for (auto cfd : all_cfds) {
+    smallest_seqs.push_back(curr_seqno);
+    for (size_t i = 0; i != num_memtables[k]; ++i) {
+      MemTable* mem = cfd->ConstructNewMemtable(
+          *cfd->GetLatestMutableCFOptions(), kMaxSequenceNumber);
+      mem->SetID(i);
+      mem->Ref();
+
+      for (size_t j = 0; j != num_keys_per_memtable; ++j) {
+        std::string key(std::to_string(j + i * num_keys_per_memtable));
+        std::string value("value" + key);
+        ASSERT_OK(mem->Add(curr_seqno++, kTypeValue, key, value,
+                           nullptr /* kv_prot_info */));
+      }
+      mem->ConstructFragmentedRangeTombstones();
+      cfd->imm()->Add(mem, &to_delete);
+    }
+    largest_seqs.push_back(curr_seqno - 1);
+    memtable_ids.push_back(num_memtables[k++] - 1);
+  }
+  std::vector<RemoteFlushJob*> flush_jobs;
+  k = 0;
+  for (auto cfd : all_cfds) {
+    std::vector<SequenceNumber> snapshot_seqs;
+    flush_jobs.emplace_back(nullptr);  // fix
+    k++;
+  }
+  // HistogramData hist;
+  std::vector<FileMetaData> file_metas;
+  // Call reserve to avoid auto-resizing
+  file_metas.reserve(flush_jobs.size());
+  mutex_.Lock();
+  std::chrono::time_point<std::chrono::steady_clock> start_time =
+      std::chrono::steady_clock::now();
+  for (auto& job : flush_jobs) {
+    // TODO(feat): move this into RunLocal
+    job->PickMemTable();
+  }
+  std::chrono::time_point<std::chrono::steady_clock> pick_time =
+      std::chrono::steady_clock::now();
+  LOG("Start block unused data");
+  std::chrono::time_point<std::chrono::steady_clock> block_time =
+      std::chrono::steady_clock::now();
+  LOG("Start pack");
+  k = 0;
+  for (auto& job : flush_jobs) {
+    // job->Pack();
+    shm_package::PackContext ctx;
+    job->Pack(ctx);
+    uint64_t package_len = ctx.get_size();
+    *(uint64_t*)rdma_buf = package_len;
+    ctx.compile_to_string(rdma_buf + sizeof(uint64_t));
+    client.rdma_write(package_len + sizeof(uint64_t), 0, k * (1ull << 25));
+    ASSERT_TRUE(client.poll_completion() == 0);
+    k++;
+  }
+  std::chrono::time_point<std::chrono::steady_clock> pack_time =
+      std::chrono::steady_clock::now();
+  LOG("finish block unused data, Start check shared");
+  /*
+  for (auto& job : flush_jobs) {
+    for (auto memtable : job->GetMemTables()) {
+      ASSERT_TRUE(memtable->CHECKShared());
+    }
+  }
+  for (auto& job : flush_jobs) {
+    for (auto memtable : job->mems_) {
+      ASSERT_TRUE(memtable->CHECKShared());
+    }
+  }
+  */
+  std::chrono::time_point<std::chrono::steady_clock> check_time =
+      std::chrono::steady_clock::now();
+
+  LOG("finish check shared, Start Flush");
+  for (auto& job : flush_jobs) {
+    FileMetaData meta;
+    // Run will release and re-acquire  mutex
+    // ASSERT_OK(job->RunRemote(nullptr /**/, &meta));
+  }
+  std::chrono::time_point<std::chrono::steady_clock> transfer_time =
+      std::chrono::steady_clock::now();
+  LOG("finish flush, Start Unpack");
+  k = 0;
+  for (auto& job : flush_jobs) {
+    // job->UnPack();
+    size_t package_length;
+    while (true) {
+      client.rdma_read(sizeof(uint64_t), 0, k * (1ull << 25));
+      ASSERT_TRUE(client.poll_completion() == 0);
+      package_length = *(uint64_t*)rdma_buf;
+      if (package_length > 0) break;
+    }
+    *(uint64_t*)rdma_buf = 0;
+    client.rdma_write(sizeof(uint64_t), 0, k * (1ull << 25));
+    ASSERT_TRUE(client.poll_completion() == 0);
+    client.rdma_read(package_length, 0, k * (1ull << 25) + sizeof(uint64_t));
+    ASSERT_TRUE(client.poll_completion() == 0);
+    shm_package::PackContext ctx;
+    size_t tmp = 0;
+    ctx.parse_from_string(rdma_buf);
+    job->UnPack(ctx, 0, tmp);
+    k++;
+  }
+  std::chrono::time_point<std::chrono::steady_clock> unpack_time =
+      std::chrono::steady_clock::now();
+
+  for (auto& job : flush_jobs) {
+    FileMetaData meta;
+
+    ASSERT_OK(job->RunLocal(nullptr /**/, &meta));
+    file_metas.emplace_back(meta);
+  }
+  std::chrono::time_point<std::chrono::steady_clock> flush_time =
+      std::chrono::steady_clock::now();
+  autovector<FileMetaData*> file_meta_ptrs;
+  for (auto& meta : file_metas) {
+    file_meta_ptrs.push_back(&meta);
+  }
+  autovector<const autovector<MemTable*>*> mems_list;
+  for (size_t i = 0; i != all_cfds.size(); ++i) {
+    const auto& mems = flush_jobs[i]->GetMemTables();
+    mems_list.push_back(&mems);
+  }
+  autovector<const MutableCFOptions*> mutable_cf_options_list;
+  for (auto cfd : all_cfds) {
+    mutable_cf_options_list.push_back(cfd->GetLatestMutableCFOptions());
+  }
+  autovector<std::list<std::unique_ptr<FlushJobInfo>>*>
+      committed_flush_jobs_info;
+  for (auto& job : flush_jobs) {
+    committed_flush_jobs_info.push_back(job->GetCommittedFlushJobsInfo());
+  }
+  LOG("Start unblock unused data");
+  std::chrono::time_point<std::chrono::steady_clock> unblock_time =
+      std::chrono::steady_clock::now();
+  LOG("finish unblock unused data, Start install");
+  Status s = InstallMemtableAtomicFlushResults(
+      nullptr /* imm_lists */, all_cfds, mutable_cf_options_list, mems_list,
+      versions_.get(), nullptr /* prep_tracker */, &mutex_, file_meta_ptrs,
+      committed_flush_jobs_info, &job_context.memtables_to_free,
+      nullptr /* db_directory */, nullptr /* log_buffer */);
+  std::chrono::time_point<std::chrono::steady_clock> install_time =
+      std::chrono::steady_clock::now();
+  ASSERT_OK(s);
+  mutex_.Unlock();
+  // db_options_.statistics->histogramData(FLUSH_TIME, &hist);
+  // ASSERT_GT(hist.average, 0.0);
+  k = 0;
+  for (const auto& file_meta : file_metas) {
+    ASSERT_EQ(std::to_string(0), file_meta.smallest.user_key().ToString());
+    ASSERT_EQ("9999", file_meta.largest.user_key()
+                          .ToString());  // max key by bytewise comparator
+    ASSERT_EQ(smallest_seqs[k], file_meta.fd.smallest_seqno);
+    ASSERT_EQ(largest_seqs[k], file_meta.fd.largest_seqno);
+    // Verify that imm is empty
+    ASSERT_EQ(std::numeric_limits<uint64_t>::max(),
+              all_cfds[k]->imm()->GetEarliestMemTableID());
+    ASSERT_EQ(0, all_cfds[k]->imm()->GetLatestMemTableID());
+    ++k;
+  }
+  LOG(" check flush procedure finish");
+  for (auto m : to_delete) {
+    delete m;
+  }
+  to_delete.clear();
+  job_context.Clean();
+  file_meta_ptrs.clear();
+  file_metas.clear();
+  mems_list.clear();
+  committed_flush_jobs_info.clear();
+  mutable_cf_options_list.clear();
+  all_cfds.clear();
+  for (auto& v : flush_jobs) delete v;
+  flush_jobs.clear();
 }
 
 TEST_F(FlushJobTest, FlushMemTablesSingleColumnFamily) {

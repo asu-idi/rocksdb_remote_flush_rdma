@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "memory/shared_package.h"
 #include "rocksdb/options.h"
 #include "memory/remote_flush_service.h"
 
@@ -28,6 +29,9 @@ struct ImmutableDBOptions {
   explicit ImmutableDBOptions(const DBOptions& options);
 
   void Dump(Logger* log) const;
+
+  int Pack(shm_package::PackContext& ctx, int idx = -1) const;
+  void UnPack(shm_package::PackContext& ctx, int idx, size_t& offset) const;
 
   bool create_if_missing;
   bool create_missing_column_families;

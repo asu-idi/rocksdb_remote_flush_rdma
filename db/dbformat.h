@@ -16,6 +16,7 @@
 #include <utility>
 
 #include "memory/remote_flush_service.h"
+#include "memory/shared_package.h"
 #include "rocksdb/comparator.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/slice_transform.h"
@@ -274,9 +275,7 @@ class InternalKeyComparator
     send(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t), 0);
     return mem;
   }
-  void PackLocal(char*& buf) const override {
-    user_comparator_.PackLocal(buf);
-  }
+  void PackLocal(char*& buf) const override { user_comparator_.PackLocal(buf); }
   static void* UnPackLocal(char*& buf) {
     void* ucmp = UserComparatorWrapper::UnPackLocal(buf);
     auto ptr = new InternalKeyComparator();
@@ -300,6 +299,9 @@ class InternalKeyComparator
   //    overhead, set `named` to false. In that case, `Name()` will return a
   //    generic name that is non-specific to the underlying comparator.
   explicit InternalKeyComparator(const Comparator* c) : user_comparator_(c) {}
+
+  int Pack(shm_package::PackContext& ctx, int idx = -1) const;
+  void UnPack(shm_package::PackContext& ctx, int idx, size_t& offset) const;
 
   virtual ~InternalKeyComparator() {}
 

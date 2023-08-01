@@ -37,11 +37,6 @@ RDMANode::RDMANode() {
   res = new resources();
 }
 
-RDMANode::~RDMANode() {
-  resources_destroy();
-  delete res;
-}
-
 std::vector<int> RDMANode::sock_connect(const char *servername, int port,
                                         size_t conn_cnt) {
   std::vector<int> ret;
@@ -115,6 +110,7 @@ int RDMANode::sock_sync_data(int sock, int xfer_size, const char *local_data,
   while (!rc && total_read_bytes < xfer_size) {
     read_bytes = read(sock, remote_data + total_read_bytes,
                       xfer_size - total_read_bytes);
+
     if (read_bytes > 0)
       total_read_bytes += read_bytes;
     else
@@ -160,7 +156,6 @@ int RDMANode::poll_completion(int idx) {
   }
   return rc;
 }
-
 int RDMANode::post_send(int idx, size_t msg_size, ibv_wr_opcode opcode,
                         long long local_offset, long long remote_offset) {
   struct ibv_send_wr sr;

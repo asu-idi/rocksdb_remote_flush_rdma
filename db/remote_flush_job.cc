@@ -10,6 +10,7 @@
 #include "db/remote_flush_job.h"
 
 #include <cassert>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -760,6 +761,44 @@ void RemoteFlushJob::RecordFlushIOStats() {
       ThreadStatus::FLUSH_BYTES_WRITTEN, IOSTATS(bytes_written));
   IOSTATS_RESET(bytes_written);
 }
+
+int RemoteFlushJob::Pack(shm_package::PackContext& ctx, int idx) {
+  if (idx == -1) idx = ctx.add_package((void*)this, "RemoteFlushJob");
+  ctx.append_uint64(idx, mems_.size());
+  for (auto memtable : mems_) {
+    if (!ctx.ptr_to_idx.count("MemTable") ||
+        !ctx.ptr_to_idx["MemTable"].count(memtable))
+      ctx.ptr_to_idx["MemTable"][memtable] = memtable->Pack(ctx, -1);
+    ctx.append_uint64(idx, ctx.ptr_to_idx["MemTable"][memtable]);
+  }
+  if (!ctx.ptr_to_idx.count("ColumnFamilyData") ||
+      !ctx.ptr_to_idx["ColumnFamilyData"].count(cfd_))
+    ctx.ptr_to_idx["ColumnFamilyData"][cfd_] = cfd_->Pack(ctx, -1);
+  ctx.append_uint64(idx, ctx.ptr_to_idx["ColumnFamilyData"][cfd_]);
+  return idx;
+}
+void RemoteFlushJob::UnPack(shm_package::PackContext& ctx, int idx,
+                            size_t& offset) {
+  // mems_.clear();
+  for (int i = 0, tot = ctx.get_uint64(idx, offset); i < tot; i++) {
+    size_t des = ctx.get_uint64(idx, offset);
+    if (!ctx.idx_to_ptr.count(des)) {
+      ctx.idx_to_ptr[des] = mems_[i];  // ctx.idx_to_ptr[des] = new MemTable();
+      size_t tmp = 0;
+      ((MemTable*)ctx.idx_to_ptr[des])->UnPack(ctx, des, tmp);
+    }
+    // mems_.push_back(ctx.idx_to_ptr[des]);
+  }
+  size_t des = ctx.get_uint64(idx, offset);
+  if (!ctx.idx_to_ptr.count(des)) {
+    ctx.idx_to_ptr[des] =
+        cfd_;  // ctx.idx_to_ptr[des] = new ColumnFamilyData();
+    size_t tmp = 0;
+    ((ColumnFamilyData*)ctx.idx_to_ptr[des])->UnPack(ctx, des, tmp);
+  }
+  // cfd_ = ctx.idx_to_ptr[des];
+}
+
 void RemoteFlushJob::PickMemTable() {
   db_mutex_->AssertHeld();
   assert(!pick_memtable_called);
@@ -881,8 +920,22 @@ Status RemoteFlushJob::RunRemote(RDMAClient* rdma,
     // s = WriteLevel0Table();
     // assert(s == Status::OK());
 
+    std::chrono::steady_clock::time_point local_pack_finish =
+        std::chrono::steady_clock::now();
+    LOG("RemoteFlushJob::RunRemote pack_local_data_transfer_time: ",
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            local_pack_finish - remote_flush_begin)
+            .count(),
+        "ms");
     s = Status::OK();
     UnPackRemote(server_socket_fd_);
+    std::chrono::steady_clock::time_point remote_flush_end =
+        std::chrono::steady_clock::now();
+    LOG("RemoteFlushJob::RunRemote remote_flush_all_time: ",
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            remote_flush_end - remote_flush_begin)
+            .count(),
+        "ms");
     assert(QuitRemoteWorker() == Status::OK());
 
     LOG("Run job: write l0table done");
@@ -978,7 +1031,16 @@ Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
       " RemoteFlushJob ptr: ", std::hex, reinterpret_cast<void*>(this),
       std::dec);
   LOG("worker calculation: ");
+  std::chrono::steady_clock::time_point local_flush_begin =
+      std::chrono::steady_clock::now();
   Status ret = WriteLevel0Table();
+  std::chrono::steady_clock::time_point local_flush_end =
+      std::chrono::steady_clock::now();
+  LOG("RemoteFlushJob::RunLocal local_flush_all_time: ",
+      std::chrono::duration_cast<std::chrono::milliseconds>(local_flush_end -
+                                                            local_flush_begin)
+          .count(),
+      "ms");
   LOG("worker calculation finished");
   PackRemote(worker_socket_fd_);
   return Status::OK();
@@ -1494,11 +1556,11 @@ Status RemoteFlushJob::WriteLevel0Table() {
       ScopedArenaIterator iter(
           NewMergingIterator(&cfd_->internal_comparator(), memtables.data(),
                              static_cast<int>(memtables.size()), &arena));
-      LOG("check infoLog: ",
-          db_options_.info_log == nullptr ? "null" : "not null");
-      if (db_options_.info_log != nullptr) {
-        LOG("info_log_level:", db_options_.info_log->GetInfoLogLevel());
-      }
+      // LOG("check infoLog: ",
+      //     db_options_.info_log == nullptr ? "null" : "not null");
+      // if (db_options_.info_log != nullptr) {
+      //   LOG("info_log_level:", db_options_.info_log->GetInfoLogLevel());
+      // }
       ROCKS_LOG_INFO(db_options_.info_log,
                      "[%s] [JOB %d] Level-0 flush table #%" PRIu64 ": started",
                      cfd_->GetName().c_str(), job_context_->job_id,
@@ -1545,10 +1607,10 @@ Status RemoteFlushJob::WriteLevel0Table() {
           TableFileCreationReason::kFlush, oldest_key_time, current_time,
           db_id_, db_session_id_, 0 /* target_file_size */,
           meta_.fd.GetNumber());
-      LOG("Get SnapshotSeqnum");
+      // LOG("Get SnapshotSeqnum");
       const SequenceNumber job_snapshot_seq =
           job_context_->GetJobSnapshotSequence();
-      LOG("RemoteFlushJob::WriteLevel0Table: BuildTable");
+      // LOG("RemoteFlushJob::WriteLevel0Table: BuildTable");
       s = RemoteBuildTable(
           dbname_, versions_, db_options_, tboptions, file_options_, iter.get(),
           std::move(range_del_iters), &meta_, existing_snapshots_,
@@ -1559,7 +1621,7 @@ Status RemoteFlushJob::WriteLevel0Table() {
           full_history_ts_low, base_, &num_input_entries,
           &memtable_payload_bytes, &memtable_garbage_bytes);
       // TODO: Cleanup io_status in BuildTable and table builders
-      LOG("RemoteFlushJob::WriteLevel0Table: BuildTable done");
+      // LOG("RemoteFlushJob::WriteLevel0Table: BuildTable done");
       assert(!s.ok() || io_s.ok());
       io_s.PermitUncheckedError();
       if (num_input_entries != total_num_entries && s.ok()) {
