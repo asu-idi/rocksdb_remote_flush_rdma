@@ -361,6 +361,41 @@ struct FlushJobInfo {
 
   // Information about blob files created during flush in Integrated BlobDB.
   std::vector<BlobFileAdditionInfo> blob_file_addition_infos;
+
+  int Pack(shm_package::PackContext& ctx, int idx = -1) {
+    if (idx == -1) idx = ctx.add_package((void*)this, "FlushJobInfo");
+    table_properties.Pack(ctx, idx);
+    ctx.append_uint64(idx, cf_id);
+    ctx.append_str(idx, cf_name);
+    ctx.append_str(idx, file_path);
+    ctx.append_uint64(idx, file_number);
+    ctx.append_uint64(idx, oldest_blob_file_number);
+    ctx.append_uint64(idx, thread_id);
+    ctx.append_uint32(idx, job_id);
+    ctx.append_byte(idx, triggered_writes_slowdown);
+    ctx.append_byte(idx, triggered_writes_stop);
+    ctx.append_uint64(idx, smallest_seqno);
+    ctx.append_uint64(idx, largest_seqno);
+    ctx.append_uint32(idx, (uint32_t)flush_reason);
+    ctx.append_byte(idx, (uint8_t)blob_compression_type);
+    return idx;
+  }
+  void UnPack(shm_package::PackContext& ctx, int idx, size_t& offset) {
+    table_properties.UnPack(ctx, idx, offset);
+    cf_id = ctx.get_uint64(idx, offset);
+    cf_name = ctx.get_str(idx, offset);
+    file_path = ctx.get_str(idx, offset);
+    file_number = ctx.get_uint64(idx, offset);
+    oldest_blob_file_number = ctx.get_uint64(idx, offset);
+    thread_id = ctx.get_uint64(idx, offset);
+    job_id = ctx.get_uint32(idx, offset);
+    triggered_writes_slowdown = ctx.get_byte(idx, offset);
+    triggered_writes_stop = ctx.get_byte(idx, offset);
+    smallest_seqno = ctx.get_uint64(idx, offset);
+    largest_seqno = ctx.get_uint64(idx, offset);
+    flush_reason = (FlushReason)ctx.get_uint32(idx, offset);
+    blob_compression_type = (CompressionType)ctx.get_byte(idx, offset);
+  }
 };
 
 struct CompactionFileInfo {

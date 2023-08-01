@@ -22,6 +22,7 @@
 #include "db/dbformat.h"
 #include "db/wal_edit.h"
 #include "memory/arena.h"
+#include "memory/shared_package.h"
 #include "port/malloc.h"
 #include "rocksdb/advanced_cache.h"
 #include "rocksdb/advanced_options.h"
@@ -282,6 +283,9 @@ struct FileMetaData {
 
   // SST unique id
   UniqueId64x2 unique_id{};
+
+  int Pack(shm_package::PackContext& ctx, int idx = -1);
+  void UnPack(shm_package::PackContext& ctx, int idx, size_t& offset);
 
   FileMetaData() = default;
 
@@ -742,6 +746,10 @@ class VersionEdit {
   uint32_t remaining_entries_ = 0;
 
   std::string full_history_ts_low_;
+
+ public:
+  int Pack(shm_package::PackContext& ctx, int idx = -1);
+  void UnPack(shm_package::PackContext& ctx, int idx, size_t& offset);
 };
 
 }  // namespace ROCKSDB_NAMESPACE

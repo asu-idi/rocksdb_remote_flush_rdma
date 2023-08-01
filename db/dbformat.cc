@@ -212,4 +212,14 @@ void IterKey::EnlargeBuffer(size_t key_size) {
   buf_size_ = key_size;
 }
 
+int InternalKeyComparator::Pack(shm_package::PackContext& ctx, int idx) const {
+  if (idx == -1) idx = ctx.add_package((void*)this, "InternalKeyComparator");
+  user_comparator_.Pack(ctx, idx);
+  return idx;
+}
+void InternalKeyComparator::UnPack(shm_package::PackContext& ctx, int idx,
+                                   size_t& offset) const {
+  user_comparator_.UnPack(ctx, idx, offset);
+}
+
 }  // namespace ROCKSDB_NAMESPACE

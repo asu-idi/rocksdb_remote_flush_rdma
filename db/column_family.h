@@ -676,6 +676,10 @@ class ColumnFamilyData {
   bool mempurge_used_;
 
   std::atomic<uint64_t> next_epoch_number_;
+
+ public:
+  int Pack(shm_package::PackContext& ctx, int idx = -1);
+  void UnPack(shm_package::PackContext& ctx, int idx, size_t& offset);
 };
 
 // ColumnFamilySet has interesting thread-safety requirements

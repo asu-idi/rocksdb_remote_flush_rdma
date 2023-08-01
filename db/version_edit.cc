@@ -164,6 +164,30 @@ void FileMetaData::PackRemote(int sockfd) const {
   read_data(sockfd, &ret_val, sizeof(int64_t));
   LOG("FileMetaData::PackRemote done.");
 }
+int FileMetaData::Pack(shm_package::PackContext& ctx, int idx) {
+  if (idx == -1) idx = ctx.add_package((void*)this, "FileMetaData");
+  ctx.append_str(idx, *smallest.rep());
+  ctx.append_str(idx, *largest.rep());
+  ctx.append_str(idx, file_checksum);
+  ctx.append_str(idx, file_checksum_func_name);
+  ctx.append_uint64(idx, unique_id[0]);
+  ctx.append_uint64(idx, unique_id[1]);
+  // smallest.Clear();
+  // largest.Clear();
+  // file_checksum.clear();
+  // file_checksum_func_name.clear();
+  // TODO: block fd.table_reader
+  return idx;
+}
+void FileMetaData::UnPack(shm_package::PackContext& ctx, int idx,
+                          size_t& offset) {
+  *smallest.get_rep() = ctx.get_str(idx, offset);
+  *largest.get_rep() = ctx.get_str(idx, offset);
+  file_checksum = ctx.get_str(idx, offset);
+  file_checksum_func_name = ctx.get_str(idx, offset);
+  unique_id[0] = ctx.get_uint64(idx, offset);
+  unique_id[1] = ctx.get_uint64(idx, offset);
+}
 
 void* FileMetaData::UnPackRemote(int sockfd) {
   LOG("server FileMetaData::UnPackRemote");
@@ -821,6 +845,66 @@ void VersionEdit::UnPackRemote(int sockfd) {
   read_data(sockfd, &last_sequence_, sizeof(SequenceNumber));
   write(sockfd, &ret_val, sizeof(size_t));
   LOG("VersionEdit::UnPackRemote done.");
+}
+
+int VersionEdit::Pack(shm_package::PackContext& ctx, int idx) {
+  if (idx == -1) idx = ctx.add_package((void*)this, "VersionEdit");
+  ctx.append_str(idx, db_id_);
+  ctx.append_str(idx, comparator_);
+  ctx.append_str(idx, column_family_name_);
+  ctx.append_str(idx, full_history_ts_low_);
+  // db_id_.clear();
+  // comparator_.clear();
+  // column_family_name_.clear();
+  // full_history_ts_low_.clear();
+  ctx.append_uint64(idx, compact_cursors_.size());
+  for (auto& iter : compact_cursors_) {
+    ctx.append_uint64(idx, iter.first);
+    ctx.append_str(idx, *iter.second.rep());
+  }
+  // compact_cursors_.clear();
+  ctx.append_uint64(idx, deleted_files_.size());
+  for (auto& iter : deleted_files_) {
+    ctx.append_uint64(idx, iter.first);
+    ctx.append_uint64(idx, iter.second);
+  }
+  // deleted_files_.clear();
+  ctx.append_uint64(idx, new_files_.size());
+  for (auto& iter : new_files_) {
+    ctx.append_uint64(idx, iter.first);
+    iter.second.Pack(ctx, idx);
+  }
+  // TODO(block): try to block blob_file_additions_ && blob_file_garbages_
+  return idx;
+}
+void VersionEdit::UnPack(shm_package::PackContext& ctx, int idx,
+                         size_t& offset) {
+  db_id_ = ctx.get_str(idx, offset);
+  comparator_ = ctx.get_str(idx, offset);
+  column_family_name_ = ctx.get_str(idx, offset);
+  full_history_ts_low_ = ctx.get_str(idx, offset);
+
+  compact_cursors_.clear();
+  for (size_t i = 0, tot = ctx.get_uint64(idx, offset); i < tot; i++) {
+    int first = ctx.get_uint64(idx, offset);
+    std::string second = ctx.get_str(idx, offset);
+    compact_cursors_.push_back(std::make_pair(first, InternalKey()));
+    *compact_cursors_.back().second.get_rep() = second;
+  }
+
+  deleted_files_.clear();
+  for (size_t i = 0, tot = ctx.get_uint64(idx, offset); i < tot; i++) {
+    int first = ctx.get_uint64(idx, offset);
+    uint64_t second = ctx.get_uint64(idx, offset);
+    deleted_files_.insert(std::make_pair(first, second));
+  }
+
+  new_files_.clear();
+  for (size_t i = 0, tot = ctx.get_uint64(idx, offset); i < tot; i++) {
+    int first = ctx.get_uint64(idx, offset);
+    new_files_.push_back(std::make_pair(first, FileMetaData()));
+    new_files_.back().second.UnPack(ctx, idx, offset);
+  }
 }
 
 void VersionEdit::Clear() {

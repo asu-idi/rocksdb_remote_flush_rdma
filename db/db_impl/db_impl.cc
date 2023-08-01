@@ -332,14 +332,16 @@ void DBImpl::BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri) {
 
   long long rdma_info[2] = {};
   read(sockfd, reinterpret_cast<void*>(rdma_info), 2 * sizeof(long long));
-  assert(rdma_.modify_mem_request(0, std::make_pair(rdma_info[0], rdma_info[1]), 3));
+  assert(rdma_.modify_mem_request(0, std::make_pair(rdma_info[0], rdma_info[1]),
+                                  3));
   rdma_.rdma_read(0, rdma_info[1] - rdma_info[0], 0, rdma_info[0]);
   assert(rdma_.poll_completion(0) == 0);
-  assert(rdma_.modify_mem_request(0, std::make_pair(rdma_info[0], rdma_info[1]), 0));
+  assert(rdma_.modify_mem_request(0, std::make_pair(rdma_info[0], rdma_info[1]),
+                                  0));
 
   char* buf = rdma_.get_buf();
-  auto* local_handler = reinterpret_cast<RemoteFlushJob*>(
-      flush_job->UnPackLocal(buf, this));
+  auto* local_handler =
+      reinterpret_cast<RemoteFlushJob*>(flush_job->UnPackLocal(buf, this));
   int64_t signal_verify = 0;
   read_data(sockfd, &signal_verify, sizeof(int64_t));
   LOG("worker Message received2: ", signal_verify, ' ', sockfd);
@@ -384,12 +386,11 @@ void DBImpl::BGWorkRemoteFlush(void* arg) {
 void DBImpl::TEST_BGWorkRemoteFlush(void* arg) {
   RemoteFlushThreadArg fta = *(reinterpret_cast<RemoteFlushThreadArg*>(arg));
   delete reinterpret_cast<RemoteFlushThreadArg*>(arg);
-  int valread;
   size_t magic = 0;
   size_t buffer = 0;
   char* buffer_ptr = reinterpret_cast<char*>(&buffer);
 
-  valread = read_data(fta.sockfd_, buffer_ptr, sizeof(size_t));
+  read_data(fta.sockfd_, buffer_ptr, sizeof(size_t));
   LOG("Received RemoteFlushJob ptr: ", std::hex,
       reinterpret_cast<void*>(buffer), std::dec, ' ', valread,
       " bytes in total");
@@ -461,7 +462,7 @@ Status DBImpl::ListenAndScheduleFlushJob() {
 
   if (!rdma_init_) {
     size_t mem_size = 1ull << 26;
-    rdma_.config.server_name = "10.145.21.36"; // todo: to be configurable
+    rdma_.config.server_name = "10.145.21.36";  // todo: to be configurable
     rdma_.resources_create(mem_size, 1);
     rdma_.connect_qp(0);
     rdma_init_ = true;

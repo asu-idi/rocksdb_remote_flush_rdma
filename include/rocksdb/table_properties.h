@@ -13,6 +13,7 @@
 #include <string>
 
 #include "memory/remote_flush_service.h"
+#include "memory/shared_package.h"
 #include "rocksdb/customizable.h"
 #include "rocksdb/status.h"
 #include "rocksdb/types.h"
@@ -330,6 +331,9 @@ struct TableProperties {
   // Return the approximated memory usage of this TableProperties object,
   // including memory used by the string properties and UserCollectedProperties
   std::size_t ApproximateMemoryUsage() const;
+
+  int Pack(shm_package::PackContext& ctx, int idx = -1);
+  void UnPack(shm_package::PackContext& ctx, int idx, size_t& offset);
 };
 
 // Extra properties

@@ -1403,6 +1403,9 @@ struct DBOptions {
 
   size_t worker_use_remote_flush = 0;
   size_t server_remote_flush = 0;
+
+  std::string rdma_tcp_addr_ = "127.0.0.1";
+  int rdma_tcp_port_ = 9000;
 };
 
 // Options to control the behavior of a database (passed to DB::Open)

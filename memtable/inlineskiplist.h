@@ -331,6 +331,8 @@ ReadOnlyInlineSkipList<Comparator>::ReadOnlyInlineSkipList(
   }
   data_ = malloc(total_len + 2 * sizeof(size_t));
   total_len_ = sizeof(size_t) * 2 + total_len;
+  std::chrono::steady_clock::time_point start_clone =
+      std::chrono::steady_clock::now();
   char* data_ptr = reinterpret_cast<char*>(data_);
   memcpy(data_ptr, &magic, sizeof(size_t));
   data_ptr += sizeof(size_t);
@@ -347,6 +349,11 @@ ReadOnlyInlineSkipList<Comparator>::ReadOnlyInlineSkipList(
     iter.Next();
   }
   memcpy(data_ptr, &magic, sizeof(size_t));
+  std::chrono::steady_clock::time_point end_clone =
+      std::chrono::steady_clock::now();
+  LOG("clone time: ", std::chrono::duration_cast<std::chrono::milliseconds>(
+                          end_clone - start_clone)
+                          .count());
   LOG("construct ReadOnlyInlineSkipList done");
 }
 

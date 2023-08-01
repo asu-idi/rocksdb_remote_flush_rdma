@@ -2723,7 +2723,7 @@ class DBImpl : public DB {
 
   // RDMA Client
   RDMAClient rdma_;
-  bool rdma_init_ {false};
+  bool rdma_init_{false};
 };
 
 class GetWithTimestampReadCallback : public ReadCallback {
