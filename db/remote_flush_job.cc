@@ -753,7 +753,7 @@ void RemoteFlushJob::PickMemTable() {
   base_->Ref();  // it is likely that we do not need this reference
 }
 
-Status RemoteFlushJob::RunRemote(LogsWithPrepTracker* prep_tracker,
+Status RemoteFlushJob::RunRemote(RDMAClient* rdma, LogsWithPrepTracker* prep_tracker,
                                  FileMetaData* file_meta,
                                  bool* switched_to_mempurge) {
   TEST_SYNC_POINT("RemoteFlushJob::Start");
@@ -808,7 +808,16 @@ Status RemoteFlushJob::RunRemote(LogsWithPrepTracker* prep_tracker,
     // This will release and re-acquire the mutex.
     LOG("Run job: write l0table");
     assert(MatchRemoteWorker() == Status::OK());
-    PackLocal(server_socket_fd_);
+
+    char* buf = rdma->get_buf();
+    PackLocal(buf);
+    auto mem_seg = rdma->allocate_mem_request(0, buf - rdma->get_buf());
+    rdma->rdma_write(0, mem_seg.second - mem_seg.first, 0, mem_seg.first);
+    assert(rdma->poll_completion(0) == 0);
+    assert(rdma->modify_mem_request(0, mem_seg, 2));
+    long long rdma_info[2] = {mem_seg.first, mem_seg.second};
+    send(server_socket_fd_, rdma_info, 2 * sizeof(long long), 0);
+
     int64_t signal = 4321;
     send(server_socket_fd_, &signal, sizeof(int64_t), 0);
     LOG("server Message sent2: ", signal, ' ', server_socket_fd_);

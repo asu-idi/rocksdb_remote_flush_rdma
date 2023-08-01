@@ -328,8 +328,17 @@ void DBImpl::BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri) {
   auto* flush_job =
       reinterpret_cast<RemoteFlushJob*>(malloc(sizeof(RemoteFlushJob)));
   flush_job->worker_socket_fd_ = sockfd;
+
+  long long rdma_info[2];
+  read(sockfd, rdma_info, 2 * sizeof(long long));
+  assert(rdma_.modify_mem_request(0, std::make_pair(rdma_info[0], rdma_info[1]), 3));
+  rdma_.rdma_read(0, rdma_info[1] - rdma_info[0], 0, rdma_info[0]);
+  assert(rdma_.poll_completion(0) == 0);
+  assert(rdma_.modify_mem_request(0, std::make_pair(rdma_info[0], rdma_info[1]), 0));
+
+  char* buf = rdma_.get_buf();
   auto* local_handler = reinterpret_cast<RemoteFlushJob*>(
-      flush_job->UnPackLocal(flush_job->worker_socket_fd_, this));
+      flush_job->UnPackLocal(buf, this));
   int64_t signal_verify = 0;
   read(sockfd, &signal_verify, sizeof(int64_t));
   LOG("worker Message received2: ", signal_verify, ' ', sockfd);
@@ -448,6 +457,14 @@ Status DBImpl::ListenAndScheduleFlushJob() {
     return Status::Aborted("DB is not working");
   }
   mutex_.Unlock();
+
+  if (!rdma_init_) {
+    size_t mem_size = 1ull << 26;
+    rdma_.config.server_name = "10.145.21.36"; // todo: to be configurable
+    rdma_.resources_create(mem_size, 1);
+    rdma_.connect_qp(0);
+    rdma_init_ = true;
+  }
 
   int server_fd, new_socket;
   struct sockaddr_in address;

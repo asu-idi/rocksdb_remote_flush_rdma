@@ -339,7 +339,8 @@ int RDMANode::resources_create(size_t size, size_t conn_cnt, size_t max_wr){
 		}
 	}
 	// allocate the memory buffer that will hold the data
-	res->buf = new char[size]();
+	buf_size = size;
+	res->buf = new char[buf_size]();
 	// register the memory buffer
 	mr_flags = IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ | IBV_ACCESS_REMOTE_WRITE;
 	res->mr = ibv_reg_mr(res->pd, res->buf, size, mr_flags);
@@ -594,6 +595,142 @@ int RDMANode::modify_qp_to_rts(struct ibv_qp *qp){
 	if (rc)
 		fprintf(stderr, "failed to modify QP state to RTS\n");
 	return rc;
+}
+
+RDMAServer::RDMAServer(): RDMANode(){
+	mtx = std::make_unique<std::mutex>();
+}
+RDMAClient::RDMAClient(): RDMANode(){
+}
+std::pair<long long, long long> RDMAClient::allocate_mem_request(int idx, size_t size){
+	long long ret[2];
+	int local_size = sizeof(size_t), remote_size = sizeof(long long) * 2;
+	int rc;
+	int read_bytes = 0;
+	int total_read_bytes = 0;
+	rc = write(res->sock[idx], reinterpret_cast<void*>(&size), local_size);
+	if (rc < local_size)
+		fprintf(stderr, "Failed writing data during sock_sync_data\n");
+	else
+		rc = 0;
+	while (!rc && total_read_bytes < remote_size) {
+		read_bytes = read(res->sock[idx], reinterpret_cast<void*>(ret), remote_size);
+		if (read_bytes > 0)
+			total_read_bytes += read_bytes;
+		else
+			rc = read_bytes;
+	}
+	return std::make_pair(ret[0], ret[1]);
+}
+void RDMAServer::allocate_mem_service(int idx){
+	size_t size;
+	long long ret[2];
+	int remote_size = sizeof(size_t), local_size = sizeof(long long) * 2;
+	int rc;
+	int read_bytes = 0;
+	int total_read_bytes = 0;
+	while (!rc && total_read_bytes < remote_size) {
+		read_bytes = read(res->sock[idx], reinterpret_cast<void*>(&size), remote_size);
+		if (read_bytes > 0)
+			total_read_bytes += read_bytes;
+		else
+			rc = read_bytes;
+	}
+	while(true){
+		std::lock_guard<std::mutex> lk(*mtx);
+		bool flag = false;
+		if(mem_seg.empty()){
+			if(size <= buf_size)
+				ret[0] = 0, ret[1] = size, flag = true;
+			else{
+				fprintf(stderr, "Memory node does not have enough capacity\n");
+				return;
+			}
+		}
+		else{
+			if(size <= mem_seg.begin()->first.first)
+				ret[0] = 0, ret[1] = size, flag = true;
+			else for(auto i = mem_seg.begin(); i != mem_seg.end(); i++){
+				auto j = i;
+				j++;
+				if(i->first.second + size <= (j != mem_seg.end() ? j->first.first : buf_size)){
+					ret[0] = i->first.second, ret[1] = i->first.second + size, flag = true;
+					break;
+				}
+			}
+		}
+		if(flag){
+			mem_seg[std::make_pair(ret[0], ret[1])] = 1;
+			break;
+		}
+	}
+	rc = write(res->sock[idx], reinterpret_cast<void*>(ret), local_size);
+	if (rc < local_size)
+		fprintf(stderr, "Failed writing data during sock_sync_data\n");
+	else
+		rc = 0;
+}
+bool RDMAClient::modify_mem_request(int idx, std::pair<long long, long long> offset, int type){
+	long long tmp[3] = {offset.first, offset.second, type};
+	bool ret = false;
+	int local_size = sizeof(long long) * 3, remote_size = sizeof(bool);
+	int rc;
+	int read_bytes = 0;
+	int total_read_bytes = 0;
+	rc = write(res->sock[idx], reinterpret_cast<void*>(tmp), local_size);
+	if (rc < local_size)
+		fprintf(stderr, "Failed writing data during sock_sync_data\n");
+	else
+		rc = 0;
+	while (!rc && total_read_bytes < remote_size) {
+		read_bytes = read(res->sock[idx], reinterpret_cast<void*>(&ret), remote_size);
+		if (read_bytes > 0)
+			total_read_bytes += read_bytes;
+		else
+			rc = read_bytes;
+	}
+	return ret;
+}
+void RDMAServer::modify_mem_service(int idx){
+	long long input[3];
+	bool ret = false;
+	int remote_size = sizeof(long long) * 3, local_size = sizeof(bool);
+	int rc;
+	int read_bytes = 0;
+	int total_read_bytes = 0;
+	while (!rc && total_read_bytes < remote_size) {
+		read_bytes = read(res->sock[idx], reinterpret_cast<void*>(input), remote_size);
+		if (read_bytes > 0)
+			total_read_bytes += read_bytes;
+		else
+			rc = read_bytes;
+	}
+	{
+		std::lock_guard<std::mutex> lk(*mtx);
+		auto iter = mem_seg.find(std::make_pair(input[0], input[1]));
+		if(iter == mem_seg.end()){
+			ret = false;
+			fprintf(stderr, "Memory node cannot find memory segment\n");
+		}
+		else if(input[2] == 0 && iter->second == 3){
+			ret = true;
+			mem_seg.erase(iter);
+		}
+		else if(input[2] == 2 && iter->second == 1
+			|| input[2] == 3 && iter->second == 2){
+			ret = true;
+			iter->second = input[2];
+		}
+		else{
+			ret = false;
+			fprintf(stderr, "Unexpected memory segment state\n");
+		}
+	}
+	rc = write(res->sock[idx], reinterpret_cast<void*>(&ret), local_size);
+	if (rc < local_size)
+		fprintf(stderr, "Failed writing data during sock_sync_data\n");
+	else
+		rc = 0;
 }
 
 }  // namespace ROCKSDB_NAMESPACE

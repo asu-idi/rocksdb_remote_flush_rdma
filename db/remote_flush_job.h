@@ -133,7 +133,7 @@ class RemoteFlushJob {
   Status RunLocal(LogsWithPrepTracker* prep_tracker = nullptr,
                   FileMetaData* file_meta = nullptr,
                   bool* switched_to_mempurge = nullptr);
-  Status RunRemote(LogsWithPrepTracker* prep_tracker = nullptr,
+  Status RunRemote(RDMAClient* rdma, LogsWithPrepTracker* prep_tracker = nullptr,
                    FileMetaData* file_meta = nullptr,
                    bool* switched_to_mempurge = nullptr);
   Status MatchRemoteWorker();

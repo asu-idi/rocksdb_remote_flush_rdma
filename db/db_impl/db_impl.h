@@ -48,6 +48,7 @@
 #include "db/write_controller.h"
 #include "db/write_thread.h"
 #include "logging/event_logger.h"
+#include "memory/remote_flush_service.h"
 #include "monitoring/instrumented_mutex.h"
 #include "options/db_options.h"
 #include "port/port.h"
@@ -2719,6 +2720,10 @@ class DBImpl : public DB {
   // The number of LockWAL called without matching UnlockWAL call.
   // See also lock_wal_write_token_
   uint32_t lock_wal_count_;
+
+  // RDMA Client
+  RDMAClient rdma_;
+  bool rdma_init_ {false};
 };
 
 class GetWithTimestampReadCallback : public ReadCallback {
