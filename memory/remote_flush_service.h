@@ -8,6 +8,7 @@
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 #pragma once
 
+#include <memory>
 #include <atomic>
 #include <cstddef>
 #include <deque>
@@ -17,8 +18,11 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <map>
 #include <infiniband/verbs.h>
 #include <arpa/inet.h>
+#include <mutex>
+#include "rocksdb/rocksdb_namespace.h"
 
 
 namespace ROCKSDB_NAMESPACE {
@@ -26,7 +30,6 @@ namespace ROCKSDB_NAMESPACE {
 #define PACK_TO_BUF(src, buf, len) {memcpy((buf), (src), (len)); (buf) += (len);}
 #define UNPACK_FROM_BUF(buf, des, len) {memcpy((des), (buf), (len)); (buf) += (len);}
 
-#define RDMA_OFFSET (1ull << 10)
 
 class RDMANode {
 	// structure of test parameters
@@ -67,7 +70,6 @@ private:
 	int modify_qp_to_rtr(struct ibv_qp *qp, uint32_t remote_qpn, uint16_t dlid, uint8_t *dgid);
 	int modify_qp_to_rts(struct ibv_qp *qp);
 	int resources_destroy();
-	struct resources *res;
 public:
 	RDMANode();
 	~RDMANode();
@@ -87,7 +89,27 @@ public:
 	}
 	int poll_completion(int idx);
 	char* get_buf() {return res->buf;}
+	struct resources *res;
+	size_t buf_size;
 	struct config_t config;
+};
+
+class RDMAServer: public RDMANode {
+public:
+	RDMAServer();
+	void allocate_mem_service(int idx);
+	void modify_mem_service(int idx);
+private:
+	std::map<std::pair<size_t, size_t>, int> mem_seg;
+	std::unique_ptr<std::mutex> mtx;
+};
+
+class RDMAClient: public RDMANode {
+public:
+	RDMAClient();
+	std::pair<long long, long long> allocate_mem_request(int idx, size_t size);
+	// type == 0: free; type == 1: being written; type == 2: occupied; type == 3: being read.
+	bool modify_mem_request(int idx, std::pair<long long, long long> offset, int type);
 };
 
 }  // namespace ROCKSDB_NAMESPACE

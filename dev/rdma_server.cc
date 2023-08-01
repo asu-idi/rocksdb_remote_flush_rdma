@@ -3,7 +3,6 @@
 //  COPYING file in the root directory) and Apache 2.0 License
 //  (found in the LICENSE.Apache file in the root directory).
 
-#include "db/flush_job.h"
 
 #include <iostream>
 #include <algorithm>
@@ -13,36 +12,20 @@
 #include <string>
 #include <arpa/inet.h>
 
-#include "db/blob/blob_index.h"
-#include "db/column_family.h"
-#include "db/db_impl/db_impl.h"
-#include "db/remote_flush_job.h"
-#include "db/version_set.h"
-#include "file/writable_file_writer.h"
-#include "memory/shared_mem_basic.h"
-#include "memory/shared_package.h"
 #include "memory/remote_flush_service.h"
-#include "rocksdb/cache.h"
-#include "rocksdb/file_system.h"
-#include "rocksdb/options.h"
-#include "rocksdb/write_buffer_manager.h"
-#include "table/mock_table.h"
-#include "test_util/testharness.h"
-#include "test_util/testutil.h"
-#include "util/logger.hpp"
-#include "util/macro.hpp"
-#include "util/random.h"
-#include "util/string_util.h"
 
 int main(int argc, char** argv) {
-	if (argc < 2 || argc > 3){
-		fprintf(stderr, "Parameters: [port] [mem size]\n");
+	if (argc > 4){
+		fprintf(stderr, "Parameters: [conn_cnt] [mem_size] [port]\n");
 		return 0;
 	}
-	rocksdb::RDMANode server;
-	server.config.tcp_port = std::atoi(argv[1]);
-	server.resources_create(argc == 3 ? std::atoll(argv[2]) : 1ull << 27);
+	int conn_cnt = argc >= 2 ? std::atoi(argv[1]) : 2;
+	size_t mem_size = argc >= 3 ? std::atoll(argv[2]) : 1ull << 28;
+	rocksdb::RDMAServer server;
+	// if(argc >= 4) server.config.tcp_port = std::atoi(argv[3]);
+	server.resources_create(mem_size, conn_cnt);
 	server.connect_qp(0);
+	server.connect_qp(1);
 	while (true){
 		std::string command;
 		std::cin >> command;
