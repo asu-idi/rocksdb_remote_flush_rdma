@@ -13,6 +13,7 @@
 #include <cinttypes>
 #include <deque>
 #include <functional>
+#include <mutex>
 #include <thread>
 
 #include "db/builder.h"
@@ -216,13 +217,6 @@ Status DBImpl::FlushMemTableToOutputFile(
   // picking so that no new snapshot can be taken between the two functions.
   LOG("Construct flush job");
   if (cfd->GetLatestCFOptions().server_use_remote_flush) {
-    if (!rdma_init_) {
-      size_t mem_size = 1ull << 26;
-      rdma_.config.server_name = "10.145.21.36";  // todo: to be configurable
-      rdma_.resources_create(mem_size, 1);
-      rdma_.connect_qp(0);
-      rdma_init_ = true;
-    }
     LOG("Construct remote flush job");
     std::shared_ptr<RemoteFlushJob> flush_job =
         RemoteFlushJob::CreateRemoteFlushJob(
@@ -294,7 +288,19 @@ Status DBImpl::FlushMemTableToOutputFile(
     // is unlocked by the current thread.
     if (s.ok()) {
       LOG("flush job run remote: ptr = ", std::hex, flush_job.get(), std::dec);
-      s = flush_job->RunRemote(&rdma_, &logs_with_prep_tracker_, &file_meta,
+      std::function<int()> get_available_port = [&]() -> int {
+        std::lock_guard<std::mutex> lock(transfer_mutex_);
+        for (int i = 0; i < 100; i++) {
+          if (metadata_recv_ports_in_used_[i] == false) {
+            metadata_recv_ports_in_used_[i] = true;
+            return i + 5000;
+          }
+        }
+        LOG("All port in used");
+        assert(false);
+      };
+      s = flush_job->RunRemote(&memnodes_ip_port_, &get_available_port,
+                               local_ip_, &logs_with_prep_tracker_, &file_meta,
                                &switched_to_mempurge);
       // s = flush_job->RunLocal(&logs_with_prep_tracker_, &file_meta,
       //                         &switched_to_mempurge);

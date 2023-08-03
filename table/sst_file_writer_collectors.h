@@ -76,7 +76,7 @@ class SstFileWriterPropertiesCollector : public IntTblPropCollector {
 class SstFileWriterPropertiesCollectorFactory
     : public IntTblPropCollectorFactory {
  public:
-  void PackLocal(TCPNode* node) const override {
+  void PackLocal(TransferService* node) const override {
     size_t msg_len = sizeof(size_t) + sizeof(int32_t);
     char* msg = reinterpret_cast<char*>(malloc(msg_len));
     *reinterpret_cast<size_t*>(msg) = version_;

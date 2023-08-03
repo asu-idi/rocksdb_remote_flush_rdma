@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include <cassert>
 #include <map>
 #include <memory>
 #include <string>
@@ -390,7 +391,7 @@ class DB {
   // a DB.
   virtual Status DestroyColumnFamilyHandle(ColumnFamilyHandle* column_family);
 
-  virtual Status ListenAndScheduleFlushJob() {
+  virtual Status ListenAndScheduleFlushJob(int) {
     LOG("ListenAndScheduleFlushJob not supported");
     return Status::NotSupported();
   }
@@ -1889,6 +1890,10 @@ class DB {
   virtual Status TryCatchUpWithPrimary() {
     return Status::NotSupported("Supported only by secondary instance");
   }
+
+  virtual void register_memnode(const std::string&, size_t) { assert(false); }
+  virtual void unregister_memnode(const std::string&, size_t) { assert(false); }
+  virtual void register_local_ip(const std::string&) { assert(false); }
 };
 
 struct WriteStallStatsMapKeys {

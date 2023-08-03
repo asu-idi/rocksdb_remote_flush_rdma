@@ -11,6 +11,7 @@
 #include <string>
 
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "rocksdb/table.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -138,7 +139,7 @@ class TableBuilder;
 //
 class PlainTableFactory : public TableFactory {
  public:
-  void PackLocal(TCPNode* node) const override {
+  void PackLocal(TransferService* node) const override {
     size_t msg = 3;
     node->send(&msg, sizeof(msg));
   }

@@ -203,7 +203,11 @@ class RDMAClient : public RDMANode {
   // being read.
   bool modify_mem_request(int idx, std::pair<long long, long long> offset,
                           int type);
+  size_t port = -1;
+  bool is_init_ = false;
+  RegularMemNode memory_;
 };
+
 // register_workers then opentcp
 class RemoteFlushJobPD {
  public:

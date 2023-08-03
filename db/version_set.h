@@ -132,8 +132,8 @@ class VersionStorageInfo {
   void check();
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
-  void PackLocal(TCPNode* node) const;
-  static void* UnPackLocal(TCPNode* node);
+  void PackLocal(TransferService* node) const;
+  static void* UnPackLocal(TransferService* node);
 
  public:
   VersionStorageInfo(const InternalKeyComparator* internal_comparator,
@@ -831,8 +831,8 @@ class Version {
   void check();
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
-  void PackLocal(TCPNode* node) const;
-  static void* UnPackLocal(TCPNode* node, void* cfd_ptr);
+  void PackLocal(TransferService* node) const;
+  static void* UnPackLocal(TransferService* node, void* cfd_ptr);
 
  public:
   // Append to *iters a sequence of iterators that will
@@ -1135,8 +1135,8 @@ class VersionSet {
   void check();
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
-  void PackLocal(TCPNode* node) const;
-  static void* UnPackLocal(TCPNode* node);
+  void PackLocal(TransferService* node) const;
+  static void* UnPackLocal(TransferService* node);
 
  public:
   VersionSet(const std::string& dbname, const ImmutableDBOptions* db_options,

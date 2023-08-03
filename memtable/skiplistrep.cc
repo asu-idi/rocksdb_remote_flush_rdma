@@ -12,6 +12,7 @@
 #include "db/memtable.h"
 #include "memory/allocator.h"
 #include "memory/arena.h"
+#include "memory/remote_transfer_service.h"
 #include "memory/remote_flush_service.h"
 #include "memtable/inlineskiplist.h"
 #include "memtable/readonly_inlineskiplist.h"
@@ -31,7 +32,8 @@ class SkipListRep : public MemTableRep {
 
  public:
   void PackLocal(char*& buf) const override;
-  void PackLocal(TCPNode* node, size_t protection_bytes_per_key) const override;
+  void PackLocal(TransferService* node,
+                 size_t protection_bytes_per_key) const override;
 
  private:
   InlineSkipList<const MemTableRep::KeyComparator&> skip_list_;
@@ -361,7 +363,7 @@ class SkipListRep : public MemTableRep {
   }
 };
 
-void SkipListRep::PackLocal(TCPNode* node,
+void SkipListRep::PackLocal(TransferService* node,
                             size_t protection_bytes_per_key) const {
   LOG("SkipListRep::PackLocal");
   int64_t msg = 0x1;

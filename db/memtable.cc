@@ -38,6 +38,7 @@
 #include "memory/concurrent_arena.h"
 #include "memory/memory_usage.h"
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "monitoring/perf_context_imp.h"
 #include "monitoring/statistics.h"
 #include "port/lang.h"
@@ -177,7 +178,7 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
 
 void MemTable::check() {}
 
-void* MemTable::UnPackLocal(TCPNode* node) {
+void* MemTable::UnPackLocal(TransferService* node) {
   LOG("start MemTable::UnPackLocal");
   void* local_arena = BasicArenaFactory::UnPackLocal(node);
   void* local_prefix_extractor = SliceTransformFactory::UnPackLocal(node);
@@ -219,7 +220,7 @@ void* MemTable::UnPackLocal(TCPNode* node) {
   return mem;
 }
 
-void MemTable::PackLocal(TCPNode* node) const {
+void MemTable::PackLocal(TransferService* node) const {
   arena_->PackLocal(node);
   if (prefix_extractor_ != nullptr)
     prefix_extractor_->PackLocal(node);
@@ -309,7 +310,7 @@ void MemTable::PackLocal(char*& buf) const {
   LOG("send MemTable", reinterpret_cast<const void*>(this));
 }
 
-void MemTable::PackRemote(TCPNode* node) const {
+void MemTable::PackRemote(TransferService* node) const {
   assert(flush_job_info_ != nullptr);
   LOG("MemTable::PackRemote");
   // note: only pack flush_job_info
@@ -352,7 +353,7 @@ void MemTable::PackRemote(TCPNode* node) const {
   LOG("MemTable::PackRemote done");
 }
 
-void MemTable::UnPackRemote(TCPNode* node) {
+void MemTable::UnPackRemote(TransferService* node) {
   auto flush_job_info = new FlushJobInfo();
   void* mem = reinterpret_cast<void*>(flush_job_info);
   size_t ret_num = 0;

@@ -20,7 +20,7 @@ namespace ROCKSDB_NAMESPACE {
 class SliceTransformFactory {
  public:
   static void* UnPackLocal(char*& buf);
-  static void* UnPackLocal(TCPNode* node);
+  static void* UnPackLocal(TransferService* node);
 
   SliceTransformFactory(const SliceTransformFactory&) = delete;
   void operator=(const SliceTransformFactory&) = delete;
@@ -30,7 +30,7 @@ class SliceTransformFactory {
   ~SliceTransformFactory() = default;
 };
 
-inline void* SliceTransformFactory::UnPackLocal(TCPNode* node) {
+inline void* SliceTransformFactory::UnPackLocal(TransferService* node) {
   int64_t* msg = nullptr;
   size_t size = sizeof(int64_t);
   node->receive(reinterpret_cast<void**>(&msg), &size);

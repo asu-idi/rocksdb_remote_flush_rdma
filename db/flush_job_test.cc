@@ -17,6 +17,7 @@
 #include "file/writable_file_writer.h"
 #include "gtest/gtest.h"
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "rocksdb/file_system.h"
 #include "rocksdb/write_buffer_manager.h"
 #include "table/mock_table.h"

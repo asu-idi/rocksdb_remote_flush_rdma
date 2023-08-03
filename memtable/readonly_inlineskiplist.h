@@ -12,8 +12,8 @@
 #include "memory/allocator.h"
 #include "memory/arena.h"
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "memtable/inlineskiplist.h"
-#include "memory/remote_flush_service.h"
 #include "rocksdb/iterator.h"
 #include "rocksdb/memtablerep.h"
 #include "rocksdb/slice_transform.h"
@@ -27,7 +27,7 @@ namespace ROCKSDB_NAMESPACE {
 class ReadOnlySkipListRep : public MemTableRep {
  public:
   static void PackLocal(
-      TCPNode* node,
+      TransferService* node,
       const ReadOnlyInlineSkipList<const MemTableRep::KeyComparator&>*
           readonly_skiplistrep) {
     int64_t msg = 0;
@@ -37,7 +37,7 @@ class ReadOnlySkipListRep : public MemTableRep {
                sizeof(ReadOnlySkipListRep));
   }
 
-  static void* UnPackLocal(TCPNode* node) {
+  static void* UnPackLocal(TransferService* node) {
     int64_t msg = 0;
     void* readonly_inline_skiplistrep =
         ReadOnlyInlineSkipList<const MemTableRep::KeyComparator&>::UnPackLocal(
@@ -68,7 +68,7 @@ class ReadOnlySkipListRep : public MemTableRep {
     readonly_skiplistrep->PackLocal(buf);
     auto readonly_skiplistrep_ = new ReadOnlySkipListRep(readonly_skiplistrep);
     PACK_TO_BUF(reinterpret_cast<void*>(readonly_skiplistrep_), buf,
-         sizeof(ReadOnlySkipListRep));
+                sizeof(ReadOnlySkipListRep));
   }
 
   static void* UnPackLocal(char*& buf) {

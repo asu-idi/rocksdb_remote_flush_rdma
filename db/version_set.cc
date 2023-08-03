@@ -1558,11 +1558,11 @@ void Version::check() {
   LOG("Version::check done");
 }
 
-void Version::PackLocal(TCPNode* node) const {
+void Version::PackLocal(TransferService* node) const {
   storage_info_.PackLocal(node);
   node->send(reinterpret_cast<const void*>(this), sizeof(Version));
 }
-void* Version::UnPackLocal(TCPNode* node, void* cfd_ptr) {
+void* Version::UnPackLocal(TransferService* node, void* cfd_ptr) {
   void* mem = malloc(sizeof(Version));
   auto* mem_ptr = reinterpret_cast<Version*>(mem);
   void* worker_storage_info = VersionStorageInfo::UnPackLocal(node);
@@ -3176,11 +3176,11 @@ void VersionStorageInfo::check() {
   LOG("finalized_: ", finalized_);
 }
 
-void VersionStorageInfo::PackLocal(TCPNode* node) const {
+void VersionStorageInfo::PackLocal(TransferService* node) const {
   node->send(reinterpret_cast<const void*>(this), sizeof(VersionStorageInfo));
 }
 
-void* VersionStorageInfo::UnPackLocal(TCPNode* node) {
+void* VersionStorageInfo::UnPackLocal(TransferService* node) {
   void* mem = malloc(sizeof(VersionStorageInfo));
   node->receive(mem, sizeof(VersionStorageInfo));
   return mem;
@@ -4857,14 +4857,14 @@ void VersionSet::check() {
   LOG("VersionSet::check done.");
 }
 
-void VersionSet::PackLocal(TCPNode* node) const {
+void VersionSet::PackLocal(TransferService* node) const {
   LOG("VersionSet::PackLocal dump ImmutablDBOptions file");
   db_options_->PackLocal(node);
   LOG("VersionSet::PackLocal dump ImmutablDBOptions file done.");
   node->send(reinterpret_cast<const void*>(this), sizeof(VersionSet));
 }
 
-void* VersionSet::UnPackLocal(TCPNode* node) {
+void* VersionSet::UnPackLocal(TransferService* node) {
   void* local_db_options_ = ImmutableDBOptions::UnPackLocal(node);
   void* mem = malloc(sizeof(VersionSet));
   auto ptr = reinterpret_cast<VersionSet*>(mem);
@@ -5059,7 +5059,6 @@ void VersionSet::AppendVersion(ColumnFamilyData* column_family_data,
                                Version* v) {
   // compute new compaction score
   LOG("Append Version:", std::hex, v, std::dec);
-  v->check();
   v->storage_info()->ComputeCompactionScore(
       *column_family_data->ioptions(),
       *column_family_data->GetLatestMutableCFOptions());
