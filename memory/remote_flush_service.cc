@@ -64,7 +64,7 @@ std::vector<int> RDMANode::sock_connect(const char *servername, int port, size_t
 		goto sock_connect_exit;
 	}
 	// Search through results and find the one we want
-	for (iterator = resolved_addr; iterator && conn_cnt; iterator = iterator->ai_next) {
+	for (iterator = resolved_addr; iterator; iterator = iterator->ai_next) {
 		sockfd = socket(iterator->ai_family, iterator->ai_socktype, iterator->ai_protocol);
 		if (sockfd >= 0) {
 			if (servername) {
@@ -74,11 +74,8 @@ std::vector<int> RDMANode::sock_connect(const char *servername, int port, size_t
 					close(sockfd);
 					sockfd = -1;
 				}
-				else{
-					conn_cnt--;
+				else
 					ret.push_back(sockfd);
-					continue;
-				}
             }
 			else {
 				// Server mode. Set up listening socket an accept a connection
@@ -87,11 +84,10 @@ std::vector<int> RDMANode::sock_connect(const char *servername, int port, size_t
 				if (bind(listenfd, iterator->ai_addr, iterator->ai_addrlen))
 					goto sock_connect_exit;
 				listen(listenfd, 1);
-				sockfd = accept(listenfd, nullptr, 0);
-				if(sockfd >= 0){
-					conn_cnt--;
-					ret.push_back(sockfd);
-					continue;
+				for(int i = 0; i < conn_cnt; i++){
+					sockfd = accept(listenfd, nullptr, 0);
+					if(sockfd >= 0)
+						ret.push_back(sockfd);
 				}
 			}
 		}
@@ -114,7 +110,7 @@ sock_connect_exit:
 }
 
 int RDMANode::sock_sync_data(int sock, int xfer_size, const char *local_data, char *remote_data){
-	int rc;
+	int rc = 0;
 	int read_bytes = 0;
 	int total_read_bytes = 0;
 	rc = write(sock, local_data, xfer_size);
@@ -123,7 +119,7 @@ int RDMANode::sock_sync_data(int sock, int xfer_size, const char *local_data, ch
 	else
 		rc = 0;
 	while (!rc && total_read_bytes < xfer_size) {
-		read_bytes = read(sock, remote_data, xfer_size);
+		read_bytes = read(sock, remote_data + total_read_bytes, xfer_size - total_read_bytes);
 		if (read_bytes > 0)
 			total_read_bytes += read_bytes;
 		else
@@ -174,7 +170,7 @@ int RDMANode::post_send(int idx, size_t msg_size, ibv_wr_opcode opcode, long lon
 	struct ibv_send_wr sr;
 	struct ibv_sge sge;
 	struct ibv_send_wr *bad_wr = nullptr;
-	int rc;
+	int rc = 0;
 	// prepare the scatter/gather entry
 	memset(&sge, 0, sizeof(sge));
 	sge.addr = (uintptr_t)res->buf + local_offset;
@@ -219,7 +215,7 @@ int RDMANode::post_receive(int idx, size_t msg_size, long long local_offset){
 	struct ibv_recv_wr rr;
 	struct ibv_sge sge;
 	struct ibv_recv_wr *bad_wr;
-	int rc;
+	int rc = 0;
 	// prepare the scatter/gather entry
 	memset(&sge, 0, sizeof(sge));
 	sge.addr = (uintptr_t)res->buf + local_offset;
@@ -534,7 +530,7 @@ int RDMANode::resources_destroy(){
 int RDMANode::modify_qp_to_init(struct ibv_qp *qp){
 	struct ibv_qp_attr attr;
 	int flags;
-	int rc;
+	int rc = 0;
 	memset(&attr, 0, sizeof(attr));
 	attr.qp_state = IBV_QPS_INIT;
 	attr.port_num = config.ib_port;
@@ -549,7 +545,7 @@ int RDMANode::modify_qp_to_init(struct ibv_qp *qp){
 int RDMANode::modify_qp_to_rtr(struct ibv_qp *qp, uint32_t remote_qpn, uint16_t dlid, uint8_t *dgid){
 	struct ibv_qp_attr attr;
 	int flags;
-	int rc;
+	int rc = 0;
 	memset(&attr, 0, sizeof(attr));
 	attr.qp_state = IBV_QPS_RTR;
 	attr.path_mtu = IBV_MTU_256;
@@ -581,7 +577,7 @@ int RDMANode::modify_qp_to_rtr(struct ibv_qp *qp, uint32_t remote_qpn, uint16_t 
 int RDMANode::modify_qp_to_rts(struct ibv_qp *qp){
 	struct ibv_qp_attr attr;
 	int flags;
-	int rc;
+	int rc = 0;
 	memset(&attr, 0, sizeof(attr));
 	attr.qp_state = IBV_QPS_RTS;
 	attr.timeout = 0x12;
@@ -603,18 +599,24 @@ RDMAServer::RDMAServer(): RDMANode(){
 RDMAClient::RDMAClient(): RDMANode(){
 }
 std::pair<long long, long long> RDMAClient::allocate_mem_request(int idx, size_t size){
+	char req_type = 1;
 	long long ret[2];
 	int local_size = sizeof(size_t), remote_size = sizeof(long long) * 2;
-	int rc;
+	int rc = 0;
 	int read_bytes = 0;
 	int total_read_bytes = 0;
+	rc = write(res->sock[idx], reinterpret_cast<void*>(&req_type), sizeof(char));
+	if (rc < sizeof(char))
+		fprintf(stderr, "Failed writing data during allocate_mem_request\n");
+	else
+		rc = 0;
 	rc = write(res->sock[idx], reinterpret_cast<void*>(&size), local_size);
 	if (rc < local_size)
-		fprintf(stderr, "Failed writing data during sock_sync_data\n");
+		fprintf(stderr, "Failed writing data during allocate_mem_request\n");
 	else
 		rc = 0;
 	while (!rc && total_read_bytes < remote_size) {
-		read_bytes = read(res->sock[idx], reinterpret_cast<void*>(ret), remote_size);
+		read_bytes = read(res->sock[idx], reinterpret_cast<void*>(ret) + total_read_bytes, remote_size - total_read_bytes);
 		if (read_bytes > 0)
 			total_read_bytes += read_bytes;
 		else
@@ -626,11 +628,11 @@ void RDMAServer::allocate_mem_service(int idx){
 	size_t size;
 	long long ret[2];
 	int remote_size = sizeof(size_t), local_size = sizeof(long long) * 2;
-	int rc;
+	int rc = 0;
 	int read_bytes = 0;
 	int total_read_bytes = 0;
 	while (!rc && total_read_bytes < remote_size) {
-		read_bytes = read(res->sock[idx], reinterpret_cast<void*>(&size), remote_size);
+		read_bytes = read(res->sock[idx], reinterpret_cast<void*>(&size) + total_read_bytes, remote_size - total_read_bytes);
 		if (read_bytes > 0)
 			total_read_bytes += read_bytes;
 		else
@@ -666,24 +668,30 @@ void RDMAServer::allocate_mem_service(int idx){
 	}
 	rc = write(res->sock[idx], reinterpret_cast<void*>(ret), local_size);
 	if (rc < local_size)
-		fprintf(stderr, "Failed writing data during sock_sync_data\n");
+		fprintf(stderr, "Failed writing data during allocate_mem_service\n");
 	else
 		rc = 0;
 }
 bool RDMAClient::modify_mem_request(int idx, std::pair<long long, long long> offset, int type){
+	char req_type = 2;
 	long long tmp[3] = {offset.first, offset.second, type};
 	bool ret = false;
 	int local_size = sizeof(long long) * 3, remote_size = sizeof(bool);
-	int rc;
+	int rc = 0;
 	int read_bytes = 0;
 	int total_read_bytes = 0;
+	rc = write(res->sock[idx], reinterpret_cast<void*>(&req_type), sizeof(char));
+	if (rc < sizeof(char))
+		fprintf(stderr, "Failed writing data during modify_mem_request\n");
+	else
+		rc = 0;
 	rc = write(res->sock[idx], reinterpret_cast<void*>(tmp), local_size);
 	if (rc < local_size)
-		fprintf(stderr, "Failed writing data during sock_sync_data\n");
+		fprintf(stderr, "Failed writing data during modify_mem_request\n");
 	else
 		rc = 0;
 	while (!rc && total_read_bytes < remote_size) {
-		read_bytes = read(res->sock[idx], reinterpret_cast<void*>(&ret), remote_size);
+		read_bytes = read(res->sock[idx], reinterpret_cast<void*>(&ret) + total_read_bytes, remote_size - total_read_bytes);
 		if (read_bytes > 0)
 			total_read_bytes += read_bytes;
 		else
@@ -695,11 +703,11 @@ void RDMAServer::modify_mem_service(int idx){
 	long long input[3];
 	bool ret = false;
 	int remote_size = sizeof(long long) * 3, local_size = sizeof(bool);
-	int rc;
+	int rc = 0;
 	int read_bytes = 0;
 	int total_read_bytes = 0;
 	while (!rc && total_read_bytes < remote_size) {
-		read_bytes = read(res->sock[idx], reinterpret_cast<void*>(input), remote_size);
+		read_bytes = read(res->sock[idx], reinterpret_cast<void*>(input) + total_read_bytes, remote_size - total_read_bytes);
 		if (read_bytes > 0)
 			total_read_bytes += read_bytes;
 		else
@@ -728,9 +736,33 @@ void RDMAServer::modify_mem_service(int idx){
 	}
 	rc = write(res->sock[idx], reinterpret_cast<void*>(&ret), local_size);
 	if (rc < local_size)
-		fprintf(stderr, "Failed writing data during sock_sync_data\n");
+		fprintf(stderr, "Failed writing data during modify_mem_service\n");
 	else
 		rc = 0;
+}
+void RDMAServer::service(int idx){
+	char req_type;
+	int remote_size = sizeof(char);
+	int rc = 0;
+	int read_bytes = 0;
+	int total_read_bytes = 0;
+	while (!rc && total_read_bytes < remote_size) {
+		read_bytes = read(res->sock[idx], reinterpret_cast<void*>(&req_type) + total_read_bytes, remote_size - total_read_bytes);
+		if (read_bytes > 0)
+			total_read_bytes += read_bytes;
+		else
+			rc = read_bytes;
+	}
+	switch(req_type){
+		case 1:
+			allocate_mem_service(idx);
+			break;
+		case 2:
+			modify_mem_service(idx);
+			break;
+		default:
+			fprintf(stderr, "Unknown request type from %d-th client: %d\n", idx, req_type);
+	}
 }
 
 }  // namespace ROCKSDB_NAMESPACE

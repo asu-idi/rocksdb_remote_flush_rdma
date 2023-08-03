@@ -329,8 +329,8 @@ void DBImpl::BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri) {
       reinterpret_cast<RemoteFlushJob*>(malloc(sizeof(RemoteFlushJob)));
   flush_job->worker_socket_fd_ = sockfd;
 
-  long long rdma_info[2];
-  read(sockfd, rdma_info, 2 * sizeof(long long));
+  long long rdma_info[2] = {};
+  read(sockfd, reinterpret_cast<void*>(rdma_info), 2 * sizeof(long long));
   assert(rdma_.modify_mem_request(0, std::make_pair(rdma_info[0], rdma_info[1]), 3));
   rdma_.rdma_read(0, rdma_info[1] - rdma_info[0], 0, rdma_info[0]);
   assert(rdma_.poll_completion(0) == 0);

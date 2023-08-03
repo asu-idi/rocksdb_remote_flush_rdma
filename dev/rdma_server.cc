@@ -11,6 +11,7 @@
 #include <map>
 #include <string>
 #include <arpa/inet.h>
+#include <thread>
 
 #include "memory/remote_flush_service.h"
 
@@ -24,8 +25,14 @@ int main(int argc, char** argv) {
 	rocksdb::RDMAServer server;
 	// if(argc >= 4) server.config.tcp_port = std::atoi(argv[3]);
 	server.resources_create(mem_size, conn_cnt);
-	server.connect_qp(0);
-	server.connect_qp(1);
+	for(int i = 0; i < conn_cnt; i++)
+		server.connect_qp(i);
+	std::vector<std::thread*> threads;
+	for(int i = 0; i < conn_cnt; i++){
+		auto ser = [i, &server] {while(true) server.service(i);};
+		threads.push_back(new std::thread(ser));
+		threads.back()->detach();
+	}
 	while (true){
 		std::string command;
 		std::cin >> command;
