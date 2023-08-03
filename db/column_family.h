@@ -23,6 +23,7 @@
 #include "db/write_controller.h"
 #include "memory/shared_mem_basic.h"
 #include "memory/shared_std.hpp"
+#include "memory/remote_flush_service.h"
 #include "options/cf_options.h"
 #include "rocksdb/compaction_job_stats.h"
 #include "rocksdb/db.h"
@@ -274,6 +275,8 @@ class ColumnFamilyData {
  public:
   void* PackLocal(int sockfd) const;
   static void* UnPackLocal(int sockfd);
+  void PackLocal(char*& buf) const;
+  static void* UnPackLocal(char*& buf);
 
  public:
   ~ColumnFamilyData();

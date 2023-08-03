@@ -1561,6 +1561,20 @@ void* Version::UnPackLocal(int sockfd) {
   return mem;
 }
 
+void Version::PackLocal(char*& buf) const {
+  storage_info_.PackLocal(buf);
+  PACK_TO_BUF(reinterpret_cast<const void*>(this), buf, sizeof(Version));
+}
+void* Version::UnPackLocal(char*& buf) {
+  void* mem = malloc(sizeof(Version));
+  auto* mem_ptr = reinterpret_cast<Version*>(mem);
+  void* worker_storage_info = VersionStorageInfo::UnPackLocal(buf);
+  UNPACK_FROM_BUF(buf, mem, sizeof(Version));
+  memcpy(reinterpret_cast<void*>(&mem_ptr->storage_info_), worker_storage_info,
+         sizeof(VersionStorageInfo));
+  return mem;
+}
+
 void Version::Pack() {
   if (is_packaged_) return;
   is_packaged_ = true;
@@ -3289,6 +3303,16 @@ void* VersionStorageInfo::UnPackLocal(int sockfd) {
   return mem;
 }
 
+void VersionStorageInfo::PackLocal(char*& buf) const {
+  PACK_TO_BUF(reinterpret_cast<const void*>(this), buf, sizeof(VersionStorageInfo));
+}
+
+void* VersionStorageInfo::UnPackLocal(char*& buf) {
+  void* mem = malloc(sizeof(VersionStorageInfo));
+  UNPACK_FROM_BUF(buf, mem, sizeof(VersionStorageInfo));
+  return mem;
+}
+
 void VersionStorageInfo::ComputeCompensatedSizes() {
   static const int kDeletionWeightOnCompaction = 2;
   uint64_t average_value_size = GetAverageValueSize();
@@ -4953,6 +4977,23 @@ void* VersionSet::UnPackLocal(int sockfd) {
       &local_db_options_, sizeof(ImmutableDBOptions*));
 
   send(sockfd, reinterpret_cast<const void*>(&ret_val), sizeof(int64_t), 0);
+  return mem;
+}
+
+void VersionSet::PackLocal(char*& buf) const {
+  LOG("VersionSet::PackLocal dump ImmutablDBOptions file");
+  db_options_->PackLocal(buf);
+  LOG("VersionSet::PackLocal dump ImmutablDBOptions file done.");
+  PACK_TO_BUF(reinterpret_cast<const void*>(this), buf, sizeof(VersionSet));
+}
+void* VersionSet::UnPackLocal(char*& buf) {
+  void* local_db_options_ = ImmutableDBOptions::UnPackLocal(buf);
+  void* mem = malloc(sizeof(VersionSet));
+  auto ptr = reinterpret_cast<VersionSet*>(mem);
+  UNPACK_FROM_BUF(buf, reinterpret_cast<void*>(ptr), sizeof(VersionSet));
+  memcpy(
+      const_cast<void*>(reinterpret_cast<const void* const>(&ptr->db_options_)),
+      &local_db_options_, sizeof(ImmutableDBOptions*));
   return mem;
 }
 

@@ -10,6 +10,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
+#include "memory/remote_flush_service.h"
 #include "rocksdb/types.h"
 #include "util/logger.hpp"
 
@@ -30,6 +31,10 @@ class SnapshotChecker {
     LOG("should not use default SnapshotChecker::PackLocal");
     assert(false);
   }
+  virtual void PackLocal(char*& buf) const {
+    LOG("should not use default SnapshotChecker::PackLocal");
+    assert(false);
+  }
 
  public:
   virtual ~SnapshotChecker() {}
@@ -44,6 +49,11 @@ class DisableGCSnapshotChecker : public SnapshotChecker {
     msg += (0x2);
     send(sockfd, &msg, sizeof(msg), 0);
     read(sockfd, &msg, sizeof(msg));
+  }
+  void PackLocal(char*& buf) const override {
+    size_t msg = 0;
+    msg += (0x2);
+    PACK_TO_BUF(&msg, buf, sizeof(msg));
   }
 
  public:
@@ -79,6 +89,7 @@ class WritePreparedSnapshotChecker : public SnapshotChecker {
 class SnapshotCheckerFactory {
  public:
   static void* UnPackLocal(int sockfd);
+  static void* UnPackLocal(char*& buf);
 
  public:
   SnapshotCheckerFactory& operator=(const SnapshotCheckerFactory&) = delete;
@@ -101,6 +112,21 @@ inline void* SnapshotCheckerFactory::UnPackLocal(int sockfd) {
   read(sockfd, &msg, sizeof(msg));
   if (msg == 0x02) {
     send(sockfd, &msg, sizeof(msg), 0);
+    return DisableGCSnapshotChecker::Instance();
+  } else {
+    LOG("SnapshotCheckerFactory::UnPackLocal: invalid msg:", msg);
+    assert(false);
+  }
+}
+inline void* SnapshotCheckerFactory::UnPackLocal(char*& buf) {
+  size_t msg = 0;
+  UNPACK_FROM_BUF(buf, &msg, sizeof(msg));
+  if (msg == 0xff) {
+    return nullptr;
+  }
+  msg = 0;
+  UNPACK_FROM_BUF(buf, &msg, sizeof(msg));
+  if (msg == 0x02) {
     return DisableGCSnapshotChecker::Instance();
   } else {
     LOG("SnapshotCheckerFactory::UnPackLocal: invalid msg:", msg);

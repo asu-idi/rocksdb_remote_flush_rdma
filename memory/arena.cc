@@ -39,6 +39,18 @@ void* Arena::UnPackLocal(int sockfd) {
   return arena;
 }
 
+void Arena::PackLocal(char*& buf) const {
+  LOG("Arena::PackLocal");
+  std::string name = "Arena";
+  name.resize(15);
+  PACK_TO_BUF(name.data(), buf, name.size());
+}
+
+void* Arena::UnPackLocal(char*& buf) {
+  void* arena = reinterpret_cast<void*>(new Arena());
+  return arena;
+}
+
 size_t Arena::OptimizeBlockSize(size_t block_size) {
   // Make sure block_size is in optimal range
   block_size = std::max(Arena::kMinBlockSize, block_size);

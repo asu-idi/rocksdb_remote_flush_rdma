@@ -7,6 +7,7 @@
 #include <atomic>
 #include <memory>
 
+#include "memory/remote_flush_service.h"
 #include "rocksdb/table_properties.h"
 #ifdef __linux__
 #include <sys/socket.h>
@@ -34,6 +35,18 @@ class CompactOnDeletionCollectorFactory
     send(sockfd, msg, msg_len, 0);
     size_t ret_val = 0;
     read(sockfd, &ret_val, sizeof(size_t));
+  }
+  void PackLocal(char*& buf) const override {
+    size_t msg_len = sizeof(size_t) + sizeof(size_t) * 2 + sizeof(double);
+    char* msg = reinterpret_cast<char*>(malloc(msg_len));
+    *reinterpret_cast<size_t*>(msg) = 2;
+    *reinterpret_cast<size_t*>(msg + sizeof(size_t)) =
+        sliding_window_size_.load();
+    *reinterpret_cast<size_t*>(msg + sizeof(size_t) * 2) =
+        deletion_trigger_.load();
+    *reinterpret_cast<double*>(msg + sizeof(size_t) * 2 + sizeof(size_t)) =
+        deletion_ratio_.load();
+    PACK_TO_BUF(msg, buf, msg_len);
   }
 
  public:

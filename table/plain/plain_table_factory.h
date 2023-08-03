@@ -10,6 +10,7 @@
 #include <memory>
 #include <string>
 
+#include "memory/remote_flush_service.h"
 #include "rocksdb/table.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -142,6 +143,10 @@ class PlainTableFactory : public TableFactory {
     send(sockfd, &msg, sizeof(msg), 0);
     msg = 0;
     read(sockfd, &msg, sizeof(size_t));
+  }
+  void PackLocal(char*& buf) const override {
+    size_t msg = 3;
+    PACK_TO_BUF(&msg, buf, sizeof(msg));
   }
 
  public:

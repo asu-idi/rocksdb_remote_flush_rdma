@@ -15,6 +15,7 @@
 
 #include "logging/logging.h"
 #include "memory/shared_mem_basic.h"
+#include "memory/remote_flush_service.h"
 #include "port/malloc.h"
 #include "port/port.h"
 #include "rocksdb/env.h"
@@ -36,6 +37,18 @@ void ConSharedArena::PackLocal(int sockfd) const {
 void* ConSharedArena::UnPackLocal(int sockfd) {
   void* arena = reinterpret_cast<void*>(new ConSharedArena());
   send(sockfd, &arena, sizeof(void*), 0);
+  return arena;
+}
+
+void ConSharedArena::PackLocal(char*& buf) const {
+  LOG("ConSharedArena::PackLocal");
+  std::string name = this->name();
+  name.resize(15);
+  PACK_TO_BUF(name.data(), buf, name.size());
+}
+
+void* ConSharedArena::UnPackLocal(char*& buf) {
+  void* arena = reinterpret_cast<void*>(new ConSharedArena());
   return arena;
 }
 

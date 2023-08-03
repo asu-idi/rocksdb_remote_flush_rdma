@@ -65,6 +65,7 @@
 #include "memory/allocator.h"
 #include "memory/concurrent_shared_arena.h"
 #include "memory/shared_mem_basic.h"
+#include "memory/remote_flush_service.h"
 #include "port/likely.h"
 #include "port/port.h"
 #include "rocksdb/comparator.h"
@@ -85,6 +86,8 @@ class ReadOnlyInlineSkipList {
  public:
   void PackLocal(int sockfd) const;
   static void* UnPackLocal(int sockfd);
+  void PackLocal(char*& buf) const;
+  static void* UnPackLocal(char*& buf);
   void check_data() const;
 
  public:
@@ -190,6 +193,50 @@ inline void ReadOnlyInlineSkipList<Comparator>::PackLocal(int sockfd) const {
        sizeof(ReadOnlyInlineSkipList<Comparator>), 0);
   ret_val = 0;
   read(sockfd, &ret_val, sizeof(ret_val));
+  LOG("pack ReadOnlyInlineSkipList::Comparator done");
+}
+
+template <class Comparator>
+inline void* ReadOnlyInlineSkipList<Comparator>::UnPackLocal(char*& buf) {
+  LOG("unpack ReadOnlyInlineSkipList");
+  // void* local_cmp_ = MemTable::KeyComparator::UnPackLocal(sockfd);
+  int64_t total_len = 0;
+  UNPACK_FROM_BUF(buf, &total_len, sizeof(total_len));
+  void* data = malloc(total_len);
+  UNPACK_FROM_BUF(buf, data, total_len);
+  void* mem = malloc(sizeof(ReadOnlyInlineSkipList));
+  auto* local_readonly_skiplistrep =
+      reinterpret_cast<ReadOnlyInlineSkipList*>(mem);
+  UNPACK_FROM_BUF(buf, mem, sizeof(ReadOnlyInlineSkipList));
+  // local_readonly_skiplistrep->compare_ =
+  //     *reinterpret_cast<Comparator>(local_cmp_);
+  // char* hack_ptr =
+  // reinterpret_cast<char*>(local_readonly_skiplistrep->data_); hack_ptr -=
+  // sizeof(int*); memcpy(hack_ptr, &local_cmp_,
+  // sizeof(MemTable::KeyComparator*));
+
+  // memcpy(const_cast<void*>(reinterpret_cast<const void*>(
+  //            &const_cast<Comparator>(local_readonly_skiplistrep->compare_))),
+  //        local_cmp_, sizeof(MemTable::KeyComparator));
+  LOG("checkpoint1");
+  // memcpy(reinterpret_cast<void*>(const_cast<NONE>(
+  //            const_cast<Comparator>(local_readonly_skiplistrep->compare_))),
+  //        reinterpret_cast<void*>(const_cast<Comparator>(local_cmp_)),
+  //        sizeof(Comparator));
+  local_readonly_skiplistrep->data_ = data;
+  local_readonly_skiplistrep->total_len_ = total_len;
+  LOG("unpack ReadOnlyInlineSkipList done");
+  return mem;
+}
+
+template <class Comparator>
+inline void ReadOnlyInlineSkipList<Comparator>::PackLocal(char*& buf) const {
+  LOG("pack ReadOnlyInlineSkipList");
+  // compare_.PackLocal(sockfd);
+  PACK_TO_BUF(&total_len_, buf, sizeof(total_len_));
+  PACK_TO_BUF(data_, buf, total_len_);
+  PACK_TO_BUF(reinterpret_cast<const void*>(this), buf,
+       sizeof(ReadOnlyInlineSkipList<Comparator>));
   LOG("pack ReadOnlyInlineSkipList::Comparator done");
 }
 

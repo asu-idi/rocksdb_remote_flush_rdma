@@ -38,6 +38,7 @@
 #include "rocksdb/port_defs.h"
 #include "rocksdb/status.h"
 #include "rocksdb/thread_status.h"
+#include "memory/remote_flush_service.h"
 
 #ifdef _WIN32
 // Windows API macro interference
@@ -92,6 +93,16 @@ struct EnvOptions {
     read(sockfd, mem, sizeof(EnvOptions));
     size_t ret_val = 0;
     send(sockfd, &ret_val, sizeof(size_t), 0);
+    return mem;
+  }
+  void PackLocal(char*& buf) const {
+    size_t ret_val = 0;
+    assert(rate_limiter == nullptr);
+    PACK_TO_BUF(reinterpret_cast<const void*>(this), buf, sizeof(EnvOptions));
+  }
+  static void* UnPackLocal(char*& buf) {
+    void* mem = malloc(sizeof(EnvOptions));
+    UNPACK_FROM_BUF(buf, mem, sizeof(EnvOptions));
     return mem;
   }
   // Construct with default Options

@@ -47,6 +47,7 @@
 #include "db/version_edit.h"
 #include "db/write_controller.h"
 #include "env/file_system_tracer.h"
+#include "memory/remote_flush_service.h"
 #include "rocksdb/options.h"
 #if USE_COROUTINES
 #include "folly/experimental/coro/BlockingWait.h"
@@ -130,6 +131,8 @@ class VersionStorageInfo {
  public:
   void PackLocal(int sockfd) const;
   static void* UnPackLocal(int sockfd);
+  void PackLocal(char*& buf) const;
+  static void* UnPackLocal(char*& buf);
 
  public:
   VersionStorageInfo(const InternalKeyComparator* internal_comparator,
@@ -826,6 +829,8 @@ class Version {
  public:
   void PackLocal(int sockfd) const;
   static void* UnPackLocal(int sockfd);
+  void PackLocal(char*& buf) const;
+  static void* UnPackLocal(char*& buf);
 
  public:
   // Append to *iters a sequence of iterators that will
@@ -1136,6 +1141,8 @@ class VersionSet {
  public:
   void PackLocal(int sockfd) const;
   static void* UnPackLocal(int sockfd);
+  void PackLocal(char*& buf) const;
+  static void* UnPackLocal(char*& buf);
 
  public:
   VersionSet(const std::string& dbname, const ImmutableDBOptions* db_options,

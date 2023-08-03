@@ -25,6 +25,7 @@
 #include "memory/allocator.h"
 #include "memory/concurrent_arena.h"
 #include "memory/shared_std.hpp"
+#include "memory/remote_flush_service.h"
 #include "monitoring/instrumented_mutex.h"
 #include "options/cf_options.h"
 #include "rocksdb/db.h"
@@ -57,6 +58,18 @@ struct ImmutableMemTableOptions {
     auto* ptr = reinterpret_cast<ImmutableMemTableOptions*>(mem);
     ptr->info_log = nullptr;  // todo(iaIm14)
     send(sockfd, &mem, sizeof(mem), 0);
+    return mem;
+  }
+  void PackLocal(char*& buf) const {
+    LOG("ImmutableMemTableOptions::PackLocal");
+    PACK_TO_BUF(reinterpret_cast<const void*>(this), buf, sizeof(*this));
+  }
+  static void* UnPackLocal(char*& buf) {
+    LOG("ImmutableMemTableOptions::UnPackLocal");
+    void* mem = malloc(sizeof(ImmutableMemTableOptions));
+    UNPACK_FROM_BUF(buf, mem, sizeof(ImmutableMemTableOptions));
+    auto* ptr = reinterpret_cast<ImmutableMemTableOptions*>(mem);
+    ptr->info_log = nullptr;  // todo(iaIm14)
     return mem;
   }
 
@@ -107,6 +120,8 @@ class MemTable {
  public:
   static void* UnPackLocal(int sock_fd);
   void* PackLocal(int sock_fd) const;
+  static void* UnPackLocal(char*& buf);
+  void PackLocal(char*& buf) const;
 
  public:
   struct KeyComparator : public MemTableRep::KeyComparator {
@@ -134,6 +149,21 @@ class MemTable {
              internal_key_comparator, sizeof(InternalKeyComparator));
       send(sockfd, &kcmp, sizeof(int64_t), 0);
       LOG("send KeyComparator");
+      return mem;
+    }
+    void PackLocal(char*& buf) const override {
+      LOG("KeyComparator::PackLocal");
+      comparator.PackLocal(buf);
+    }
+    static void* UnPackLocal(char*& buf) {
+      LOG("KeyComparator::UnPackLocal");
+      void* internal_key_comparator =
+          InternalKeyComparator::UnPackLocal(buf);
+      void* mem = new KeyComparator(InternalKeyComparator());
+      auto* kcmp = reinterpret_cast<KeyComparator*>(mem);
+      memcpy(reinterpret_cast<void*>(
+                 const_cast<InternalKeyComparator*>(&kcmp->comparator)),
+             internal_key_comparator, sizeof(InternalKeyComparator));
       return mem;
     }
 
