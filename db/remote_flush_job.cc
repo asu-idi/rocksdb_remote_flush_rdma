@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <functional>
 #include <iterator>
 #include <thread>
 
@@ -26,6 +27,7 @@
 #include "db/seqno_to_time_mapping.h"
 #include "db/snapshot_checker.h"
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "monitoring/instrumented_mutex.h"
 #include "options/cf_options.h"
 #include "rocksdb/file_system.h"
@@ -34,6 +36,7 @@
 #include "rocksdb/table_properties.h"
 #include "table/internal_iterator.h"
 #include "util/autovector.h"
+#include "util/macro.hpp"
 #include "util/socket_api.hpp"
 
 // for socket API
@@ -106,7 +109,7 @@ RemoteFlushJob::RemoteFlushJob(
     const std::string& db_session_id, std::string full_history_ts_low,
     BlobFileCompletionCallback* blob_callback)
     : local_generator_node(sockaddr_in{}, 0),
-      remote_consumer_node(sockaddr_in{}, 0),
+      local_generator_rdma_client(),
       dbname_(dbname),
       db_id_(db_id),
       db_session_id_(db_session_id),
@@ -140,7 +143,7 @@ RemoteFlushJob::RemoteFlushJob(
   TEST_SYNC_POINT("RemoteFlushJob::RemoteFlushJob()");
 }
 
-void RemoteFlushJob::PackLocal(TCPNode* node) const {
+void RemoteFlushJob::PackLocal(TransferService* node) const {
   LOG("RemoteFlushJob::PackLocal thread_id:", std::this_thread::get_id(),
       "Pack data from local side");
   // if (output_file_directory_ != nullptr) {
@@ -232,7 +235,7 @@ void RemoteFlushJob::PackLocal(TCPNode* node) const {
   node->send(reinterpret_cast<const void*>(this), sizeof(RemoteFlushJob));
 }
 
-void* RemoteFlushJob::UnPackLocal(TCPNode* node, DBImpl* remote_db) {
+void* RemoteFlushJob::UnPackLocal(TransferService* node, DBImpl* remote_db) {
   LOG("RemoteFlushJob::UnPackLocal thread_id:", std::this_thread::get_id(),
       "UnPack data from local side");
   void* mem = malloc(sizeof(RemoteFlushJob));
@@ -600,7 +603,7 @@ void* RemoteFlushJob::UnPackLocal(char*& buf, DBImpl* remote_db) {
   return mem;
 }
 
-void RemoteFlushJob::PackRemote(TCPNode* node) const {
+void RemoteFlushJob::PackRemote(TransferService* node) const {
   LOG("RemoteFlushJob::PackRemote thread_id:", std::this_thread::get_id(),
       "Pack data from remote side");
   assert(mems_.size() > 0);
@@ -611,7 +614,7 @@ void RemoteFlushJob::PackRemote(TCPNode* node) const {
   meta_.PackRemote(node);
   LOG("RemoteFlushJob::PackRemote done");
 }
-void RemoteFlushJob::UnPackRemote(TCPNode* node) {
+void RemoteFlushJob::UnPackRemote(TransferService* node) {
   LOG("RemoteFlushJob::UnPackRemote thread_id:", std::this_thread::get_id(),
       "UnPack data from remote side");
   assert(mems_.size() > 0);
@@ -794,10 +797,11 @@ void RemoteFlushJob::PickMemTable() {
   base_->Ref();  // it is likely that we do not need this reference
 }
 
-Status RemoteFlushJob::RunRemote(RDMAClient* rdma,
-                                 LogsWithPrepTracker* prep_tracker,
-                                 FileMetaData* file_meta,
-                                 bool* switched_to_mempurge) {
+Status RemoteFlushJob::RunRemote(
+    std::vector<std::pair<std::string, size_t>>* memnodes_,
+    std::function<int()>* get_available_port, const std::string& local_ip,
+    LogsWithPrepTracker* prep_tracker, FileMetaData* file_meta,
+    bool* switched_to_mempurge) {
   TEST_SYNC_POINT("RemoteFlushJob::Start");
   db_mutex_->AssertHeld();
   assert(pick_memtable_called);
@@ -853,9 +857,11 @@ Status RemoteFlushJob::RunRemote(RDMAClient* rdma,
     LOG(meta_.DebugString());
     LOG(table_properties_.ToString());
 
-    assert(MatchRemoteWorker() == Status::OK());
+    // We create connection with one memnode and send package to it
+    assert(MatchMemNode(memnodes_) == Status::OK());
+    // TODO(rdma): create a rdma connection with memnode, choose from memnodes_
+    // and store it in RemoteFlushJob::local_generator_rdma_client
 
-    // todo: fix this
     // char* buf = rdma->get_buf();
     // PackLocal(buf);
     // auto mem_seg = rdma->allocate_mem_request(0, buf - rdma->get_buf());
@@ -865,20 +871,19 @@ Status RemoteFlushJob::RunRemote(RDMAClient* rdma,
     // long long rdma_info[2] = {mem_seg.first, mem_seg.second};
     // send(server_socket_fd_, rdma_info, 2 * sizeof(long long), 0);
 
-    // int64_t signal = 4321;
-    // send(server_socket_fd_, &signal, sizeof(int64_t), 0);
-    // LOG("server Message sent2: ", signal, ' ', server_socket_fd_);
+#ifdef ROCKSDB_RDMA
+    RDMATransferService transfer_service(&local_generator_rdma_client);
+#else
+    TCPTransferService transfer_service(&local_generator_node);
+#endif
+    PackLocal(&transfer_service);
 
-    // We create connection with one memnode and send package to it
-    assert(MatchMemNode() == Status::OK());
-    // int64_t signal = 4321;
-    // local_generator_node.send(&signal, sizeof(int64_t));
-    // LOG("server sent Msg1: ", signal, ' ', server_socket_fd_);
-    // local_generator_node.send(&signal, sizeof(int64_t));
-    // LOG("server sent Msg2: ", signal, ' ', server_socket_fd_);
-    // local_generator_node.send(&signal, sizeof(int64_t));
-    // LOG("server sent Msg3: ", signal, ' ', server_socket_fd_);
-    PackLocal(&local_generator_node);
+    int port = (*get_available_port)();
+    assert(port >= 5000 && port <= 5100);
+    LOG("Get available port from port list: ", port);
+    transfer_service.send(&port, sizeof(int));
+    transfer_service.send(local_ip.c_str(), local_ip.size());
+
     // close connection with memnode
     assert(QuitMemNode().ok());
 
@@ -887,19 +892,10 @@ Status RemoteFlushJob::RunRemote(RDMAClient* rdma,
 
     // We receive some metadata directly from remote worker
     // Or maybe we could receive from memnode
-    assert(MatchRemoteWorker() == Status::OK());
+    assert(MatchRemoteWorker(port) == Status::OK());
 
-    // size_t msg = 0;
-    // void* ptr = reinterpret_cast<void*>(&msg);
-    // LOG("server start recv msg");
-    // local_generator_node.receive(&ptr, sizeof(size_t));
-    // LOG("server recv Msg1: ", msg, ' ', server_socket_fd_);
-    // local_generator_node.receive(&ptr, sizeof(size_t));
-    // LOG("server recv Msg2: ", msg, ' ', server_socket_fd_);
-    // local_generator_node.receive(&ptr, sizeof(size_t));
-    // LOG("server recv Msg3: ", msg, ' ', server_socket_fd_);
-
-    UnPackRemote(&local_generator_node);
+    TCPTransferService transfer_service2(&local_generator_node);
+    UnPackRemote(&transfer_service2);
     // s = Status::OK();
 
     // close connection with remote worker
@@ -944,17 +940,14 @@ Status RemoteFlushJob::RunRemote(RDMAClient* rdma,
   return s;
 }
 
-Status RemoteFlushJob::MatchRemoteWorker() {
+Status RemoteFlushJob::MatchRemoteWorker(int port) {
+  LOG_CERR("waiting to connect with remote flush worker on localhost:", port);
   memset(reinterpret_cast<void*>(&local_generator_node), 0, sizeof(TCPNode));
   if ((local_generator_node.connection_info_.client_sockfd =
            socket(AF_INET, SOCK_STREAM, 0)) < 0) {
     LOG("Socket creation error");
     return Status::IOError("Socket creation error");
   }
-  // memset(&serv_addr, 0, sizeof(serv_addr));
-  // serv_addr.sin_family = AF_INET;
-  // serv_addr.sin_port = htons(8980);
-  // if (inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) {
   int opt = ~SOCK_NONBLOCK;
   if (setsockopt(local_generator_node.connection_info_.client_sockfd,
                  SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
@@ -962,7 +955,7 @@ Status RemoteFlushJob::MatchRemoteWorker() {
     return Status::IOError("setsockopt");
   }
   local_generator_node.connection_info_.sin_addr.sin_family = AF_INET;
-  local_generator_node.connection_info_.sin_addr.sin_port = htons(9089);
+  local_generator_node.connection_info_.sin_addr.sin_port = htons(port);
   if (bind(local_generator_node.connection_info_.client_sockfd,
            (struct sockaddr*)&local_generator_node.connection_info_.sin_addr,
            sizeof(local_generator_node.connection_info_.sin_addr)) < 0) {
@@ -987,13 +980,31 @@ Status RemoteFlushJob::MatchRemoteWorker() {
 }
 
 Status RemoteFlushJob::QuitMemNode() {
-  const char* bye = "byebyemessage";
-  local_generator_node.send(bye, strlen(bye));
-  LOG("server sent: ", strlen(bye), ' ', bye, ' ', server_socket_fd_);
-  close(local_generator_node.connection_info_.client_sockfd);
-  return Status::OK();
+  if (!local_generator_rdma_client.is_init_) {
+    const char* bye = "byebyemessage";
+    local_generator_node.send(bye, strlen(bye));
+    LOG("server sent: ", strlen(bye), ' ', bye);
+    close(local_generator_node.connection_info_.client_sockfd);
+    return Status::OK();
+  } else {
+    // TODO(rdma): close connection or do nothing, use
+    // local_generator_rdma_client.
+    return Status::OK();
+  }
 }
-Status RemoteFlushJob::MatchMemNode() {
+Status RemoteFlushJob::MatchMemNode(
+    std::vector<std::pair<std::string, size_t>>* ip_port_list) {
+  int choosen = (int)(rand() % ip_port_list->size());
+#ifdef ROCKSDN_RDMA
+  // TODO(rdma): create one RDMA connection.
+  local_generator_rdma_client.config.server_name =
+      (*ip_port_list)[choosen].first;
+  local_generator_rdma_client.port = (*ip_port_list)[choosen].second;
+  local_generator_rdma_client.resources_create(1ull << 27, 1);
+  local_generator_rdma_client.connect_qp(0);
+  local_generator_rdma_client.is_init_ = true;
+#else
+
   memset(reinterpret_cast<void*>(&local_generator_node), 0, sizeof(TCPNode));
   if ((local_generator_node.connection_info_.client_sockfd =
            socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -1003,11 +1014,13 @@ Status RemoteFlushJob::MatchMemNode() {
   memset(&local_generator_node.connection_info_.sin_addr, 0,
          sizeof(local_generator_node.connection_info_.sin_addr));
   local_generator_node.connection_info_.sin_addr.sin_family = AF_INET;
-  local_generator_node.connection_info_.sin_addr.sin_port = htons(9091);
-  if (inet_pton(AF_INET, "127.0.0.1",
+  local_generator_node.connection_info_.sin_addr.sin_port =
+      htons((*ip_port_list)[choosen].second);
+  if (inet_pton(AF_INET, (*ip_port_list)[choosen].first.c_str(),
                 &local_generator_node.connection_info_.sin_addr.sin_addr) <=
       0) {
-    LOG("Invalid address / Address not supported");
+    LOG("Invalid address / Address not supported: ",
+        (*ip_port_list)[choosen].first.c_str());
     return Status::IOError("Invalid address / Address not supported");
   }
   if (connect(local_generator_node.connection_info_.client_sockfd,
@@ -1017,7 +1030,10 @@ Status RemoteFlushJob::MatchMemNode() {
     LOG("Connection Failed");
     return Status::IOError("Connection Failed");
   }
-  server_socket_fd_ = local_generator_node.connection_info_.client_sockfd;
+#endif
+  LOG_CERR("create connection with memnode: ",
+           (*ip_port_list)[choosen].first.c_str(), ' ',
+           (*ip_port_list)[choosen].second);
   return Status::OK();
 }
 
@@ -1026,7 +1042,7 @@ Status RemoteFlushJob::QuitRemoteWorker() {
   void* mem = reinterpret_cast<void*>(malloc(strlen(bye)));
   size_t mem_size = strlen(bye);
   local_generator_node.receive(&mem, &mem_size);
-  LOG("server recv: ", reinterpret_cast<char*>(mem), ' ', server_socket_fd_);
+  LOG("server recv: ", reinterpret_cast<char*>(mem));
   assert(strncmp(reinterpret_cast<char*>(mem), bye, mem_size) == 0);
   close(local_generator_node.connection_info_.client_sockfd);
   return Status::OK();

@@ -18,6 +18,7 @@
 #include <string>
 
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "rocksdb/customizable.h"
 #include "rocksdb/rocksdb_namespace.h"
 #include "util/logger.hpp"
@@ -36,7 +37,7 @@ struct ConfigOptions;
 // including data loss, unreported corruption, deadlocks, and more.
 class SliceTransform : public Customizable {
  public:
-  virtual void PackLocal(TCPNode* node) const {
+  virtual void PackLocal(TransferService* node) const {
     LOG("SliceTransform::PackLocal: error: not implemented");
     assert(false);
   };

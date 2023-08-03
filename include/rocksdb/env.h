@@ -21,6 +21,7 @@
 #include <cassert>
 
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 
 #ifdef __linux__
 #include <sys/socket.h>
@@ -85,12 +86,12 @@ const size_t kDefaultPageSize = 4 * 1024;
 // Options while opening a file to read/write
 struct EnvOptions {
  public:
-  void PackLocal(TCPNode* node) const {
+  void PackLocal(TransferService* node) const {
     size_t ret_val = 0;
     assert(rate_limiter == nullptr);
     node->send(reinterpret_cast<const void*>(this), sizeof(EnvOptions));
   }
-  static void* UnPackLocal(TCPNode* node) {
+  static void* UnPackLocal(TransferService* node) {
     void* mem = malloc(sizeof(EnvOptions));
     node->receive(mem, sizeof(EnvOptions));
     return mem;

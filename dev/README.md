@@ -1,14 +1,21 @@
+### Guide
+
 - 用./run.sh编译代码，拷贝到dev/目录的应该有remote_flush_worker/remote_flush_test_server/tcp_server
   
-- remote_flush_worker会在localhost:9090端口监听来自tcp_server的连接，接收来自tcp_server的remote_flush_job，本地完成flush任务之后向产生flush任务的remote_flush_test_server发送metadata。这一步暂时不经过tcp_server，也就是memory node。
+
+- remote_flush_worker会在本地端口A监听来自tcp_server的连接，接收来自指定tcp_server的remote_flush_job。
   
-  - 暂时端口都是写死的。为了避免端口冲突，只能一个一个处理。
+  - worker本地完成flush任务之后向产生flush任务的remote_flush_test_server发送metadata。这一步暂时不经过tcp_server，也就是memory node。
     
-- tcp_server 在localhost:9091 监听来自remote_flush_test_server的flush任务，存储在本地内存，然后在注册的worker中寻找可用的，把flush任务整个发给worker。
+  - 用法是： ./remote_flush_worker (tcp_server ip) (tcp_server port) (local port A)
+    
+- tcp_server 在localhost:B 监听来自remote_flush_test_server的flush任务，存储在本地内存，然后在注册的worker中寻找可用的，把flush任务整个发给worker。
   
-- remote_flush_test_server是flush任务产生一方，目前因为端口冲突，只能单线程flush。
+  - 用法是：./tcp_server (local port B)，注册worker用memnode.register_flush_job_executor API。
+    
+- remote_flush_test_server是flush任务产生一方。
   
-  - 程序生成随机kv对写入不同的column families，自动触发flush或者可以显式调用Flush。
+  - 程序十个线程生成随机kv对写入不同的column families，自动触发flush或者可以显式调用Flush。
     
   - options:
     
@@ -22,9 +29,24 @@
       
     - max_background_compaction==0限制不做compaction
       
+  - 用法是：./remote_flush_test_worker 1/0 1开启remote flush
+    
+
+- 支持多个写入线程，多个memnode，多个worker。
+  
+
+### example
 
 ```shell
-shell1: ./tcp_server
-shell2: ./remote_flush_worker
-shell3: ./remote_flush_test_worker 1
+shell1: ./remote_flush_worker 127.0.0.1 9091 9093
+
+shell2: ./remote_flush_worker 127.0.0.1 9091 9092 # 在tcp_server.cc 注册
+
+shell3: ./remote_flush_test_worker 1 
+
+shell4: ./tcp_server 9091 # 在remote_flush_test_worker.cpp 注册
 ```
+
+### TODO
+
+- add RDMA support

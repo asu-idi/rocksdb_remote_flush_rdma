@@ -9,10 +9,10 @@
 #include <string>
 #include <vector>
 
+#include "memory/remote_transfer_service.h"
 #include "memory/remote_flush_service.h"
 #include "memory/shared_package.h"
 #include "rocksdb/options.h"
-#include "memory/remote_flush_service.h"
 
 namespace ROCKSDB_NAMESPACE {
 class SystemClock;
@@ -21,8 +21,8 @@ struct ImmutableDBOptions {
  public:
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
-  void PackLocal(TCPNode* node) const;
-  static void* UnPackLocal(TCPNode* node);
+  void PackLocal(TransferService* node) const;
+  static void* UnPackLocal(TransferService* node);
 
  public:
   static const char* kName() { return "ImmutableDBOptions"; }

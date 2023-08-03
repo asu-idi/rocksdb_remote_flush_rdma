@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <cstring>
 #include <deque>
+#include <functional>
 #include <limits>
 #include <list>
 #include <set>
@@ -35,6 +36,7 @@
 #include "db/write_thread.h"
 #include "logging/event_logger.h"
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "memory/shared_package.h"
 #include "monitoring/instrumented_mutex.h"
 #include "options/db_options.h"
@@ -64,9 +66,7 @@ class Arena;
 class RemoteFlushJob {
  public:
   TCPNode local_generator_node;
-  TCPNode remote_consumer_node;
-  int server_socket_fd_;
-  int worker_socket_fd_;
+  RDMAClient local_generator_rdma_client;
 
  public:
   static std::shared_ptr<RemoteFlushJob> CreateRemoteFlushJob(
@@ -92,10 +92,10 @@ class RemoteFlushJob {
   static void* UnPackLocal(char*& buf, DBImpl* remote_db);
   void PackRemote(char*& buf) const;
   static void* UnPackRemote(char*& buf);
-  void PackLocal(TCPNode* node) const;
-  static void* UnPackLocal(TCPNode* node, DBImpl* remote_db);
-  void PackRemote(TCPNode* node) const;
-  void UnPackRemote(TCPNode* node);
+  void PackLocal(TransferService* node) const;
+  static void* UnPackLocal(TransferService* node, DBImpl* remote_db);
+  void PackRemote(TransferService* node) const;
+  void UnPackRemote(TransferService* node);
 
  private:
   // TODO(icanadi) make effort to reduce number of parameters here
@@ -132,13 +132,14 @@ class RemoteFlushJob {
   Status RunLocal(LogsWithPrepTracker* prep_tracker = nullptr,
                   FileMetaData* file_meta = nullptr,
                   bool* switched_to_mempurge = nullptr);
-  Status RunRemote(RDMAClient* rdma,
+  Status RunRemote(std::vector<std::pair<std::string, size_t>>*,
+                   std::function<int()>*, const std::string&,
                    LogsWithPrepTracker* prep_tracker = nullptr,
                    FileMetaData* file_meta = nullptr,
                    bool* switched_to_mempurge = nullptr);
-  Status MatchMemNode();
+  Status MatchMemNode(std::vector<std::pair<std::string, size_t>>*);
   Status QuitMemNode();
-  Status MatchRemoteWorker();
+  Status MatchRemoteWorker(int port);
   Status QuitRemoteWorker();
 
   void Cancel();

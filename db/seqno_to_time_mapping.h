@@ -14,9 +14,9 @@
 #include <string>
 
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "rocksdb/status.h"
 #include "rocksdb/types.h"
-#include "memory/remote_flush_service.h"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -38,8 +38,8 @@ class SeqnoToTimeMapping {
  public:
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
-  void PackLocal(TCPNode* node) const;
-  static void* UnPackLocal(TCPNode* node);
+  void PackLocal(TransferService* node) const;
+  static void* UnPackLocal(TransferService* node);
 
  public:
   // Maximum number of entries can be encoded into SST. The data is delta encode

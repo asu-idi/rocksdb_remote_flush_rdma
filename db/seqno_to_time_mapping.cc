@@ -14,11 +14,12 @@
 
 #include "db/version_edit.h"
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "util/string_util.h"
 
 namespace ROCKSDB_NAMESPACE {
 
-void SeqnoToTimeMapping::PackLocal(TCPNode* node) const {
+void SeqnoToTimeMapping::PackLocal(TransferService* node) const {
   size_t mp_size = seqno_time_mapping_.size();
   node->send(&mp_size, sizeof(size_t));
   LOG("server send SeqnoToTimeMapping::mp_size:", mp_size);
@@ -27,7 +28,7 @@ void SeqnoToTimeMapping::PackLocal(TCPNode* node) const {
   node->send(reinterpret_cast<const void*>(this), sizeof(SeqnoToTimeMapping));
 }
 
-void* SeqnoToTimeMapping::UnPackLocal(TCPNode* node) {
+void* SeqnoToTimeMapping::UnPackLocal(TransferService* node) {
   void* mem = malloc(sizeof(SeqnoToTimeMapping));
   int64_t ret = 0;
   size_t mp_size = 0;
@@ -55,8 +56,8 @@ void SeqnoToTimeMapping::PackLocal(char*& buf) const {
     // LOG("server send SeqnoToTimeMapping::it:",
     //     reinterpret_cast<void*>(const_cast<SeqnoTimePair*>(&it)));
   }
-  PACK_TO_BUF(reinterpret_cast<void*>(const_cast<SeqnoToTimeMapping*>(this)), buf,
-       sizeof(SeqnoToTimeMapping));
+  PACK_TO_BUF(reinterpret_cast<void*>(const_cast<SeqnoToTimeMapping*>(this)),
+              buf, sizeof(SeqnoToTimeMapping));
   // LOG("server send SeqnoToTimeMapping::this:", this);
 }
 

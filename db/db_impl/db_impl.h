@@ -14,6 +14,7 @@
 #include <limits>
 #include <list>
 #include <map>
+#include <mutex>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -49,6 +50,7 @@
 #include "db/write_thread.h"
 #include "logging/event_logger.h"
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "monitoring/instrumented_mutex.h"
 #include "options/db_options.h"
 #include "port/port.h"
@@ -191,7 +193,7 @@ class DBImpl : public DB {
   Status Resume() override;
 
   using DB::ListenAndScheduleFlushJob;
-  Status ListenAndScheduleFlushJob() override;
+  Status ListenAndScheduleFlushJob(int port) override;
 
   using DB::TEST_RemoteFlushListener;
   void TEST_RemoteFlushListener() override;
@@ -2721,9 +2723,31 @@ class DBImpl : public DB {
   // See also lock_wal_write_token_
   uint32_t lock_wal_count_;
 
-  // RDMA Client
-  RDMAClient rdma_;
-  bool rdma_init_{false};
+  // remote flush
+  std::mutex transfer_mutex_;
+  bool metadata_recv_ports_in_used_[100] = {false};
+  std::vector<std::pair<std::string, size_t>> memnodes_ip_port_;
+  std::string local_ip_;
+
+ public:
+  inline void register_local_ip(const std::string& ip) override {
+    local_ip_ = ip;
+  }
+  inline void register_memnode(const std::string& ip, size_t port) override {
+    std::lock_guard<std::mutex> lock(transfer_mutex_);
+    memnodes_ip_port_.push_back(std::make_pair(ip, port));
+  }
+
+  inline void unregister_memnode(const std::string& ip, size_t port) override {
+    std::lock_guard<std::mutex> lock(transfer_mutex_);
+    for (auto it = memnodes_ip_port_.begin(); it != memnodes_ip_port_.end();
+         it++) {
+      if (it->first == ip && it->second == port) {
+        memnodes_ip_port_.erase(it);
+        break;
+      }
+    }
+  }
 };
 
 class GetWithTimestampReadCallback : public ReadCallback {

@@ -45,6 +45,7 @@
 #include "file/sst_file_manager_impl.h"
 #include "logging/logging.h"
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "monitoring/thread_status_util.h"
 #include "options/cf_options.h"
 #include "options/db_options.h"
@@ -742,13 +743,13 @@ ColumnFamilyData::~ColumnFamilyData() {
   }
 }
 
-void ColumnFamilyData::PackRemote(TCPNode* node) const {
+void ColumnFamilyData::PackRemote(TransferService* node) const {
   LOG("ColumnFamilyData::PackRemote");
   assert(internal_stats_ != nullptr);
   internal_stats_->PackRemote(node);
   LOG("ColumnFamilyData::PackRemote done.");
 }
-void ColumnFamilyData::UnPackRemote(TCPNode* node) {
+void ColumnFamilyData::UnPackRemote(TransferService* node) {
   auto* install_info = new ColumnFamilyData::cfd_pack_remote_data;
   LOG("ColumnFamilyData::UnPackRemote");
   internal_stats_->UnPackRemote(node);
@@ -756,7 +757,7 @@ void ColumnFamilyData::UnPackRemote(TCPNode* node) {
   LOG("ColumnFamilyData::UnPackRemote done.");
 }
 
-void ColumnFamilyData::PackLocal(TCPNode* node) const {
+void ColumnFamilyData::PackLocal(TransferService* node) const {
   initial_cf_options_.PackLocal(node);
   current_->PackLocal(node);
   assert(current_->cfd() == this);
@@ -785,7 +786,7 @@ void ColumnFamilyData::PackLocal(TCPNode* node) const {
          initial_cf_options_.comparator);
 }
 
-void* ColumnFamilyData::UnPackLocal(TCPNode* node) {
+void* ColumnFamilyData::UnPackLocal(TransferService* node) {
   void* mem = malloc(sizeof(ColumnFamilyData));
   auto* worker_initial_cf_options_ = reinterpret_cast<ColumnFamilyOptions*>(
       ColumnFamilyOptions::UnPackLocal(node));

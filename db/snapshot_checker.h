@@ -13,7 +13,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 #endif
-#include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "rocksdb/types.h"
 #include "util/logger.hpp"
 
@@ -30,7 +30,7 @@ enum class SnapshotCheckerResult : int {
 // Callback class that control GC of duplicate keys in flush/compaction.
 class SnapshotChecker {
  public:
-  virtual void PackLocal(TCPNode* node) const {
+  virtual void PackLocal(TransferService* node) const {
     LOG("should not use default SnapshotChecker::PackLocal");
     assert(false);
   }
@@ -47,7 +47,7 @@ class SnapshotChecker {
 
 class DisableGCSnapshotChecker : public SnapshotChecker {
  public:
-  void PackLocal(TCPNode* node) const override {
+  void PackLocal(TransferService* node) const override {
     size_t msg = 0;
     msg += (0x2);
     node->send(&msg, sizeof(msg));
@@ -91,7 +91,7 @@ class WritePreparedSnapshotChecker : public SnapshotChecker {
 class SnapshotCheckerFactory {
  public:
   static void* UnPackLocal(char*& buf);
-  static void* UnPackLocal(TCPNode* node);
+  static void* UnPackLocal(TransferService* node);
 
  public:
   SnapshotCheckerFactory& operator=(const SnapshotCheckerFactory&) = delete;
@@ -103,7 +103,7 @@ class SnapshotCheckerFactory {
   ~SnapshotCheckerFactory() = default;
 };
 
-inline void* SnapshotCheckerFactory::UnPackLocal(TCPNode* node) {
+inline void* SnapshotCheckerFactory::UnPackLocal(TransferService* node) {
   size_t msg = 0;
   node->receive(&msg, sizeof(msg));
   if (msg == 0xff) {

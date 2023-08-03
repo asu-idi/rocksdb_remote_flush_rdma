@@ -14,7 +14,7 @@
 namespace ROCKSDB_NAMESPACE {
 class BasicArenaFactory {
  public:
-  static BasicArena* UnPackLocal(TCPNode* node) {
+  static BasicArena* UnPackLocal(TransferService* node) {
     std::string msg;
     msg.resize(15);
     void* ptr = msg.data();

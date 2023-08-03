@@ -48,7 +48,6 @@
 #include <cstdlib>
 #include <thread>
 
-#include "memory/remote_flush_service.h"
 #ifdef __linux__
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -67,6 +66,7 @@
 #include "db/memtable.h"
 #include "memory/allocator.h"
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "port/likely.h"
 #include "port/port.h"
 #include "rocksdb/comparator.h"
@@ -88,8 +88,8 @@ class ReadOnlyInlineSkipList {
  public:
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
-  void PackLocal(TCPNode* node) const;
-  static void* UnPackLocal(TCPNode* node);
+  void PackLocal(TransferService* node) const;
+  static void* UnPackLocal(TransferService* node);
   void check_data() const;
 
  public:
@@ -144,7 +144,8 @@ inline void ReadOnlyInlineSkipList<Comparator>::check_data() const {
 }
 
 template <class Comparator>
-inline void* ReadOnlyInlineSkipList<Comparator>::UnPackLocal(TCPNode* node) {
+inline void* ReadOnlyInlineSkipList<Comparator>::UnPackLocal(
+    TransferService* node) {
   LOG("unpack ReadOnlyInlineSkipList");
   // void* local_cmp_ = MemTable::KeyComparator::UnPackLocal(sockfd);
   int64_t* total_len = nullptr;
@@ -166,7 +167,8 @@ inline void* ReadOnlyInlineSkipList<Comparator>::UnPackLocal(TCPNode* node) {
 }
 
 template <class Comparator>
-inline void ReadOnlyInlineSkipList<Comparator>::PackLocal(TCPNode* node) const {
+inline void ReadOnlyInlineSkipList<Comparator>::PackLocal(
+    TransferService* node) const {
   LOG("pack ReadOnlyInlineSkipList");
   // compare_.PackLocal(sockfd);
   LOG("ReadOnlyInlineSkipList::PackLocal send tot_len start:", total_len_);
@@ -220,7 +222,7 @@ inline void ReadOnlyInlineSkipList<Comparator>::PackLocal(char*& buf) const {
   PACK_TO_BUF(&total_len_, buf, sizeof(total_len_));
   PACK_TO_BUF(data_, buf, total_len_);
   PACK_TO_BUF(reinterpret_cast<const void*>(this), buf,
-       sizeof(ReadOnlyInlineSkipList<Comparator>));
+              sizeof(ReadOnlyInlineSkipList<Comparator>));
   LOG("pack ReadOnlyInlineSkipList::Comparator done");
 }
 

@@ -123,13 +123,13 @@ extern uint64_t PackFileNumberAndPathId(uint64_t number, uint64_t path_id);
 // file is not in any live version any more.
 struct FileDescriptor {
  public:
-  void PackRemote(TCPNode* node) const { PackLocal(node); }
-  static void* UnPackRemote(TCPNode* node) { return UnPackLocal(node); }
-  void PackLocal(TCPNode* node) const {
+  void PackRemote(TransferService* node) const { PackLocal(node); }
+  static void* UnPackRemote(TransferService* node) { return UnPackLocal(node); }
+  void PackLocal(TransferService* node) const {
     node->send(reinterpret_cast<const void*>(this), sizeof(FileDescriptor));
     assert(table_reader == nullptr);
   }
-  static void* UnPackLocal(TCPNode* node) {
+  static void* UnPackLocal(TransferService* node) {
     void* mem = malloc(sizeof(FileDescriptor));
     node->receive(mem, sizeof(FileDescriptor));
     auto* ptr = reinterpret_cast<FileDescriptor*>(mem);
@@ -206,10 +206,10 @@ struct FileMetaData {
  public:
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
-  void PackLocal(TCPNode* node) const;
-  static void* UnPackLocal(TCPNode* node);
-  void PackRemote(TCPNode* node) const;
-  static void* UnPackRemote(TCPNode* node);
+  void PackLocal(TransferService* node) const;
+  static void* UnPackLocal(TransferService* node);
+  void PackRemote(TransferService* node) const;
+  static void* UnPackRemote(TransferService* node);
   std::string DebugString() const;
 
  public:
@@ -413,10 +413,10 @@ class VersionEdit {
  public:
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
-  void PackRemote(TCPNode* node) const;
-  void UnPackRemote(TCPNode* node);
-  void PackLocal(TCPNode* node) const;
-  static void* UnPackLocal(TCPNode* node);
+  void PackRemote(TransferService* node) const;
+  void UnPackRemote(TransferService* node);
+  void PackLocal(TransferService* node) const;
+  static void* UnPackLocal(TransferService* node);
 
  public:
   void Clear();

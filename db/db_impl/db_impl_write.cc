@@ -180,7 +180,6 @@ Status DBImpl::WriteImpl(const WriteOptions& write_options,
          write_options.protection_bytes_per_key ==
              my_batch->GetProtectionBytesPerKey());
   if (my_batch == nullptr) {
-    LOG("DBImpl::Write");
     return Status::InvalidArgument("Batch is nullptr!");
   } else if (!disable_memtable &&
              WriteBatchInternal::TimestampsUpdateNeeded(*my_batch)) {
@@ -215,7 +214,6 @@ Status DBImpl::WriteImpl(const WriteOptions& write_options,
   // TODO: this use of operator bool on `tracer_` can avoid unnecessary lock
   // grabs but does not seem thread-safe.
   if (tracer_) {
-    LOG("DBImpl::Write");
     InstrumentedMutexLock lock(&trace_mutex_);
     if (tracer_ && !tracer_->IsWriteOrderPreserved()) {
       // We don't have to preserve write order so can trace anywhere. It's more
@@ -226,7 +224,6 @@ Status DBImpl::WriteImpl(const WriteOptions& write_options,
     }
   }
   if (write_options.sync && write_options.disableWAL) {
-    LOG("DBImpl::Write");
     return Status::InvalidArgument("Sync writes has to enable WAL.");
   }
   if (two_write_queues_ && immutable_db_options_.enable_pipelined_write) {
@@ -262,13 +259,11 @@ Status DBImpl::WriteImpl(const WriteOptions& write_options,
       return s;
     }
   }
-  LOG("DBImpl::Write");
   if (two_write_queues_ && disable_memtable) {
     AssignOrder assign_order =
         seq_per_batch_ ? kDoAssignOrder : kDontAssignOrder;
     // Otherwise it is WAL-only Prepare batches in WriteCommitted policy and
     // they don't consume sequence.
-    LOG("DBImpl::Write");
     return WriteImplWALOnly(&nonmem_write_thread_, write_options, my_batch,
                             callback, log_used, log_ref, seq_used, batch_cnt,
                             pre_release_callback, assign_order,

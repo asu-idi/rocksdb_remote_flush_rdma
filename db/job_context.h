@@ -20,6 +20,7 @@
 #include "db/column_family.h"
 #include "db/log_writer.h"
 #include "db/version_set.h"
+#include "memory/remote_transfer_service.h"
 #include "memory/remote_flush_service.h"
 #include "rocksdb/types.h"
 
@@ -116,8 +117,8 @@ struct JobContext {
  public:
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
-  void PackLocal(TCPNode* node) const;
-  static void* UnPackLocal(TCPNode* node);
+  void PackLocal(TransferService* node) const;
+  static void* UnPackLocal(TransferService* node);
 
  public:
   inline bool HaveSomethingToDelete() const {
@@ -251,13 +252,13 @@ struct JobContext {
   }
 };
 
-inline void JobContext::PackLocal(TCPNode* node) const {
+inline void JobContext::PackLocal(TransferService* node) const {
   LOG("JobContext::PackLocal");
   node->send(reinterpret_cast<const void*>(this), sizeof(JobContext));
   assert(job_snapshot == nullptr);
 }
 
-inline void* JobContext::UnPackLocal(TCPNode* node) {
+inline void* JobContext::UnPackLocal(TransferService* node) {
   size_t empty = 0;
   node->receive(&empty, sizeof(size_t));
   if (empty == 0) {

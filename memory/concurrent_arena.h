@@ -45,8 +45,8 @@ class ConcurrentArena : public BasicArena {
  public:
   void PackLocal(char*& buf) const override;
   static void* UnPackLocal(char*& buf);
-  void PackLocal(TCPNode* node) const override;
-  static void* UnPackLocal(TCPNode* node);
+  void PackLocal(TransferService* node) const override;
+  static void* UnPackLocal(TransferService* node);
 
  public:
   const char* name() const override { return "ConcurrentArena"; }

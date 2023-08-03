@@ -13,6 +13,7 @@
 #include <string>
 
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "memory/shared_package.h"
 #include "rocksdb/customizable.h"
 #include "rocksdb/status.h"
@@ -148,7 +149,7 @@ class TablePropertiesCollector {
 // including data loss, unreported corruption, deadlocks, and more.
 class TablePropertiesCollectorFactory : public Customizable {
  public:
-  virtual void PackLocal(TCPNode* node) const {
+  virtual void PackLocal(TransferService* node) const {
     LOG("TablePropertiesCollectorFactory::PackLocal not implemented. Name: ",
         Name());
     assert(false);
@@ -192,8 +193,8 @@ class TablePropertiesCollectorFactory : public Customizable {
 // table.
 struct TableProperties {
  public:
-  void PackRemote(TCPNode* node) const;
-  static void* UnPackRemote(TCPNode* node);
+  void PackRemote(TransferService* node) const;
+  static void* UnPackRemote(TransferService* node);
 
  public:
   // the file number at creation time, or 0 for unknown. When known,
