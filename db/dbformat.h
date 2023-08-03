@@ -16,6 +16,7 @@
 #include <utility>
 
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "memory/shared_package.h"
 #include "rocksdb/comparator.h"
 #include "rocksdb/slice.h"
@@ -257,10 +258,10 @@ class InternalKeyComparator
 #endif
     : public CompareInterface {
  public:
-  void PackLocal(TCPNode* node) const override {
+  void PackLocal(TransferService* node) const override {
     user_comparator_.PackLocal(node);
   }
-  static void* UnPackLocal(TCPNode* node) {
+  static void* UnPackLocal(TransferService* node) {
     void* ucmp = UserComparatorWrapper::UnPackLocal(node);
     auto ptr = new InternalKeyComparator();
     void* mem = reinterpret_cast<void*>(ptr);
@@ -699,7 +700,7 @@ class IterKey {
 // internal keys.
 class InternalKeySliceTransform : public SliceTransform {
  public:
-  void PackLocal(TCPNode* node) const override {
+  void PackLocal(TransferService* node) const override {
     LOG("InternalKeySliceTransform::PackLocal");
     int64_t info = 0;
     info += (0x00);

@@ -19,6 +19,7 @@
 
 #include "db/remote_flush_job.h"
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "rocksdb/configurable.h"
 #ifdef OS_SOLARIS
 #include <alloca.h>
@@ -315,80 +316,86 @@ DBImpl::DBImpl(const DBOptions& options, const std::string& dbname,
 
 void DBImpl::BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri) {
   TEST_SYNC_POINT("DBImpl::BackgroundCallRemoteFlush:Start");
+#ifdef ROCKSDB_RDMA
+  // TODO(rdma): fix this. non-zero index is not supported. We need
+  // multi-thread.
+  auto* worker_node = new RDMAClient();
+  size_t choosen = (int)(rand() % memnodes_ip_port_.size());
+  worker_node->config.server_name = memnodes_ip_port_[choosen].first;
+  worker_node->resources_create(1ull << 27, 1);
+  worker_node->connect_qp(0);
+  worker_node->is_init_ = true;
+
+  long long rdma_info[2] = {};
+  read(sockfd, reinterpret_cast<void*>(rdma_info), 2 * sizeof(long long));
+  assert(worker_node->modify_mem_request(
+      0, std::make_pair(rdma_info[0], rdma_info[1]), 3));
+  worker_node->rdma_read(0, rdma_info[1] - rdma_info[0], 0, rdma_info[0]);
+  assert(worker_node->poll_completion(0) == 0);
+  assert(worker_node->modify_mem_request(
+      0, std::make_pair(rdma_info[0], rdma_info[1]), 0));
+  RDMATransferService transfer_service(worker_node);
+#else
   auto* worker_node = new TCPNode({}, sockfd);
+  TCPTransferService transfer_service(worker_node);
+#endif  // ROCKSDB_RDMA
 
-  // int64_t buffer = 0;
-  // char* buffer_ptr = reinterpret_cast<char*>(&buffer);
-  // worker_node->receive(reinterpret_cast<void**>(&buffer_ptr),
-  // sizeof(int64_t)); LOG("worker received Msg1: ", buffer);
-  // worker_node->receive(reinterpret_cast<void**>(buffer_ptr),
-  // sizeof(int64_t)); LOG("worker received Msg2: ", buffer);
-  // worker_node->receive(reinterpret_cast<void**>(buffer_ptr),
-  // sizeof(int64_t)); LOG("worker received Msg3: ", buffer);
-
-  auto* flush_job =
-      reinterpret_cast<RemoteFlushJob*>(malloc(sizeof(RemoteFlushJob)));
-  flush_job->worker_socket_fd_ = sockfd;
-  // todo: fix this
-  // long long rdma_info[2] = {};
-  // read(sockfd, reinterpret_cast<void*>(rdma_info), 2 * sizeof(long long));
-  // assert(rdma_.modify_mem_request(0, std::make_pair(rdma_info[0],
-  // rdma_info[1]),
-  //                                 3));
-  // rdma_.rdma_read(0, rdma_info[1] - rdma_info[0], 0, rdma_info[0]);
-  // assert(rdma_.poll_completion(0) == 0);
-  // assert(rdma_.modify_mem_request(0, std::make_pair(rdma_info[0],
-  // rdma_info[1]),
-  //                                 0));
-
-  // char* buf = rdma_.get_buf();
-  // auto* local_handler =
-  //     reinterpret_cast<RemoteFlushJob*>(flush_job->UnPackLocal(buf, this));
-  // int64_t signal_verify = 0;
-  // read_data(sockfd, &signal_verify, sizeof(int64_t));
-  // LOG("worker Message received2: ", signal_verify, ' ', sockfd);
   auto* local_handler = reinterpret_cast<RemoteFlushJob*>(
-      flush_job->UnPackLocal(worker_node, this));
+      RemoteFlushJob::UnPackLocal(&transfer_service, this));
+  void* flush_job_generator_ip = nullptr;
+  size_t ip_size = 0;
+  int flush_job_generator_port = 0;
+  transfer_service.receive(reinterpret_cast<void*>(&flush_job_generator_port),
+                           sizeof(int));
+  transfer_service.receive(&flush_job_generator_ip, &ip_size);
+  std::string flush_job_generator_ip_str(
+      reinterpret_cast<char*>(flush_job_generator_ip), ip_size);
 
   const char* bye = "byebyemessage";
   void* end_msg = malloc(strlen(bye));
-  worker_node->receive(&end_msg, strlen(bye));
+  transfer_service.receive(&end_msg, strlen(bye));
   LOG("worker received MsgEnd: ", reinterpret_cast<char*>(end_msg));
-  close(worker_node->connection_info_.client_sockfd);
 
-  local_handler->worker_socket_fd_ = sockfd;
+#ifdef ROCKSDB_RDMA
+  // TODO(rdma): close connection with memnode or do nothing
+#else
+  close(worker_node->connection_info_.client_sockfd);
+  worker_node->connection_info_.client_sockfd = 0;
+#endif
+
   local_handler->RunLocal();
 
-  worker_node->connection_info_.client_sockfd = 0;
-  if ((worker_node->connection_info_.client_sockfd =
+  TCPNode unpack_tcp_node({}, 0);
+  if ((unpack_tcp_node.connection_info_.client_sockfd =
            socket(AF_INET, SOCK_STREAM, 0)) < 0) {
     LOG("socket creation error");
     assert(false);
   }
-  memset(reinterpret_cast<void*>(&worker_node->connection_info_.sin_addr), 0,
+  memset(reinterpret_cast<void*>(&unpack_tcp_node.connection_info_.sin_addr), 0,
          sizeof(struct sockaddr_in));
-  worker_node->connection_info_.sin_addr.sin_family = AF_INET;
-  worker_node->connection_info_.sin_addr.sin_port = htons(9089);
-  if (inet_pton(AF_INET, "127.0.0.1",
-                &worker_node->connection_info_.sin_addr.sin_addr) <= 0) {
+  unpack_tcp_node.connection_info_.sin_addr.sin_family = AF_INET;
+  unpack_tcp_node.connection_info_.sin_addr.sin_port =
+      htons(static_cast<uint16_t>(flush_job_generator_port));
+  if (inet_pton(AF_INET, flush_job_generator_ip_str.c_str(),
+                &unpack_tcp_node.connection_info_.sin_addr.sin_addr) <= 0) {
     LOG("Invalid address/ Address not supported");
     assert(false);
   }
-  if (connect(worker_node->connection_info_.client_sockfd,
+  if (connect(unpack_tcp_node.connection_info_.client_sockfd,
               reinterpret_cast<struct sockaddr*>(
-                  &worker_node->connection_info_.sin_addr),
-              sizeof(worker_node->connection_info_.sin_addr)) < 0) {
+                  &unpack_tcp_node.connection_info_.sin_addr),
+              sizeof(unpack_tcp_node.connection_info_.sin_addr)) < 0) {
     LOG("Connection Failed");
     assert(false);
   }
-  LOG("worker connected to server");
-  // worker_node->send(reinterpret_cast<void*>(&buffer), sizeof(int64_t));
-  // worker_node->send(reinterpret_cast<void*>(&buffer), sizeof(int64_t));
-  // worker_node->send(reinterpret_cast<void*>(&buffer), sizeof(int64_t));
-  local_handler->PackRemote(worker_node);
+  LOG_CERR("worker send update information to generator: ",
+           flush_job_generator_ip_str, ':', flush_job_generator_port);
+  TCPTransferService local_transfer_service(&unpack_tcp_node);
+  local_handler->PackRemote(&local_transfer_service);
+  local_transfer_service.send("byebyemessage", strlen("byebyemessage"));
 
-  worker_node->send("byebyemessage", strlen("byebyemessage"));
-  close(worker_node->connection_info_.client_sockfd);
+  close(unpack_tcp_node.connection_info_.client_sockfd);
+
   delete worker_node;
 
   bg_flush_scheduled_--;
@@ -422,7 +429,6 @@ void DBImpl::TEST_BGWorkRemoteFlush(void* arg) {
   read_data(fta.sockfd_, buffer_ptr, sizeof(size_t));
   LOG("Received RemoteFlushJob ptr ");
   auto* flush_job = reinterpret_cast<RemoteFlushJob*>(buffer);
-  flush_job->worker_socket_fd_ = fta.sockfd_;
   Status ret = flush_job->RunLocal();
   if (ret.ok()) {
     magic = 1234;
@@ -476,7 +482,7 @@ void DBImpl::TEST_RemoteFlushListener() {
   std::thread thr(func);
   thr.detach();
 }
-Status DBImpl::ListenAndScheduleFlushJob() {
+Status DBImpl::ListenAndScheduleFlushJob(int port) {
   mutex_.Lock();
   if (!opened_successfully_ || bg_work_paused_ > 0 ||
       (error_handler_.IsBGWorkStopped() &&
@@ -486,14 +492,6 @@ Status DBImpl::ListenAndScheduleFlushJob() {
     return Status::Aborted("DB is not working");
   }
   mutex_.Unlock();
-
-  if (!rdma_init_) {
-    size_t mem_size = 1ull << 26;
-    rdma_.config.server_name = "10.145.21.36";  // todo: to be configurable
-    rdma_.resources_create(mem_size, 1);
-    rdma_.connect_qp(0);
-    rdma_init_ = true;
-  }
 
   int server_fd, new_socket;
   struct sockaddr_in address;
@@ -510,9 +508,7 @@ Status DBImpl::ListenAndScheduleFlushJob() {
   }
   address.sin_family = AF_INET;
   address.sin_addr.s_addr = INADDR_ANY;
-  // todo: fix this
-  // address.sin_port = htons(8980);
-  address.sin_port = htons(9090);
+  address.sin_port = htons(port);
   if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
     LOG("bind failed");
     return Status::IOError("bind failed");
@@ -526,6 +522,13 @@ Status DBImpl::ListenAndScheduleFlushJob() {
                              (socklen_t*)&addrlen)) < 0) {
       LOG("accept failed");
       return Status::IOError("accept failed");
+    }
+    {
+      char client_ip[INET_ADDRSTRLEN];
+      inet_ntop(AF_INET, &address.sin_addr, client_ip, INET_ADDRSTRLEN);
+      int client_port = ntohs(address.sin_port);
+      LOG_CERR("remote flush worker receive package from memnode: ", client_ip,
+               ':', client_port);
     }
     mutex_.Lock();
     if (!opened_successfully_ || bg_work_paused_ > 0 ||

@@ -23,7 +23,7 @@ namespace ROCKSDB_NAMESPACE {
 class CompactOnDeletionCollectorFactory
     : public TablePropertiesCollectorFactory {
  public:
-  void PackLocal(TCPNode* node) const override {
+  void PackLocal(TransferService* node) const override {
     size_t msg_len = sizeof(size_t) + sizeof(size_t) * 2 + sizeof(double);
     char* msg = reinterpret_cast<char*>(malloc(msg_len));
     *reinterpret_cast<size_t*>(msg) = 2;

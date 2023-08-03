@@ -25,14 +25,14 @@
 
 namespace ROCKSDB_NAMESPACE {
 
-void Arena::PackLocal(TCPNode* node) const {
+void Arena::PackLocal(TransferService* node) const {
   LOG("Arena::PackLocal");
   std::string name = "Arena";
   name.resize(15);
   node->send(name.data(), 15);
 }
 
-void* Arena::UnPackLocal(TCPNode* node) {
+void* Arena::UnPackLocal(TransferService* node) {
   void* arena = reinterpret_cast<void*>(new Arena());
   return arena;
 }

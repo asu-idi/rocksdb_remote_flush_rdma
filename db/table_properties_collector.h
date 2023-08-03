@@ -14,6 +14,7 @@
 
 #include "db/dbformat.h"
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "rocksdb/comparator.h"
 #include "rocksdb/table_properties.h"
 
@@ -44,7 +45,7 @@ class IntTblPropCollector {
 // Factory for internal table properties collector.
 class IntTblPropCollectorFactory {
  public:
-  virtual void PackLocal(TCPNode* node) const {
+  virtual void PackLocal(TransferService* node) const {
     LOG("IntTblPropCollectorFactory::PackLocal not implemented. Name: ",
         Name());
   }
@@ -103,7 +104,7 @@ class UserKeyTablePropertiesCollector : public IntTblPropCollector {
 class UserKeyTablePropertiesCollectorFactory
     : public IntTblPropCollectorFactory {
  public:
-  void PackLocal(TCPNode* node) const override {
+  void PackLocal(TransferService* node) const override {
     int64_t msg = 0;
     msg += (0x01);
     node->send(&msg, sizeof(msg));

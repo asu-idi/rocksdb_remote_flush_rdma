@@ -16,6 +16,7 @@
 
 #include "cache/cache_reservation_manager.h"
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "port/port.h"
 #include "rocksdb/flush_block_policy.h"
 #include "rocksdb/table.h"
@@ -48,7 +49,7 @@ class TailPrefetchStats {
 
 class BlockBasedTableFactory : public TableFactory {
  public:
-  void PackLocal(TCPNode* node) const override {
+  void PackLocal(TransferService* node) const override {
     size_t msg = 1;
     node->send(&msg, sizeof(msg));
   }

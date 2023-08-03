@@ -67,8 +67,8 @@ struct ColumnFamilyOptions : public AdvancedColumnFamilyOptions {
  public:
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
-  void PackLocal(TCPNode* node) const;
-  static void* UnPackLocal(TCPNode* node);
+  void PackLocal(TransferService* node) const;
+  static void* UnPackLocal(TransferService* node);
 
   // The function recovers options to a previous version. Only 4.6 or later
   // versions are supported.

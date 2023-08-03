@@ -10,6 +10,7 @@
 #include "db/version_edit.h"
 
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "rocksdb/types.h"
 #include "util/socket_api.hpp"
 
@@ -108,7 +109,7 @@ std::string FileMetaData::DebugString() const {
   return r;
 }
 
-void FileMetaData::PackRemote(TCPNode* node) const {
+void FileMetaData::PackRemote(TransferService* node) const {
   LOG("FileMetaData::PackRemote");
   assert(fd.table_reader == nullptr);
   fd.PackRemote(node);
@@ -173,7 +174,7 @@ void FileMetaData::UnPack(shm_package::PackContext& ctx, int idx,
   unique_id[1] = ctx.get_uint64(idx, offset);
 }
 
-void* FileMetaData::UnPackRemote(TCPNode* node) {
+void* FileMetaData::UnPackRemote(TransferService* node) {
   LOG("server FileMetaData::UnPackRemote");
   void* mem = malloc(sizeof(FileMetaData));
   auto ptr = reinterpret_cast<FileMetaData*>(mem);
@@ -237,7 +238,7 @@ void* FileMetaData::UnPackRemote(TCPNode* node) {
   return mem;
 }
 
-void FileMetaData::PackLocal(TCPNode* node) const {
+void FileMetaData::PackLocal(TransferService* node) const {
   LOG("server FileMetaData::PackLocal");
   fd.PackLocal(node);
   LOG("server FileMetaData::PackLocal fd");
@@ -258,7 +259,7 @@ void FileMetaData::PackLocal(TCPNode* node) const {
   node->send(reinterpret_cast<const char*>(this), sizeof(FileMetaData));
 }
 
-void* FileMetaData::UnPackLocal(TCPNode* node) {
+void* FileMetaData::UnPackLocal(TransferService* node) {
   LOG("client FileMetaData::UnPackLocal");
   void* local_fd = FileDescriptor::UnPackLocal(node);
   size_t len = 0, len2 = 0;
@@ -420,7 +421,7 @@ Status FileMetaData::UpdateBoundaries(const Slice& key, const Slice& value,
   return Status::OK();
 }
 
-void* VersionEdit::UnPackLocal(TCPNode* node) {
+void* VersionEdit::UnPackLocal(TransferService* node) {
   void* mem = malloc(sizeof(VersionEdit));
   node->receive(&mem, sizeof(VersionEdit));
   auto ret_version_edit_ = reinterpret_cast<VersionEdit*>(mem);
@@ -514,7 +515,7 @@ void* VersionEdit::UnPackLocal(TCPNode* node) {
   return mem;
 }
 
-void VersionEdit::PackLocal(TCPNode* node) const {
+void VersionEdit::PackLocal(TransferService* node) const {
   node->send(reinterpret_cast<const void*>(this), sizeof(VersionEdit));
   size_t db_id_len_ = db_id_.size();
   node->send(&db_id_len_, sizeof(size_t));
@@ -709,8 +710,7 @@ void VersionEdit::PackLocal(char*& buf) const {
   }
 }
 
-
-void VersionEdit::PackRemote(TCPNode* node) const {
+void VersionEdit::PackRemote(TransferService* node) const {
   LOG("VersionEdit::PackRemote");
   size_t ret_val = 0;
   size_t new_file_size_ = new_files_.size();
@@ -724,7 +724,7 @@ void VersionEdit::PackRemote(TCPNode* node) const {
   LOG("VersionEdit::PackRemote done.");
 }
 
-void VersionEdit::UnPackRemote(TCPNode* node) {
+void VersionEdit::UnPackRemote(TransferService* node) {
   LOG("VersionEdit::UnPackRemote");
   size_t ret_val = 0;
   size_t new_file_size_ = 0;

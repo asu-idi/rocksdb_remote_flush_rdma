@@ -17,7 +17,7 @@ namespace ROCKSDB_NAMESPACE {
 class TablePropertiesCollectorPackFactory {
  public:
   static void* UnPackLocal(char*& buf);
-  static void* UnPackLocal(TCPNode* node);
+  static void* UnPackLocal(TransferService* node);
 
  public:
   TablePropertiesCollectorPackFactory& operator=(
@@ -35,7 +35,7 @@ class TablePropertiesCollectorPackFactory {
 class IntTblPropCollectorPackFactory {
  public:
   static void* UnPackLocal(char*& buf);
-  static void* UnPackLocal(TCPNode* node);
+  static void* UnPackLocal(TransferService* node);
 
  public:
   IntTblPropCollectorPackFactory& operator=(
@@ -50,7 +50,8 @@ class IntTblPropCollectorPackFactory {
   ~IntTblPropCollectorPackFactory() = default;
 };
 
-inline void* TablePropertiesCollectorPackFactory::UnPackLocal(TCPNode* node) {
+inline void* TablePropertiesCollectorPackFactory::UnPackLocal(
+    TransferService* node) {
   //   int64_t msg = 0;
   size_t msg_len = sizeof(size_t) + sizeof(size_t) * 2 + sizeof(double);
   char* msg = reinterpret_cast<char*>(malloc(msg_len));
@@ -77,7 +78,8 @@ inline void* TablePropertiesCollectorPackFactory::UnPackLocal(TCPNode* node) {
   }
 }
 
-inline void* IntTblPropCollectorPackFactory::UnPackLocal(TCPNode* node) {
+inline void* IntTblPropCollectorPackFactory::UnPackLocal(
+    TransferService* node) {
   int64_t msg = 0;
   node->receive(&msg, sizeof(msg));
   int64_t type = msg & 0xff;

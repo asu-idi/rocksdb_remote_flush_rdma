@@ -43,7 +43,7 @@ void AppendProperty(std::string& props, const std::string& key,
 }
 }  // namespace
 
-void TableProperties::PackRemote(TCPNode* node) const {
+void TableProperties::PackRemote(TransferService* node) const {
   LOG("TableProperties::PackRemote");
   node->send(reinterpret_cast<const void*>(this), sizeof(TableProperties));
   size_t db_id_len = db_id.size();
@@ -113,7 +113,7 @@ void TableProperties::PackRemote(TCPNode* node) const {
   }
 }
 
-void* TableProperties::UnPackRemote(TCPNode* node) {
+void* TableProperties::UnPackRemote(TransferService* node) {
   size_t ret_num = 0;
   auto* ret_ptr = new TableProperties();
   void* mem = reinterpret_cast<void*>(ret_ptr);

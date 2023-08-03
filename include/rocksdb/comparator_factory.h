@@ -20,7 +20,7 @@ namespace ROCKSDB_NAMESPACE {
 class ComparatorFactory {
  public:
   static void* UnPackLocal(char*& buf);
-  static void* UnPackLocal(TCPNode* node);
+  static void* UnPackLocal(TransferService* node);
 
   ComparatorFactory(const ComparatorFactory&) = delete;
   void operator=(const ComparatorFactory&) = delete;
@@ -30,7 +30,7 @@ class ComparatorFactory {
   ~ComparatorFactory() = default;
 };
 
-inline void* ComparatorFactory::UnPackLocal(TCPNode* node) {
+inline void* ComparatorFactory::UnPackLocal(TransferService* node) {
   int64_t* msg = nullptr;
   size_t size = sizeof(int64_t);
   node->receive(reinterpret_cast<void**>(&msg), &size);

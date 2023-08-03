@@ -162,6 +162,12 @@ bool RemoteFlushJobPD::opentcp(int port) {
       LOG("tcp server accept error");
       continue;
     }
+    {
+      char client_ip[INET_ADDRSTRLEN];
+      inet_ntop(AF_INET, &client_address.sin_addr, client_ip, INET_ADDRSTRLEN);
+      int client_port = ntohs(client_address.sin_port);
+      LOG_CERR("MemNode receive package from: ", client_ip, ':', client_port);
+    }
     auto *node = new TCPNode(client_address, client_sockfd);
     register_flush_job_generator(client_sockfd, node);
     LOG("tcp server accept success");
@@ -239,6 +245,14 @@ TCPNode *RemoteFlushJobPD::choose_flush_job_executor() {
                   sizeof(it.first->connection_info_.sin_addr)) < 0) {
         LOG("remote flushjob worker connect error");
         assert(false);
+      }
+      {
+        char client_ip[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &it.first->connection_info_.sin_addr.sin_addr,
+                  client_ip, INET_ADDRSTRLEN);
+        int client_port = ntohs(it.first->connection_info_.sin_addr.sin_port);
+        LOG_CERR("MemNode send package to worker: ", client_ip, ':',
+                 client_port);
       }
       it.first->connection_info_.client_sockfd = client_sockfd;
       flush_job_executors_in_use_.insert(

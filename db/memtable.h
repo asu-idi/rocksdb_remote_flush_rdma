@@ -25,6 +25,7 @@
 #include "memory/allocator.h"
 #include "memory/concurrent_arena.h"
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "memory/shared_package.h"
 #include "monitoring/instrumented_mutex.h"
 #include "options/cf_options.h"
@@ -49,11 +50,11 @@ class SystemClock;
 
 struct ImmutableMemTableOptions {
  public:
-  void PackLocal(TCPNode* node) const {
+  void PackLocal(TransferService* node) const {
     LOG("ImmutableMemTableOptions::PackLocal");
     node->send(reinterpret_cast<const void*>(this), sizeof(*this));
   }
-  static void* UnPackLocal(TCPNode* node) {
+  static void* UnPackLocal(TransferService* node) {
     LOG("ImmutableMemTableOptions::UnPackLocal");
     void* mem = malloc(sizeof(ImmutableMemTableOptions));
     size_t size = sizeof(ImmutableMemTableOptions);
@@ -123,19 +124,19 @@ class MemTable {
   void check();
   static void* UnPackLocal(char*& buf);
   void PackLocal(char*& buf) const;
-  static void* UnPackLocal(TCPNode* node);
-  void PackLocal(TCPNode* node) const;
-  void PackRemote(TCPNode* node) const;
-  void UnPackRemote(TCPNode* node);
+  static void* UnPackLocal(TransferService* node);
+  void PackLocal(TransferService* node) const;
+  void PackRemote(TransferService* node) const;
+  void UnPackRemote(TransferService* node);
 
  public:
   struct KeyComparator : public MemTableRep::KeyComparator {
    public:
-    void PackLocal(TCPNode* node) const override {
+    void PackLocal(TransferService* node) const override {
       LOG("KeyComparator::PackLocal");
       comparator.PackLocal(node);
     }
-    static void* UnPackLocal(TCPNode* node) {
+    static void* UnPackLocal(TransferService* node) {
       LOG("KeyComparator::UnPackLocal");
       void* internal_key_comparator = InternalKeyComparator::UnPackLocal(node);
       void* mem = new KeyComparator(InternalKeyComparator());

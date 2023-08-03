@@ -33,13 +33,17 @@
 #include "util/random.h"
 #include "util/string_util.h"
 
-// flush_server:localhost:9089
-// memnode:localhost:9091
-// flush_worker:localhost:9090
 int main(int argc, char** argv) {
+  if (argc != 2) {
+    std::cout << "Usage: " << argv[0] << " [port]" << std::endl;
+    return -1;
+  }
+  int port = std::atoi(argv[1]);
   rocksdb::RemoteFlushJobPD& memnode = rocksdb::RemoteFlushJobPD::Instance();
-  memnode.register_flush_job_executor("127.0.0.1", 9090);
-  memnode.opentcp(9091);
+  // TODO(rdma): change this on your machine
+  memnode.register_flush_job_executor("127.0.0.1", 9092);
+  memnode.register_flush_job_executor("127.0.0.1", 9093);
+  memnode.opentcp(port);
   while (true) {
     std::string command;
     std::cin >> command;

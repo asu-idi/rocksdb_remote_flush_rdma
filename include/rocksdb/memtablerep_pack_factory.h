@@ -11,7 +11,6 @@
 
 #include "memory/remote_flush_service.h"
 #include "memtable/readonly_inlineskiplist.h"
-#include "memory/remote_flush_service.h"
 #include "rocksdb/memtablerep.h"
 #include "rocksdb/status.h"
 #include "util/logger.hpp"
@@ -30,7 +29,7 @@ namespace ROCKSDB_NAMESPACE {
 class MemTableRepPackFactory {
  public:
   static void* UnPackLocal(char*& buf);
-  static void* UnPackLocal(TCPNode* node);
+  static void* UnPackLocal(TransferService* node);
   MemTableRepPackFactory(const MemTableRepPackFactory&) = delete;
   MemTableRepPackFactory& operator=(const MemTableRepPackFactory&) = delete;
   MemTableRepPackFactory& operator=(MemTableRepPackFactory&&) = delete;
@@ -40,7 +39,7 @@ class MemTableRepPackFactory {
   ~MemTableRepPackFactory() = default;
 };
 
-inline void* MemTableRepPackFactory::UnPackLocal(TCPNode* node) {
+inline void* MemTableRepPackFactory::UnPackLocal(TransferService* node) {
   int64_t* msg = nullptr;
   size_t size = sizeof(int64_t);
   node->receive(reinterpret_cast<void**>(&msg), &size);

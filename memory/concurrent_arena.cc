@@ -45,12 +45,12 @@ ConcurrentArena::Shard* ConcurrentArena::Repick() {
   return shard_and_index.first;
 }
 
-void ConcurrentArena::PackLocal(TCPNode* node) const {
+void ConcurrentArena::PackLocal(TransferService* node) const {
   std::string name = "ConcurrentArena";
   name.resize(15);
   node->send(name.data(), 15);
 }
-void* ConcurrentArena::UnPackLocal(TCPNode* node) {
+void* ConcurrentArena::UnPackLocal(TransferService* node) {
   void* arena = reinterpret_cast<void*>(new ConcurrentArena());
   return arena;
 }
