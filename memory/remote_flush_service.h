@@ -97,9 +97,10 @@ public:
 class RDMAServer: public RDMANode {
 public:
 	RDMAServer();
+	void service(int idx);
+private:
 	void allocate_mem_service(int idx);
 	void modify_mem_service(int idx);
-private:
 	std::map<std::pair<size_t, size_t>, int> mem_seg;
 	std::unique_ptr<std::mutex> mtx;
 };
