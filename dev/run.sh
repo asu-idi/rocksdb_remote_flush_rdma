@@ -17,10 +17,12 @@ make remote_flush_worker -j 18
 make db_remote_flush_test -j 18
 make remote_flush_test_server -j 18
 make rdma_server -j 18
+make tcp_server -j 18
 
 cd $PROJECT_ROOT/dev
 
 cp ../build/rdma_server ./
+cp ../build/tcp_server ./
 cp ../build/db_remote_flush_test ./
 cp ../build/remote_flush_worker ./
 cp ../build/rdma_server ./

@@ -45,16 +45,13 @@ ConcurrentArena::Shard* ConcurrentArena::Repick() {
   return shard_and_index.first;
 }
 
-void ConcurrentArena::PackLocal(int sockfd) const {
+void ConcurrentArena::PackLocal(TCPNode* node) const {
   std::string name = "ConcurrentArena";
   name.resize(15);
-  send(sockfd, name.data(), name.size(), 0);
-  int64_t ret = 0;
-  read_data(sockfd, &ret, sizeof(int64_t));
+  node->send(name.data(), 15);
 }
-void* ConcurrentArena::UnPackLocal(int sockfd) {
+void* ConcurrentArena::UnPackLocal(TCPNode* node) {
   void* arena = reinterpret_cast<void*>(new ConcurrentArena());
-  send(sockfd, &arena, sizeof(void*), 0);
   return arena;
 }
 void ConcurrentArena::PackLocal(char*& buf) const {

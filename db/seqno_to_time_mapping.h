@@ -13,6 +13,7 @@
 #include <iterator>
 #include <string>
 
+#include "memory/remote_flush_service.h"
 #include "rocksdb/status.h"
 #include "rocksdb/types.h"
 #include "memory/remote_flush_service.h"
@@ -35,10 +36,10 @@ constexpr uint64_t kUnknownSeqnoTime = 0;
 //  synchronized by caller.
 class SeqnoToTimeMapping {
  public:
-  void* PackLocal(int sockfd) const;
-  static void* UnPackLocal(int sockfd);
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
+  void PackLocal(TCPNode* node) const;
+  static void* UnPackLocal(TCPNode* node);
 
  public:
   // Maximum number of entries can be encoded into SST. The data is delta encode

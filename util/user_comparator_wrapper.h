@@ -8,6 +8,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 #include "memory/remote_flush_service.h"
@@ -23,19 +24,17 @@ namespace ROCKSDB_NAMESPACE {
 // perf_context.user_key_comparison_count.
 class UserComparatorWrapper {
  public:
-  void PackLocal(int sockfd) const {
-    user_comparator_->PackLocal(sockfd);
-    send(sockfd, reinterpret_cast<const void*>(this), sizeof(*this), 0);
-    int64_t ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(int64_t));
+  void PackLocal(TCPNode* node) const {
+    user_comparator_->PackLocal(node);
+    node->send(reinterpret_cast<const void*>(this), sizeof(*this));
   }
-  static void* UnPackLocal(int sockfd) {
-    void* ucmp = ComparatorFactory::UnPackLocal(sockfd);
+  static void* UnPackLocal(TCPNode* node) {
+    void* ucmp = ComparatorFactory::UnPackLocal(node);
     void* mem = malloc(sizeof(UserComparatorWrapper));
-    read_data(sockfd, mem, sizeof(UserComparatorWrapper));
+    size_t size = sizeof(UserComparatorWrapper);
+    node->receive(&mem, &size);
     auto* ret = reinterpret_cast<UserComparatorWrapper*>(mem);
     ret->user_comparator_ = reinterpret_cast<Comparator*>(ucmp);
-    send(sockfd, &ret, sizeof(void*), 0);
     return ret;
   }
   void PackLocal(char*& buf) const {

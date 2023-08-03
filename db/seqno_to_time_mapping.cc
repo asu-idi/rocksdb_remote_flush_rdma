@@ -13,48 +13,32 @@
 #include <deque>
 
 #include "db/version_edit.h"
+#include "memory/remote_flush_service.h"
 #include "util/string_util.h"
 
 namespace ROCKSDB_NAMESPACE {
 
-void* SeqnoToTimeMapping::PackLocal(int sockfd) const {
-  int64_t ret = 0;
+void SeqnoToTimeMapping::PackLocal(TCPNode* node) const {
   size_t mp_size = seqno_time_mapping_.size();
-  send(sockfd, &mp_size, sizeof(size_t), 0);
+  node->send(&mp_size, sizeof(size_t));
   LOG("server send SeqnoToTimeMapping::mp_size:", mp_size);
-  size_t mp_size_ = 0;
-  read_data(sockfd, &mp_size_, sizeof(size_t));
-  LOG("server recv SeqnoToTimeMapping::mp_size_:", mp_size_);
-  assert(mp_size == mp_size_);
-  for (auto& it : seqno_time_mapping_) {
-    send(sockfd, &it, sizeof(SeqnoTimePair), 0);
-    ret = 0;
-    read_data(sockfd, &ret, sizeof(int64_t));
-  }
-  send(sockfd, reinterpret_cast<void*>(const_cast<SeqnoToTimeMapping*>(this)),
-       sizeof(SeqnoToTimeMapping), 0);
-  ret = 0;
-  read_data(sockfd, &ret, sizeof(int64_t));
-  LOG("server recv SeqnoToTimeMapping::ret:", ret);
-  return reinterpret_cast<void*>(ret);
+  for (auto& it : seqno_time_mapping_) node->send(&it, sizeof(SeqnoTimePair));
+
+  node->send(reinterpret_cast<const void*>(this), sizeof(SeqnoToTimeMapping));
 }
 
-void* SeqnoToTimeMapping::UnPackLocal(int sockfd) {
+void* SeqnoToTimeMapping::UnPackLocal(TCPNode* node) {
   void* mem = malloc(sizeof(SeqnoToTimeMapping));
   int64_t ret = 0;
   size_t mp_size = 0;
-  read_data(sockfd, &mp_size, sizeof(size_t));
-  send(sockfd, &mp_size, sizeof(size_t), 0);
+  node->receive(&mp_size, sizeof(size_t));
   std::deque<SeqnoTimePair> prs;
   for (size_t i = 0; i < mp_size; i++) {
     SeqnoTimePair it;
-    read_data(sockfd, &it, sizeof(SeqnoTimePair));
-    send(sockfd, &ret, sizeof(int64_t), 0);
+    node->receive(&it, sizeof(SeqnoTimePair));
     prs.emplace_back(it);
   }
-  read_data(sockfd, mem, sizeof(SeqnoToTimeMapping));
-  LOG("client recv SeqnoToTimeMapping::mem:", mem);
-  send(sockfd, &mem, sizeof(int64_t), 0);
+  node->receive(mem, sizeof(SeqnoToTimeMapping));
   LOG("client send SeqnoToTimeMapping::ret:", mem);
   auto* mp = reinterpret_cast<SeqnoToTimeMapping*>(mem);
   mp->seqno_time_mapping_ = prs;

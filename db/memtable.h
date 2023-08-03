@@ -24,6 +24,7 @@
 #include "db/version_edit.h"
 #include "memory/allocator.h"
 #include "memory/concurrent_arena.h"
+#include "memory/remote_flush_service.h"
 #include "memory/shared_package.h"
 #include "monitoring/instrumented_mutex.h"
 #include "options/cf_options.h"
@@ -48,19 +49,17 @@ class SystemClock;
 
 struct ImmutableMemTableOptions {
  public:
-  void PackLocal(int sockfd) const {
+  void PackLocal(TCPNode* node) const {
     LOG("ImmutableMemTableOptions::PackLocal");
-    send(sockfd, reinterpret_cast<const void*>(this), sizeof(*this), 0);
-    int64_t ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(int64_t));
+    node->send(reinterpret_cast<const void*>(this), sizeof(*this));
   }
-  static void* UnPackLocal(int sockfd) {
+  static void* UnPackLocal(TCPNode* node) {
     LOG("ImmutableMemTableOptions::UnPackLocal");
     void* mem = malloc(sizeof(ImmutableMemTableOptions));
-    read_data(sockfd, mem, sizeof(ImmutableMemTableOptions));
+    size_t size = sizeof(ImmutableMemTableOptions);
+    node->receive(&mem, &size);
     auto* ptr = reinterpret_cast<ImmutableMemTableOptions*>(mem);
     ptr->info_log = nullptr;  // todo(iaIm14)
-    send(sockfd, &mem, sizeof(mem), 0);
     return mem;
   }
   void PackLocal(char*& buf) const {
@@ -122,35 +121,28 @@ using MultiGetRange = MultiGetContext::Range;
 class MemTable {
  public:
   void check();
-  static void* UnPackLocal(int sock_fd);
-  void PackLocal(int sock_fd) const;
   static void* UnPackLocal(char*& buf);
   void PackLocal(char*& buf) const;
-  void PackRemote(int sock_fd) const;
-  void UnPackRemote(int sock_fd);
+  static void* UnPackLocal(TCPNode* node);
+  void PackLocal(TCPNode* node) const;
+  void PackRemote(TCPNode* node) const;
+  void UnPackRemote(TCPNode* node);
 
  public:
   struct KeyComparator : public MemTableRep::KeyComparator {
    public:
-    void PackLocal(int sockfd) const override {
+    void PackLocal(TCPNode* node) const override {
       LOG("KeyComparator::PackLocal");
-      comparator.PackLocal(sockfd);
-      int64_t ret_val = 0;
-      send(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t), 0);
-      read_data(sockfd, &ret_val, sizeof(int64_t));
+      comparator.PackLocal(node);
     }
-    static void* UnPackLocal(int sockfd) {
+    static void* UnPackLocal(TCPNode* node) {
       LOG("KeyComparator::UnPackLocal");
-      void* internal_key_comparator =
-          InternalKeyComparator::UnPackLocal(sockfd);
+      void* internal_key_comparator = InternalKeyComparator::UnPackLocal(node);
       void* mem = new KeyComparator(InternalKeyComparator());
       auto* kcmp = reinterpret_cast<KeyComparator*>(mem);
-      int64_t ret_val = 0;
-      read_data(sockfd, &ret_val, sizeof(int64_t));
       memcpy(reinterpret_cast<void*>(
                  const_cast<InternalKeyComparator*>(&kcmp->comparator)),
              internal_key_comparator, sizeof(InternalKeyComparator));
-      send(sockfd, &kcmp, sizeof(int64_t), 0);
       return mem;
     }
     void PackLocal(char*& buf) const override {

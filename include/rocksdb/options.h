@@ -65,10 +65,10 @@ using FileTypeSet = SmallEnumSet<FileType, FileType::kBlobFile>;
 
 struct ColumnFamilyOptions : public AdvancedColumnFamilyOptions {
  public:
-  void PackLocal(int sockfd) const;
-  static void* UnPackLocal(int sockfd);
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
+  void PackLocal(TCPNode* node) const;
+  static void* UnPackLocal(TCPNode* node);
 
   // The function recovers options to a previous version. Only 4.6 or later
   // versions are supported.

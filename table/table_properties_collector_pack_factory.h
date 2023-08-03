@@ -16,8 +16,8 @@ namespace ROCKSDB_NAMESPACE {
 
 class TablePropertiesCollectorPackFactory {
  public:
-  static void* UnPackLocal(int sockfd);
   static void* UnPackLocal(char*& buf);
+  static void* UnPackLocal(TCPNode* node);
 
  public:
   TablePropertiesCollectorPackFactory& operator=(
@@ -34,8 +34,8 @@ class TablePropertiesCollectorPackFactory {
 
 class IntTblPropCollectorPackFactory {
  public:
-  static void* UnPackLocal(int sockfd);
   static void* UnPackLocal(char*& buf);
+  static void* UnPackLocal(TCPNode* node);
 
  public:
   IntTblPropCollectorPackFactory& operator=(
@@ -50,20 +50,18 @@ class IntTblPropCollectorPackFactory {
   ~IntTblPropCollectorPackFactory() = default;
 };
 
-inline void* TablePropertiesCollectorPackFactory::UnPackLocal(int sockfd) {
+inline void* TablePropertiesCollectorPackFactory::UnPackLocal(TCPNode* node) {
   //   int64_t msg = 0;
   size_t msg_len = sizeof(size_t) + sizeof(size_t) * 2 + sizeof(double);
   char* msg = reinterpret_cast<char*>(malloc(msg_len));
-  read_data(sockfd, msg, sizeof(msg));
+  node->receive(msg, msg_len);
   size_t type = *reinterpret_cast<size_t*>(msg);
   if (type == 1) {
-    send(sockfd, &type, sizeof(type), 0);
     LOG("TablePropertiesCollectorPackFactory::UnPackLocal: "
         "DbStressTablePropertiesCollectorFactory not compiled with "
         "ROCKSDB_TOOLS");
     assert(false);
   } else if (type == 2) {
-    send(sockfd, &type, sizeof(size_t), 0);
     size_t sliding_window_size_ =
         *reinterpret_cast<size_t*>(msg + sizeof(size_t));
     size_t deletion_trigger_ =
@@ -79,24 +77,22 @@ inline void* TablePropertiesCollectorPackFactory::UnPackLocal(int sockfd) {
   }
 }
 
-inline void* IntTblPropCollectorPackFactory::UnPackLocal(int sockfd) {
+inline void* IntTblPropCollectorPackFactory::UnPackLocal(TCPNode* node) {
   int64_t msg = 0;
-  read_data(sockfd, &msg, sizeof(msg));
+  node->receive(&msg, sizeof(msg));
   int64_t type = msg & 0xff;
   int64_t info = msg >> 8;
   if (type == 1) {
-    send(sockfd, &msg, sizeof(msg), 0);
     void* local_table_properties_collector_factory =
-        TablePropertiesCollectorPackFactory::UnPackLocal(sockfd);
+        TablePropertiesCollectorPackFactory::UnPackLocal(node);
     std::shared_ptr<TablePropertiesCollectorFactory> factory(
         reinterpret_cast<TablePropertiesCollectorFactory*>(
             local_table_properties_collector_factory));
     return new UserKeyTablePropertiesCollectorFactory(factory);
   } else if (type == 2) {
-    send(sockfd, &msg, sizeof(msg), 0);
     size_t msg_len = sizeof(size_t) + sizeof(int32_t);
     char* sst_collector_msg = reinterpret_cast<char*>(malloc(msg_len));
-    read_data(sockfd, sst_collector_msg, msg_len);
+    node->receive(sst_collector_msg, msg_len);
     int32_t version_ = *reinterpret_cast<int32_t*>(sst_collector_msg);
     size_t global_seqno_ =
         *reinterpret_cast<size_t*>(sst_collector_msg + sizeof(int32_t));

@@ -37,6 +37,7 @@
 #include "memory/arena_factory.h"
 #include "memory/concurrent_arena.h"
 #include "memory/memory_usage.h"
+#include "memory/remote_flush_service.h"
 #include "monitoring/perf_context_imp.h"
 #include "monitoring/statistics.h"
 #include "port/lang.h"
@@ -176,24 +177,24 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
 
 void MemTable::check() {}
 
-void* MemTable::UnPackLocal(int sock_fd) {
+void* MemTable::UnPackLocal(TCPNode* node) {
   LOG("start MemTable::UnPackLocal");
-  void* local_arena = BasicArenaFactory::UnPackLocal(sock_fd);
-  void* local_prefix_extractor = SliceTransformFactory::UnPackLocal(sock_fd);
-  void* local_comparator = KeyComparator::UnPackLocal(sock_fd);
-  void* local_moptions = ImmutableMemTableOptions::UnPackLocal(sock_fd);
-  // DynamicBloom* local_bloom_filter =
-  //     DynamicBloom::UnPackLocal(sock_fd, local_arena);
-  auto* local_table = reinterpret_cast<MemTableRep*>(
-      MemTableRepPackFactory::UnPackLocal(sock_fd));
+  void* local_arena = BasicArenaFactory::UnPackLocal(node);
+  void* local_prefix_extractor = SliceTransformFactory::UnPackLocal(node);
+  void* local_comparator = KeyComparator::UnPackLocal(node);
+  void* local_moptions = ImmutableMemTableOptions::UnPackLocal(node);
+  // // DynamicBloom* local_bloom_filter =
+  // //     DynamicBloom::UnPackLocal(sock_fd, local_arena);
+  auto* local_table =
+      reinterpret_cast<MemTableRep*>(MemTableRepPackFactory::UnPackLocal(node));
   LOG("local_table MemTableRepPackFactory::UnPackLocal(sock_fd) done");
-  auto* local_range_del_table = reinterpret_cast<MemTableRep*>(
-      MemTableRepPackFactory::UnPackLocal(sock_fd));
+  auto* local_range_del_table =
+      reinterpret_cast<MemTableRep*>(MemTableRepPackFactory::UnPackLocal(node));
   LOG("local_range_del_table MemTableRepPackFactory::UnPackLocal(sock_fd) "
       "done");
   void* mem = malloc(sizeof(MemTable));
   auto* memtable = reinterpret_cast<MemTable*>(mem);
-  assert(read_data(sock_fd, mem, sizeof(MemTable)) == sizeof(MemTable));
+  node->receive(reinterpret_cast<void**>(&mem), sizeof(MemTable));
   LOG("recv MemTable", mem);
 
   memtable->arena_ = reinterpret_cast<BasicArena*>(local_arena);
@@ -214,39 +215,30 @@ void* MemTable::UnPackLocal(int sock_fd) {
   new (&memtable->fragmented_range_tombstone_list_)
       std::unique_ptr<FragmentedRangeTombstoneList>(nullptr);
   memtable->ConstructFragmentedRangeTombstones();
-  assert(write(sock_fd, reinterpret_cast<void*>(&mem), sizeof(size_t)) ==
-         sizeof(size_t));
   LOG("send MemTable", mem);
   return mem;
 }
 
-void MemTable::PackLocal(int sock_fd) const {
-  arena_->PackLocal(sock_fd);
+void MemTable::PackLocal(TCPNode* node) const {
+  arena_->PackLocal(node);
   if (prefix_extractor_ != nullptr)
-    prefix_extractor_->PackLocal(sock_fd);
+    prefix_extractor_->PackLocal(node);
   else {
     int64_t msg = 0xff;
-    assert(write(sock_fd, &msg, sizeof(msg)) == sizeof(msg));
-    int64_t ret_val = 0;
-    assert(read_data(sock_fd, &ret_val, sizeof(int64_t)) == sizeof(int64_t));
+    node->send(&msg, sizeof(msg));
   }
-  comparator_.PackLocal(sock_fd);
-  moptions_.PackLocal(sock_fd);
+  comparator_.PackLocal(node);
+  moptions_.PackLocal(node);
   // bloom_filter_->PackLocal(sock_fd);
   assert(table_ != nullptr);
   LOG("start MemTable::PackLocal table_");
-  table_->PackLocal(sock_fd, moptions_.protection_bytes_per_key);
+  table_->PackLocal(node, moptions_.protection_bytes_per_key);
   LOG("start MemTable::PackLocal range_del_table_");
   assert(range_del_table_ != nullptr);
-  range_del_table_->PackLocal(sock_fd, moptions_.protection_bytes_per_key);
+  range_del_table_->PackLocal(node, moptions_.protection_bytes_per_key);
   LOG("range_del_table_->PackLocal done");
-
-  assert(write(sock_fd, reinterpret_cast<const void*>(this),
-               sizeof(MemTable)) == sizeof(MemTable));
+  node->send(reinterpret_cast<const void*>(this), sizeof(MemTable));
   LOG("write MemTable", reinterpret_cast<const void*>(this));
-  size_t ret_addr = 0;
-  assert(read_data(sock_fd, &ret_addr, sizeof(size_t)) == sizeof(size_t));
-  LOG("recv MemTable", ret_addr);
 }
 
 void* MemTable::UnPackLocal(char*& buf) {
@@ -316,119 +308,92 @@ void MemTable::PackLocal(char*& buf) const {
   PACK_TO_BUF(reinterpret_cast<const void*>(this), buf, sizeof(MemTable));
   LOG("send MemTable", reinterpret_cast<const void*>(this));
 }
-void MemTable::PackRemote(int sock_fd) const {
+
+void MemTable::PackRemote(TCPNode* node) const {
   assert(flush_job_info_ != nullptr);
   LOG("MemTable::PackRemote");
   // note: only pack flush_job_info
   size_t ret_num = 0;
   LOG("MemTable::PackRemote start waiting write ");
-  write(sock_fd, reinterpret_cast<const void*>(&flush_job_info_->cf_id),
-        sizeof(uint32_t));
+  node->send(reinterpret_cast<const void*>(&flush_job_info_->cf_id),
+             sizeof(uint32_t));
   LOG("MemTable::PackRemote write cf_id done");
-  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
-  LOG("MemTable::PackRemote read ret_num done");
   size_t cf_name_len = flush_job_info_->cf_name.size();
   LOG("MemTable::PackRemote cf_name_len=", cf_name_len);
-  write(sock_fd, reinterpret_cast<const void*>(&cf_name_len), sizeof(size_t));
-  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
-  write(sock_fd,
-        reinterpret_cast<const void*>(flush_job_info_->cf_name.c_str()),
-        cf_name_len);
-  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
+  node->send(reinterpret_cast<const void*>(&cf_name_len), sizeof(size_t));
+  node->send(reinterpret_cast<const void*>(flush_job_info_->cf_name.c_str()),
+             cf_name_len);
+
   size_t file_path_len = flush_job_info_->file_path.size();
-  write(sock_fd, reinterpret_cast<const void*>(&file_path_len), sizeof(size_t));
-  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
-  write(sock_fd,
-        reinterpret_cast<const void*>(flush_job_info_->file_path.c_str()),
-        file_path_len);
-  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
-  write(sock_fd, reinterpret_cast<const void*>(&flush_job_info_->file_number),
-        sizeof(uint64_t));
-  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
-  write(
-      sock_fd,
+  node->send(reinterpret_cast<const void*>(&file_path_len), sizeof(size_t));
+  node->send(reinterpret_cast<const void*>(flush_job_info_->file_path.c_str()),
+             file_path_len);
+  node->send(reinterpret_cast<const void*>(&flush_job_info_->file_number),
+             sizeof(uint64_t));
+  node->send(
       reinterpret_cast<const void*>(&flush_job_info_->oldest_blob_file_number),
       sizeof(uint64_t));
-  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
-  write(sock_fd, reinterpret_cast<const void*>(&flush_job_info_->thread_id),
-        sizeof(uint64_t));
-  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
-  write(sock_fd, reinterpret_cast<const void*>(&flush_job_info_->job_id),
-        sizeof(uint64_t));
-  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
-  write(sock_fd,
-        reinterpret_cast<const void*>(&flush_job_info_->smallest_seqno),
-        sizeof(SequenceNumber));
-  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
-  write(sock_fd, reinterpret_cast<const void*>(&flush_job_info_->largest_seqno),
-        sizeof(SequenceNumber));
-  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
-  flush_job_info_->table_properties.PackRemote(sock_fd);
-  write(sock_fd, reinterpret_cast<const void*>(&flush_job_info_->flush_reason),
-        sizeof(FlushReason));
-  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
-  write(sock_fd,
-        reinterpret_cast<const void*>(&flush_job_info_->blob_compression_type),
-        sizeof(CompressionType));
-  read_data(sock_fd, reinterpret_cast<void*>(&ret_num), sizeof(size_t));
+  node->send(reinterpret_cast<const void*>(&flush_job_info_->thread_id),
+             sizeof(uint64_t));
+  node->send(reinterpret_cast<const void*>(&flush_job_info_->job_id),
+             sizeof(uint64_t));
+  node->send(reinterpret_cast<const void*>(&flush_job_info_->smallest_seqno),
+             sizeof(SequenceNumber));
+  node->send(reinterpret_cast<const void*>(&flush_job_info_->largest_seqno),
+             sizeof(SequenceNumber));
+
+  flush_job_info_->table_properties.PackRemote(node);
+  node->send(reinterpret_cast<const void*>(&flush_job_info_->flush_reason),
+             sizeof(FlushReason));
+  node->send(
+      reinterpret_cast<const void*>(&flush_job_info_->blob_compression_type),
+      sizeof(CompressionType));
   // todo: blob_files_info update
   LOG("MemTable::PackRemote done");
 }
 
-void MemTable::UnPackRemote(int sock_fd) {
+void MemTable::UnPackRemote(TCPNode* node) {
   auto flush_job_info = new FlushJobInfo();
   void* mem = reinterpret_cast<void*>(flush_job_info);
   size_t ret_num = 0;
   LOG("MemTable::UnPackRemote start waiting read");
-  read_data(sock_fd, reinterpret_cast<void*>(&flush_job_info->cf_id),
-            sizeof(uint32_t));
-  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
+  node->receive(reinterpret_cast<void*>(&flush_job_info->cf_id),
+                sizeof(uint32_t));
   size_t cf_name_len = 0;
-  read_data(sock_fd, reinterpret_cast<void*>(&cf_name_len), sizeof(size_t));
-  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
+  node->receive(reinterpret_cast<void*>(&cf_name_len), sizeof(size_t));
   char* cf_name = reinterpret_cast<char*>(malloc(cf_name_len));
-  read_data(sock_fd, reinterpret_cast<void*>(cf_name), cf_name_len);
-  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
+  node->receive(reinterpret_cast<void*>(cf_name), cf_name_len);
   flush_job_info->cf_name = std::string(cf_name, cf_name_len);
   free(cf_name);
+
   size_t file_path_len = 0;
-  read_data(sock_fd, reinterpret_cast<void*>(&file_path_len), sizeof(size_t));
-  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
+  node->receive(reinterpret_cast<void*>(&file_path_len), sizeof(size_t));
   char* file_path = reinterpret_cast<char*>(malloc(file_path_len));
-  read_data(sock_fd, reinterpret_cast<void*>(file_path), file_path_len);
-  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
+  node->receive(reinterpret_cast<void*>(file_path), file_path_len);
   flush_job_info->file_path = std::string(file_path, file_path_len);
   free(file_path);
-  read_data(sock_fd, reinterpret_cast<void*>(&flush_job_info->file_number),
-            sizeof(uint64_t));
-  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
-  read_data(sock_fd,
-            reinterpret_cast<void*>(&flush_job_info->oldest_blob_file_number),
-            sizeof(uint64_t));
-  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
-  read_data(sock_fd, reinterpret_cast<void*>(&flush_job_info->thread_id),
-            sizeof(uint64_t));
-  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
-  read_data(sock_fd, reinterpret_cast<void*>(&flush_job_info->job_id),
-            sizeof(uint64_t));
-  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
-  read_data(sock_fd, reinterpret_cast<void*>(&flush_job_info->smallest_seqno),
-            sizeof(SequenceNumber));
-  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
-  read_data(sock_fd, reinterpret_cast<void*>(&flush_job_info->largest_seqno),
-            sizeof(SequenceNumber));
-  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
-  void* local_table_properties = TableProperties::UnPackRemote(sock_fd);
+
+  node->receive(reinterpret_cast<void*>(&flush_job_info->file_number),
+                sizeof(uint64_t));
+  node->receive(
+      reinterpret_cast<void*>(&flush_job_info->oldest_blob_file_number),
+      sizeof(uint64_t));
+  node->receive(reinterpret_cast<void*>(&flush_job_info->thread_id),
+                sizeof(uint64_t));
+  node->receive(reinterpret_cast<void*>(&flush_job_info->job_id),
+                sizeof(uint64_t));
+  node->receive(reinterpret_cast<void*>(&flush_job_info->smallest_seqno),
+                sizeof(SequenceNumber));
+  node->receive(reinterpret_cast<void*>(&flush_job_info->largest_seqno),
+                sizeof(SequenceNumber));
+  void* local_table_properties = TableProperties::UnPackRemote(node);
   flush_job_info->table_properties =
       *reinterpret_cast<TableProperties*>(local_table_properties);
+  node->receive(reinterpret_cast<void*>(&flush_job_info->flush_reason),
+                sizeof(FlushReason));
+  node->receive(reinterpret_cast<void*>(&flush_job_info->blob_compression_type),
+                sizeof(CompressionType));
 
-  read_data(sock_fd, reinterpret_cast<void*>(&flush_job_info->flush_reason),
-            sizeof(FlushReason));
-  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
-  read_data(sock_fd,
-            reinterpret_cast<void*>(&flush_job_info->blob_compression_type),
-            sizeof(CompressionType));
-  write(sock_fd, reinterpret_cast<const void*>(&ret_num), sizeof(size_t));
   flush_job_info_ = std::make_unique<FlushJobInfo>();
   flush_job_info_->cf_id = flush_job_info->cf_id;
   flush_job_info_->cf_name = flush_job_info->cf_name;
@@ -444,7 +409,7 @@ void MemTable::UnPackRemote(int sock_fd) {
   flush_job_info_->flush_reason = flush_job_info->flush_reason;
   flush_job_info_->blob_compression_type =
       flush_job_info->blob_compression_type;
-  free(flush_job_info);
+  delete flush_job_info;
   LOG("MemTable::UnPackRemote done");
 }
 

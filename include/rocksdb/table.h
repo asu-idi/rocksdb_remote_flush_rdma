@@ -834,7 +834,7 @@ class RandomAccessFileReader;
 // A base class for table factories.
 class TableFactory : public Customizable {
  public:
-  virtual void PackLocal(int sockfd) const {
+  virtual void PackLocal(TCPNode* node) const {
     LOG("TableFactory::PackLocal not implemented");
     assert(false);
   }
@@ -936,8 +936,9 @@ extern TableFactory* NewAdaptiveTableFactory(
 
 class TablePackFactory {
  public:
-  static void* UnPackLocal(int sockfd);
+
   static void* UnPackLocal(char*& buf);
+  static void* UnPackLocal(TCPNode* node);
 
  public:
   TablePackFactory& operator=(const TablePackFactory&) = delete;
@@ -949,14 +950,13 @@ class TablePackFactory {
   ~TablePackFactory() = default;
 };
 
-inline void* TablePackFactory::UnPackLocal(int sockfd) {
+inline void* TablePackFactory::UnPackLocal(TCPNode* node) {
   size_t msg = 0;
-  read_data(sockfd, &msg, sizeof(msg));
+  node->receive(&msg, sizeof(msg));
   if (msg == 0) {
     LOG("TablePackFactory::UnPackLocal: msg == 0 : nullptr");
     return nullptr;
   }
-  send(sockfd, &msg, sizeof(msg), 0);
   if (msg == 0x01) {
     return NewBlockBasedTableFactory();
   } else if (msg == 0x02) {

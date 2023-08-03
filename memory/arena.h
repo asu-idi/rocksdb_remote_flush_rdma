@@ -25,10 +25,10 @@ namespace ROCKSDB_NAMESPACE {
 
 class Arena : public BasicArena {
  public:
-  void PackLocal(int sockfd) const override;
-  static void* UnPackLocal(int sockfd);
   void PackLocal(char*& buf) const override;
   static void* UnPackLocal(char*& buf);
+  void PackLocal(TCPNode* node) const override;
+  static void* UnPackLocal(TCPNode* node);
 
  public:
   // No copying allowed

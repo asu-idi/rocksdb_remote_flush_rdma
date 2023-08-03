@@ -11,6 +11,7 @@
 
 #include <cassert>
 
+#include "memory/remote_flush_service.h"
 #include "util/logger.hpp"
 #include "util/socket_api.hpp"
 // for socket API
@@ -43,16 +44,12 @@ struct ConfigOptions;
 // operating system time-related functionality.
 class SystemClock : public Customizable {
  public:
-  virtual void* PackLocal(int sockfd) const {
+  virtual void PackLocal(TCPNode* node) const {
     std::string mem(Name());
     mem.resize(20);
     assert(mem.length() == 20);
-    send(sockfd, mem.c_str(), mem.length(), 0);
+    node->send(mem.c_str(), mem.length());
     LOG("send ", mem.c_str());
-    int64_t ret_addr = 0;
-    read_data(sockfd, &ret_addr, sizeof(int64_t));
-    LOG("recv ", ret_addr);
-    return reinterpret_cast<void*>(ret_addr);
   }
   virtual void PackLocal(char*& buf) const {
     std::string mem(Name());

@@ -43,10 +43,10 @@ class Logger;
 // shard blocks are allocated from the underlying main arena.
 class ConcurrentArena : public BasicArena {
  public:
-  void PackLocal(int sockfd) const override;
-  static void* UnPackLocal(int sockfd);
   void PackLocal(char*& buf) const override;
   static void* UnPackLocal(char*& buf);
+  void PackLocal(TCPNode* node) const override;
+  static void* UnPackLocal(TCPNode* node);
 
  public:
   const char* name() const override { return "ConcurrentArena"; }

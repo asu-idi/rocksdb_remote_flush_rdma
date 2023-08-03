@@ -97,11 +97,12 @@ struct ImmutableCFOptions {
 
 struct ImmutableOptions : public ImmutableDBOptions, public ImmutableCFOptions {
  public:
-  void PackLocal(int sockfd) const {
-    this->ImmutableDBOptions::PackLocal(sockfd);
+  void PackLocal(TCPNode* node) const {
+    this->ImmutableDBOptions::PackLocal(node);
   }
-  static void* UnPackLocal(int sockfd, const ColumnFamilyOptions& cf_options) {
-    void* immutabe_dboptions_ = ImmutableDBOptions::UnPackLocal(sockfd);
+  static void* UnPackLocal(TCPNode* node,
+                           const ColumnFamilyOptions& cf_options) {
+    void* immutabe_dboptions_ = ImmutableDBOptions::UnPackLocal(node);
     auto* db_options_ =
         reinterpret_cast<ImmutableDBOptions*>(immutabe_dboptions_);
     auto* ret = new ImmutableOptions(*db_options_, cf_options);
@@ -138,18 +139,13 @@ struct ImmutableOptions : public ImmutableDBOptions, public ImmutableCFOptions {
 
 struct MutableCFOptions {
  public:
-  void PackLocal(int sockfd) const {
-    send(sockfd, reinterpret_cast<const void*>(this), sizeof(MutableCFOptions),
-         0);
-    int64_t ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(int64_t));
+  void PackLocal(TCPNode* node) const {
+    node->send(reinterpret_cast<const void*>(this), sizeof(MutableCFOptions));
   }
-  static void* UnPackLocal(int sockfd) {
+  static void* UnPackLocal(TCPNode* node) {
     // todo(iaIm14): not use empty mutable_cf_options to avoid crash
     void* mem = new MutableCFOptions();
-    read_data(sockfd, mem, sizeof(MutableCFOptions));
-    int64_t ret_val = 0;
-    send(sockfd, &ret_val, sizeof(int64_t), 0);
+    node->receive(mem, sizeof(MutableCFOptions));
     void* mem2 = new MutableCFOptions();
     return mem2;
   }

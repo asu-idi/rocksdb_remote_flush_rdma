@@ -19,6 +19,7 @@
 #include <string>
 
 #include "db/dbformat.h"
+#include "memory/remote_flush_service.h"
 #include "port/lang.h"
 #include "port/port.h"
 #include "rocksdb/convenience.h"
@@ -32,13 +33,11 @@ namespace {
 
 class BytewiseComparatorImpl : public Comparator {
  public:
-  void PackLocal(int sockfd) const override {
+  void PackLocal(TCPNode* node) const override {
     LOG("BytewiseComparatorImpl::PackLocal");
     int64_t msg = 0;
     msg += (0x00);
-    send(sockfd, &msg, sizeof(int64_t), 0);
-    int64_t ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(int64_t));
+    node->send(&msg, sizeof(int64_t));
   }
   void PackLocal(char*& buf) const override {
     LOG("BytewiseComparatorImpl::PackLocal");
@@ -166,13 +165,11 @@ class BytewiseComparatorImpl : public Comparator {
 
 class ReverseBytewiseComparatorImpl : public BytewiseComparatorImpl {
  public:
-  void PackLocal(int sockfd) const override {
+  void PackLocal(TCPNode* node) const override {
     LOG("ReverseBytewiseComparatorImpl::PackLocal");
     int64_t msg = 0;
     msg += (0x01);
-    send(sockfd, &msg, sizeof(int64_t), 0);
-    int64_t ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(int64_t));
+    node->send(&msg, sizeof(int64_t));
   }
   void PackLocal(char*& buf) const override {
     LOG("ReverseBytewiseComparatorImpl::PackLocal");

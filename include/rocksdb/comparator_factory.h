@@ -3,6 +3,8 @@
 #include <cassert>
 #include <string>
 
+#include "memory/remote_flush_service.h"
+
 #ifdef __linux__
 #include <sys/socket.h>
 #include <unistd.h>
@@ -17,8 +19,8 @@ namespace ROCKSDB_NAMESPACE {
 
 class ComparatorFactory {
  public:
-  static void* UnPackLocal(int sockfd);
   static void* UnPackLocal(char*& buf);
+  static void* UnPackLocal(TCPNode* node);
 
   ComparatorFactory(const ComparatorFactory&) = delete;
   void operator=(const ComparatorFactory&) = delete;
@@ -28,19 +30,18 @@ class ComparatorFactory {
   ~ComparatorFactory() = default;
 };
 
-inline void* ComparatorFactory::UnPackLocal(int sockfd) {
-  int64_t msg = 0;
-  read_data(sockfd, &msg, sizeof(msg));
-  int64_t type = msg & 0xff;
-  int64_t info = (msg >> 8);
+inline void* ComparatorFactory::UnPackLocal(TCPNode* node) {
+  int64_t* msg = nullptr;
+  size_t size = sizeof(int64_t);
+  node->receive(reinterpret_cast<void**>(&msg), &size);
+  int64_t type = *msg & 0xff;
+  int64_t info = (*msg >> 8);
   if (type == 0 /*BytewiseComparator*/) {
     LOG("ComparatorFactory::UnPackLocal: BytewiseComparator");
-    send(sockfd, &msg, sizeof(msg), 0);
     const Comparator* local_ptr = BytewiseComparator();
     return reinterpret_cast<void*>(const_cast<Comparator*>(local_ptr));
   } else if (type == 1 /*ReverseBytewiseComparatorImpl*/) {
     LOG("ComparatorFactory::UnPackLocal: ReverseBytewiseComparatorImpl");
-    send(sockfd, &msg, sizeof(msg), 0);
     const Comparator* local_ptr = ReverseBytewiseComparator();
     return reinterpret_cast<void*>(const_cast<Comparator*>(local_ptr));
   } else {

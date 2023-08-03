@@ -22,6 +22,7 @@
 #include "db/dbformat.h"
 #include "db/wal_edit.h"
 #include "memory/arena.h"
+#include "memory/remote_flush_service.h"
 #include "memory/shared_package.h"
 #include "port/malloc.h"
 #include "rocksdb/advanced_cache.h"
@@ -122,20 +123,15 @@ extern uint64_t PackFileNumberAndPathId(uint64_t number, uint64_t path_id);
 // file is not in any live version any more.
 struct FileDescriptor {
  public:
-  void PackRemote(int sockfd) const { PackLocal(sockfd); }
-  static void* UnPackRemote(int sockfd) { return UnPackLocal(sockfd); }
-  void PackLocal(int sockfd) const {
-    send(sockfd, reinterpret_cast<const void*>(this), sizeof(FileDescriptor),
-         0);
+  void PackRemote(TCPNode* node) const { PackLocal(node); }
+  static void* UnPackRemote(TCPNode* node) { return UnPackLocal(node); }
+  void PackLocal(TCPNode* node) const {
+    node->send(reinterpret_cast<const void*>(this), sizeof(FileDescriptor));
     assert(table_reader == nullptr);
-    int64_t ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(ret_val));
   }
-  static void* UnPackLocal(int sockfd) {
+  static void* UnPackLocal(TCPNode* node) {
     void* mem = malloc(sizeof(FileDescriptor));
-    read_data(sockfd, mem, sizeof(FileDescriptor));
-    int64_t ret_val = 0;
-    send(sockfd, &ret_val, sizeof(ret_val), 0);
+    node->receive(mem, sizeof(FileDescriptor));
     auto* ptr = reinterpret_cast<FileDescriptor*>(mem);
     assert(ptr->table_reader == nullptr);
     return mem;
@@ -208,12 +204,12 @@ struct FileSampledStats {
 
 struct FileMetaData {
  public:
-  void PackLocal(int sockfd) const;
-  static void* UnPackLocal(int sockfd);
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
-  void PackRemote(int sockfd) const;
-  static void* UnPackRemote(int sockfd);
+  void PackLocal(TCPNode* node) const;
+  static void* UnPackLocal(TCPNode* node);
+  void PackRemote(TCPNode* node) const;
+  static void* UnPackRemote(TCPNode* node);
   std::string DebugString() const;
 
  public:
@@ -415,12 +411,12 @@ struct LevelFilesBrief {
 // to the MANIFEST file.
 class VersionEdit {
  public:
-  void PackRemote(int sockfd) const;
-  void UnPackRemote(int sockfd);
-  void PackLocal(int sockfd) const;
-  static void* UnPackLocal(int sockfd);
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
+  void PackRemote(TCPNode* node) const;
+  void UnPackRemote(TCPNode* node);
+  void PackLocal(TCPNode* node) const;
+  static void* UnPackLocal(TCPNode* node);
 
  public:
   void Clear();

@@ -787,7 +787,6 @@ set(SOURCES
         memory/memory_allocator.cc
         memory/shared_package.cc
         memory/remote_flush_service.cc
-        memory/rdma_server.cc
         memtable/alloc_tracker.cc
         memtable/hash_linklist_rep.cc
         memtable/hash_skiplist_rep.cc
@@ -1573,6 +1572,7 @@ if(WITH_DEV)
   # dev/trace_block_cache_test.cpp
   # dev/trace_memtable_test.cpp
   memory/rdma_server.cc
+  memory/tcp_server.cc
   )
   foreach(sourcefile ${DEVELOP})
     message(STATUS "CHECK DEV: ${sourcefile}")

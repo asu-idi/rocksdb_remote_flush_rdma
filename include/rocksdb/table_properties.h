@@ -148,7 +148,7 @@ class TablePropertiesCollector {
 // including data loss, unreported corruption, deadlocks, and more.
 class TablePropertiesCollectorFactory : public Customizable {
  public:
-  virtual void PackLocal(int sockfd) const {
+  virtual void PackLocal(TCPNode* node) const {
     LOG("TablePropertiesCollectorFactory::PackLocal not implemented. Name: ",
         Name());
     assert(false);
@@ -192,8 +192,8 @@ class TablePropertiesCollectorFactory : public Customizable {
 // table.
 struct TableProperties {
  public:
-  void PackRemote(int sockfd) const;
-  static void* UnPackRemote(int sockfd);
+  void PackRemote(TCPNode* node) const;
+  static void* UnPackRemote(TCPNode* node);
 
  public:
   // the file number at creation time, or 0 for unknown. When known,

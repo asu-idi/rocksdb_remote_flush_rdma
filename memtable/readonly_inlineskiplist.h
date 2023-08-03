@@ -11,6 +11,7 @@
 #include "db/memtable.h"
 #include "memory/allocator.h"
 #include "memory/arena.h"
+#include "memory/remote_flush_service.h"
 #include "memtable/inlineskiplist.h"
 #include "memory/remote_flush_service.h"
 #include "rocksdb/iterator.h"
@@ -26,44 +27,35 @@ namespace ROCKSDB_NAMESPACE {
 class ReadOnlySkipListRep : public MemTableRep {
  public:
   static void PackLocal(
-      int sockfd,
+      TCPNode* node,
       const ReadOnlyInlineSkipList<const MemTableRep::KeyComparator&>*
           readonly_skiplistrep) {
     int64_t msg = 0;
-    readonly_skiplistrep->PackLocal(sockfd);
+    readonly_skiplistrep->PackLocal(node);
     auto readonly_skiplistrep_ = new ReadOnlySkipListRep(readonly_skiplistrep);
-    LOG("ReadOnlySkipListRep::PackLocal: after "
-        "ReadOnlyInlineSkiplist::PackLocal, start send len: ",
-        sizeof(ReadOnlySkipListRep));
-    write_data(sockfd, reinterpret_cast<void*>(readonly_skiplistrep_),
+    node->send(reinterpret_cast<void*>(readonly_skiplistrep_),
                sizeof(ReadOnlySkipListRep));
-    LOG("ReadOnlySkipListRep::PackLocal: after send len: ",
-        sizeof(ReadOnlySkipListRep));
-    int64_t ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(ret_val));
-    LOG("ReadOnlySkipListRep::PackLocal: after read ret_val:", ret_val);
   }
 
-  static void* UnPackLocal(int sockfd) {
+  static void* UnPackLocal(TCPNode* node) {
     int64_t msg = 0;
     void* readonly_inline_skiplistrep =
         ReadOnlyInlineSkipList<const MemTableRep::KeyComparator&>::UnPackLocal(
-            sockfd);
+            node);
     auto* local_readonly_skiplistrep = new ReadOnlySkipListRep(nullptr);
     void* mem = reinterpret_cast<void*>(local_readonly_skiplistrep);
     void* mem2 = malloc(sizeof(ReadOnlySkipListRep));
     LOG("ReadOnlySkipListRep::UnPackLocal: after UnPackLocal ReadOnlyInlineSki"
         "plist, start read len: ",
         sizeof(ReadOnlySkipListRep));
-    read_data(sockfd, mem2, sizeof(ReadOnlySkipListRep));
+    size_t size = sizeof(ReadOnlySkipListRep);
+    node->receive(&mem2, &size);
     LOG("ReadOnlySkipListRep::UnPackLocal: after read len: ",
         sizeof(ReadOnlySkipListRep));
     local_readonly_skiplistrep->read_only_skip_list_ = reinterpret_cast<
         const ReadOnlyInlineSkipList<const MemTableRep::KeyComparator&>*>(
         readonly_inline_skiplistrep);
-    int64_t ret_val = 0;
-    write_data(sockfd, &ret_val, sizeof(ret_val));
-    LOG("ReadOnlySkipListRep::UnPackLocal: after send ret_val:", ret_val);
+    LOG("ReadOnlySkipListRep::UnPackLocal");
     free(mem2);
     return mem;
   }

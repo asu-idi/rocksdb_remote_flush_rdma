@@ -18,6 +18,7 @@
 #include <thread>
 
 #include "db/remote_flush_job.h"
+#include "memory/remote_flush_service.h"
 #include "rocksdb/configurable.h"
 #ifdef OS_SOLARIS
 #include <alloca.h>
@@ -314,54 +315,82 @@ DBImpl::DBImpl(const DBOptions& options, const std::string& dbname,
 
 void DBImpl::BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri) {
   TEST_SYNC_POINT("DBImpl::BackgroundCallRemoteFlush:Start");
-  int64_t magic = 0;
-  int64_t buffer = 0;
-  char* buffer_ptr = reinterpret_cast<char*>(&buffer);
+  auto* worker_node = new TCPNode({}, sockfd);
 
-  read_data(sockfd, buffer_ptr, sizeof(int64_t));
-  LOG("worker Message received1 / JobHandle: ", std::hex, buffer, std::dec, ' ',
-      sockfd);
-
-  magic = 4321;
-  send(sockfd, &magic, sizeof(size_t), 0);
-  LOG("worker Message sent1: ", magic, ' ', sockfd);
+  // int64_t buffer = 0;
+  // char* buffer_ptr = reinterpret_cast<char*>(&buffer);
+  // worker_node->receive(reinterpret_cast<void**>(&buffer_ptr),
+  // sizeof(int64_t)); LOG("worker received Msg1: ", buffer);
+  // worker_node->receive(reinterpret_cast<void**>(buffer_ptr),
+  // sizeof(int64_t)); LOG("worker received Msg2: ", buffer);
+  // worker_node->receive(reinterpret_cast<void**>(buffer_ptr),
+  // sizeof(int64_t)); LOG("worker received Msg3: ", buffer);
 
   auto* flush_job =
       reinterpret_cast<RemoteFlushJob*>(malloc(sizeof(RemoteFlushJob)));
   flush_job->worker_socket_fd_ = sockfd;
+  // todo: fix this
+  // long long rdma_info[2] = {};
+  // read(sockfd, reinterpret_cast<void*>(rdma_info), 2 * sizeof(long long));
+  // assert(rdma_.modify_mem_request(0, std::make_pair(rdma_info[0],
+  // rdma_info[1]),
+  //                                 3));
+  // rdma_.rdma_read(0, rdma_info[1] - rdma_info[0], 0, rdma_info[0]);
+  // assert(rdma_.poll_completion(0) == 0);
+  // assert(rdma_.modify_mem_request(0, std::make_pair(rdma_info[0],
+  // rdma_info[1]),
+  //                                 0));
 
-  long long rdma_info[2] = {};
-  read(sockfd, reinterpret_cast<void*>(rdma_info), 2 * sizeof(long long));
-  assert(rdma_.modify_mem_request(0, std::make_pair(rdma_info[0], rdma_info[1]),
-                                  3));
-  rdma_.rdma_read(0, rdma_info[1] - rdma_info[0], 0, rdma_info[0]);
-  assert(rdma_.poll_completion(0) == 0);
-  assert(rdma_.modify_mem_request(0, std::make_pair(rdma_info[0], rdma_info[1]),
-                                  0));
+  // char* buf = rdma_.get_buf();
+  // auto* local_handler =
+  //     reinterpret_cast<RemoteFlushJob*>(flush_job->UnPackLocal(buf, this));
+  // int64_t signal_verify = 0;
+  // read_data(sockfd, &signal_verify, sizeof(int64_t));
+  // LOG("worker Message received2: ", signal_verify, ' ', sockfd);
+  auto* local_handler = reinterpret_cast<RemoteFlushJob*>(
+      flush_job->UnPackLocal(worker_node, this));
 
-  char* buf = rdma_.get_buf();
-  auto* local_handler =
-      reinterpret_cast<RemoteFlushJob*>(flush_job->UnPackLocal(buf, this));
-  int64_t signal_verify = 0;
-  read_data(sockfd, &signal_verify, sizeof(int64_t));
-  LOG("worker Message received2: ", signal_verify, ' ', sockfd);
+  const char* bye = "byebyemessage";
+  void* end_msg = malloc(strlen(bye));
+  worker_node->receive(&end_msg, strlen(bye));
+  LOG("worker received MsgEnd: ", reinterpret_cast<char*>(end_msg));
+  close(worker_node->connection_info_.client_sockfd);
+
   local_handler->worker_socket_fd_ = sockfd;
   local_handler->RunLocal();
 
-  auto signal = reinterpret_cast<int64_t>(local_handler);
-  send(sockfd, &signal, sizeof(int64_t), 0);
-  LOG("worker Message sent3: ", signal, ' ', sockfd);
+  worker_node->connection_info_.client_sockfd = 0;
+  if ((worker_node->connection_info_.client_sockfd =
+           socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+    LOG("socket creation error");
+    assert(false);
+  }
+  memset(reinterpret_cast<void*>(&worker_node->connection_info_.sin_addr), 0,
+         sizeof(struct sockaddr_in));
+  worker_node->connection_info_.sin_addr.sin_family = AF_INET;
+  worker_node->connection_info_.sin_addr.sin_port = htons(9089);
+  if (inet_pton(AF_INET, "127.0.0.1",
+                &worker_node->connection_info_.sin_addr.sin_addr) <= 0) {
+    LOG("Invalid address/ Address not supported");
+    assert(false);
+  }
+  if (connect(worker_node->connection_info_.client_sockfd,
+              reinterpret_cast<struct sockaddr*>(
+                  &worker_node->connection_info_.sin_addr),
+              sizeof(worker_node->connection_info_.sin_addr)) < 0) {
+    LOG("Connection Failed");
+    assert(false);
+  }
+  LOG("worker connected to server");
+  // worker_node->send(reinterpret_cast<void*>(&buffer), sizeof(int64_t));
+  // worker_node->send(reinterpret_cast<void*>(&buffer), sizeof(int64_t));
+  // worker_node->send(reinterpret_cast<void*>(&buffer), sizeof(int64_t));
+  local_handler->PackRemote(worker_node);
 
-  magic = 0;
-  read_data(sockfd, &magic, sizeof(int64_t));
-  LOG("worker Message received4: ", magic, ' ', sockfd);
-  assert(magic == 1234);
+  worker_node->send("byebyemessage", strlen("byebyemessage"));
+  close(worker_node->connection_info_.client_sockfd);
+  delete worker_node;
 
-  buffer = 1234;
-  send(sockfd, &buffer, sizeof(int64_t), 0);
-  LOG("worker Message sent5: ", buffer, ' ', sockfd);
-
-  close(sockfd);
   bg_flush_scheduled_--;
   TEST_SYNC_POINT("DBImpl::BackgroundCallRemoteFlush:Finish");
 }
@@ -391,9 +420,7 @@ void DBImpl::TEST_BGWorkRemoteFlush(void* arg) {
   char* buffer_ptr = reinterpret_cast<char*>(&buffer);
 
   read_data(fta.sockfd_, buffer_ptr, sizeof(size_t));
-  LOG("Received RemoteFlushJob ptr: ", std::hex,
-      reinterpret_cast<void*>(buffer), std::dec, ' ', valread,
-      " bytes in total");
+  LOG("Received RemoteFlushJob ptr ");
   auto* flush_job = reinterpret_cast<RemoteFlushJob*>(buffer);
   flush_job->worker_socket_fd_ = fta.sockfd_;
   Status ret = flush_job->RunLocal();
@@ -483,7 +510,9 @@ Status DBImpl::ListenAndScheduleFlushJob() {
   }
   address.sin_family = AF_INET;
   address.sin_addr.s_addr = INADDR_ANY;
-  address.sin_port = htons(8980);
+  // todo: fix this
+  // address.sin_port = htons(8980);
+  address.sin_port = htons(9090);
   if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
     LOG("bind failed");
     return Status::IOError("bind failed");

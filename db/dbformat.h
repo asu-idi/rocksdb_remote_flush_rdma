@@ -257,22 +257,15 @@ class InternalKeyComparator
 #endif
     : public CompareInterface {
  public:
-  void PackLocal(int sockfd) const override {
-    user_comparator_.PackLocal(sockfd);
-    int64_t ret_val = 0;
-    send(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t), 0);
-    read_data(sockfd, &ret_val, sizeof(int64_t));
+  void PackLocal(TCPNode* node) const override {
+    user_comparator_.PackLocal(node);
   }
-  static void* UnPackLocal(int sockfd) {
-    void* ucmp = UserComparatorWrapper::UnPackLocal(sockfd);
-    int64_t ret = 0;
-    read_data(sockfd, &ret, sizeof(int64_t));
+  static void* UnPackLocal(TCPNode* node) {
+    void* ucmp = UserComparatorWrapper::UnPackLocal(node);
     auto ptr = new InternalKeyComparator();
     void* mem = reinterpret_cast<void*>(ptr);
     memcpy(reinterpret_cast<void*>(&ptr->user_comparator_), ucmp,
            sizeof(UserComparatorWrapper));
-    int ret_val = 1234;
-    send(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t), 0);
     return mem;
   }
   void PackLocal(char*& buf) const override { user_comparator_.PackLocal(buf); }
@@ -706,16 +699,14 @@ class IterKey {
 // internal keys.
 class InternalKeySliceTransform : public SliceTransform {
  public:
-  void PackLocal(int sockfd) const override {
+  void PackLocal(TCPNode* node) const override {
     LOG("InternalKeySliceTransform::PackLocal");
     int64_t info = 0;
     info += (0x00);
-    send(sockfd, &info, sizeof(info), 0);
-    int64_t ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(ret_val));
-    transform_->PackLocal(sockfd);
+    node->send(&info, sizeof(info));
+    transform_->PackLocal(node);
   }
-  static void* UnPackLocal(void* transform, int sockfd);
+  static void* UnPackLocal(void* transform);
   void PackLocal(char*& buf) const override {
     LOG("InternalKeySliceTransform::PackLocal");
     int64_t info = 0;
@@ -753,8 +744,7 @@ class InternalKeySliceTransform : public SliceTransform {
   // deletion of transform_
   const SliceTransform* const transform_;
 };
-inline void* InternalKeySliceTransform::UnPackLocal(void* transform,
-                                                    int sockfd) {
+inline void* InternalKeySliceTransform::UnPackLocal(void* transform) {
   void* mem = reinterpret_cast<void*>(new InternalKeySliceTransform(
       reinterpret_cast<SliceTransform*>(transform)));
   return mem;

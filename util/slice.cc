@@ -27,14 +27,12 @@ namespace {
 
 class FixedPrefixTransform : public SliceTransform {
  public:
-  void PackLocal(int sockfd) const override {
-    LOG("FixedPrefixTransform::PackLocal: sockfd: ", sockfd);
+  void PackLocal(TCPNode* node) const override {
+    LOG("FixedPrefixTransform::PackLocal");
     int64_t msg = 0;
     msg += (0x01);
     msg += (((int64_t)prefix_len_) << 8);
-    send(sockfd, &msg, sizeof(msg), 0);
-    int64_t ret = 0;
-    read_data(sockfd, &ret, sizeof(ret));
+    node->send(&msg, sizeof(msg));
   }
   void PackLocal(char*& buf) const override {
     LOG("FixedPrefixTransform::PackLocal: rdma");
@@ -98,14 +96,12 @@ class FixedPrefixTransform : public SliceTransform {
 
 class CappedPrefixTransform : public SliceTransform {
  public:
-  void PackLocal(int sockfd) const override {
+  void PackLocal(TCPNode* node) const override {
     LOG("CappedPrefixTransform::PackLocal");
     int64_t msg = 0;
     msg += (0x02);
     msg += (((int64_t)cap_len_) << 8);
-    send(sockfd, &msg, sizeof(msg), 0);
-    int64_t ret = 0;
-    read_data(sockfd, &ret, sizeof(ret));
+    node->send(&msg, sizeof(msg));
   }
   void PackLocal(char*& buf) const override {
     LOG("CappedPrefixTransform::PackLocal");
@@ -166,13 +162,11 @@ class CappedPrefixTransform : public SliceTransform {
 
 class NoopTransform : public SliceTransform {
  public:
-  void PackLocal(int sockfd) const override {
+  void PackLocal(TCPNode* node) const override {
     LOG("NoopTransform::PackLocal");
     int64_t msg = 0;
     msg += (0x03);
-    send(sockfd, &msg, sizeof(msg), 0);
-    int64_t ret = 0;
-    read_data(sockfd, &ret, sizeof(ret));
+    node->send(&msg, sizeof(msg));
   }
   void PackLocal(char*& buf) const override {
     LOG("NoopTransform::PackLocal");
