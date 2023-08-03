@@ -17,7 +17,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
-
+#include "memory/remote_transfer_service.h"
 #include "db/dbformat.h"
 #include "memory/remote_flush_service.h"
 #include "port/lang.h"
@@ -33,7 +33,7 @@ namespace {
 
 class BytewiseComparatorImpl : public Comparator {
  public:
-  void PackLocal(TCPNode* node) const override {
+  void PackLocal(TransferService* node) const override {
     LOG("BytewiseComparatorImpl::PackLocal");
     int64_t msg = 0;
     msg += (0x00);
@@ -165,7 +165,7 @@ class BytewiseComparatorImpl : public Comparator {
 
 class ReverseBytewiseComparatorImpl : public BytewiseComparatorImpl {
  public:
-  void PackLocal(TCPNode* node) const override {
+  void PackLocal(TransferService* node) const override {
     LOG("ReverseBytewiseComparatorImpl::PackLocal");
     int64_t msg = 0;
     msg += (0x01);

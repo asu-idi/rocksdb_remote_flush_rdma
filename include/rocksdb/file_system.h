@@ -90,14 +90,14 @@ enum class IOType : uint8_t {
 // storage media (HDD/SSD) to be used, replication level etc.
 struct IOOptions {
  public:
-  void PackLocal(TCPNode* node) const {
+  void PackLocal(TransferService* node) const {
     assert(property_bag.empty());
     // assert(timeout.count() >= 0);
     size_t timeout_ = timeout.count();
     node->send(reinterpret_cast<const void*>(&timeout_), sizeof(size_t));
     node->send(reinterpret_cast<const void*>(this), sizeof(IOOptions));
   }
-  static void* UnPackLocal(TCPNode* node) {
+  static void* UnPackLocal(TransferService* node) {
     void* mem = malloc(sizeof(IOOptions));
     size_t timeout_ = 0;
     node->receive(&timeout_, sizeof(size_t));
@@ -191,12 +191,12 @@ struct DirFsyncOptions {
 // redundancy level, media to use etc.
 struct FileOptions : EnvOptions {
  public:
-  void PackLocal(TCPNode* node) const {
+  void PackLocal(TransferService* node) const {
     EnvOptions::PackLocal(node);
     io_options.PackLocal(node);
     node->send(reinterpret_cast<const void*>(this), sizeof(FileOptions));
   }
-  static void* UnPackLocal(TCPNode* node) {
+  static void* UnPackLocal(TransferService* node) {
     auto* local_env_options_ =
         reinterpret_cast<EnvOptions*>(EnvOptions::UnPackLocal(node));
     auto* local_io_options =

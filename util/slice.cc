@@ -15,6 +15,7 @@
 #include <cstdint>
 
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "rocksdb/convenience.h"
 #include "rocksdb/slice_transform.h"
 #include "rocksdb/utilities/object_registry.h"
@@ -27,7 +28,7 @@ namespace {
 
 class FixedPrefixTransform : public SliceTransform {
  public:
-  void PackLocal(TCPNode* node) const override {
+  void PackLocal(TransferService* node) const override {
     LOG("FixedPrefixTransform::PackLocal");
     int64_t msg = 0;
     msg += (0x01);
@@ -96,7 +97,7 @@ class FixedPrefixTransform : public SliceTransform {
 
 class CappedPrefixTransform : public SliceTransform {
  public:
-  void PackLocal(TCPNode* node) const override {
+  void PackLocal(TransferService* node) const override {
     LOG("CappedPrefixTransform::PackLocal");
     int64_t msg = 0;
     msg += (0x02);
@@ -162,7 +163,7 @@ class CappedPrefixTransform : public SliceTransform {
 
 class NoopTransform : public SliceTransform {
  public:
-  void PackLocal(TCPNode* node) const override {
+  void PackLocal(TransferService* node) const override {
     LOG("NoopTransform::PackLocal");
     int64_t msg = 0;
     msg += (0x03);

@@ -12,6 +12,7 @@
 #include <cstdint>
 
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "memory/shared_package.h"
 #include "monitoring/perf_context_imp.h"
 #include "rocksdb/comparator.h"
@@ -24,11 +25,11 @@ namespace ROCKSDB_NAMESPACE {
 // perf_context.user_key_comparison_count.
 class UserComparatorWrapper {
  public:
-  void PackLocal(TCPNode* node) const {
+  void PackLocal(TransferService* node) const {
     user_comparator_->PackLocal(node);
     node->send(reinterpret_cast<const void*>(this), sizeof(*this));
   }
-  static void* UnPackLocal(TCPNode* node) {
+  static void* UnPackLocal(TransferService* node) {
     void* ucmp = ComparatorFactory::UnPackLocal(node);
     void* mem = malloc(sizeof(UserComparatorWrapper));
     size_t size = sizeof(UserComparatorWrapper);

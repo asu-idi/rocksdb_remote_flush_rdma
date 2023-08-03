@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cassert>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -21,28 +22,31 @@
 using namespace std;
 using namespace rocksdb;
 
-signed main() {
+signed main(signed argc, char** argv) {
+  if (argc != 4) {
+    std::cout << "Usage: " << argv[0]
+              << "[memnode_ip] [memnode_port] [local_listen_port]" << std::endl;
+    return -1;
+  }
+  std::string memnode_ip = argv[1];
+  int memnode_port = std::atoi(argv[2]);
+  int local_listen_port = std::atoi(argv[3]);
   rocksdb::Env* env = rocksdb::Env::Default();
   EnvOptions env_options;
   DB* db = nullptr;
-  std::string db_name = std::string(ROOT_DIR) + "dev/db/";
+  std::string db_name = std::string(ROOT_DIR) + "dev/db" +
+                        std::to_string(local_listen_port) + "/";
   Options opt;
   opt.prefix_extractor.reset(NewFixedPrefixTransform(3));
   opt.create_if_missing = true;
   opt.merge_operator = MergeOperators::CreateStringAppendOperator();
-  opt.max_background_flushes = 10000;
+  opt.max_background_flushes = 32;
   DB::Open(opt, db_name, &db);
-  Status ret = db->ListenAndScheduleFlushJob();
+  assert(db != nullptr);
+
+  db->register_memnode(memnode_ip, memnode_port);
+  Status ret = db->ListenAndScheduleFlushJob(local_listen_port);
   assert(ret.ok());
-  //   ColumnFamilyOptions cfo;
-  //   ColumnFamilyHandle* cf = nullptr;
-  //   db->CreateColumnFamily(cfo, "cf_pre", &cf);
-  //   db->Put(WriteOptions(), cf, "12345", "62345");
-  //   db->Put(WriteOptions(), cf, "123456", "62345");
-  //   LOG("begin flush, thread_id=", std::this_thread::get_id());
-  //   db->Flush(FlushOptions(), cf);
-  //   LOG("finish flush");
-  //   db->DropColumnFamily(cf);
   db->Close();
   return 0;
 }

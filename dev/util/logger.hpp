@@ -30,8 +30,7 @@ namespace LocalLogger {
 
 template <typename OUT, typename T>
 void LOG_INFO(OUT &&stream, T arg) {
-  stream << arg << ' ' << getpid() << ":" << std::this_thread::get_id()
-         << std::endl;
+  stream << arg << ' ' << std::endl;
 }
 template <typename OUT, typename U, typename... T>
 void LOG_INFO(OUT &&stream, U arg, T... Args) {
@@ -50,6 +49,9 @@ class LocalLogger {
   template <typename... Args>
   void output(const std::thread::id &thread_id, const char *filename,
               const int &line, const char *function_name, Args &&...args);
+  template <typename... Args>
+  void output2cerr(const std::thread::id &thread_id, const char *filename,
+                   const int &line, const char *function_name, Args &&...args);
 };
 
 template <typename... Args>
@@ -80,4 +82,23 @@ void LocalLogger::output(const std::thread::id &thread_id, const char *filename,
     _stream_.flush();
   }
 }
+
+template <typename... Args>
+void LocalLogger::output2cerr(const std::thread::id &thread_id,
+                              const char *filename, const int &line,
+                              const char *function_name, Args &&...args) {
+  std::stringstream id_stream;
+  id_stream << thread_id;
+  int64_t id;
+  id_stream >> id;
+  std::stringstream stream;
+  LOG_INFO(stream, std::forward<Args>(args)...);
+  char buffer[10001]{};
+  stream.read(buffer, 10000);
+  {
+    std::lock_guard<std::mutex> lock(mtx);
+    std::cerr << buffer;
+  }
+}
+
 }  // namespace LocalLogger

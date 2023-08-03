@@ -14,6 +14,7 @@
 
 #include "file/filename.h"
 #include "logging/logging.h"
+#include "memory/remote_transfer_service.h"
 #include "memory/remote_flush_service.h"
 #include "options/configurable_helper.h"
 #include "options/options_helper.h"
@@ -776,7 +777,7 @@ ImmutableDBOptions::ImmutableDBOptions(const DBOptions& options)
   stats = statistics.get();
 }
 
-void ImmutableDBOptions::PackLocal(TCPNode* node) const {
+void ImmutableDBOptions::PackLocal(TransferService* node) const {
   std::function<std::string()> gen = []() {
     std::string ret = "/tmp/DBOptions-";
     for (int i = 0; i < 10; i++) {
@@ -799,7 +800,7 @@ void ImmutableDBOptions::PackLocal(TCPNode* node) const {
   LOG("Packaging ImmutableDBOptions to file:", file_name.c_str());
 }
 
-void* ImmutableDBOptions::UnPackLocal(TCPNode* node) {
+void* ImmutableDBOptions::UnPackLocal(TransferService* node) {
   size_t recv_length = std::string("/tmp/DBOptions-").length() + 10;
   void* mem = malloc(recv_length);
   node->receive(&mem, recv_length);

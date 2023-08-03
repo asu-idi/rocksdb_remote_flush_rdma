@@ -12,6 +12,7 @@
 #include <string>
 
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "rocksdb/customizable.h"
 #include "rocksdb/rocksdb_namespace.h"
 #include "util/coding.h"
@@ -25,7 +26,7 @@ class Slice;
 // Comparator and some internal data structures.
 class CompareInterface {
  public:
-  virtual void PackLocal(TCPNode* node) const {
+  virtual void PackLocal(TransferService* node) const {
     LOG("CompareInterface::PackLocal");
     assert(false);
   };
@@ -57,7 +58,7 @@ class CompareInterface {
 // including data loss, unreported corruption, deadlocks, and more.
 class Comparator : public Customizable, public CompareInterface {
  public:
-  void PackLocal(TCPNode* node) const override {
+  void PackLocal(TransferService* node) const override {
     LOG("Comparator::PackLocal");
     assert(false);
   }

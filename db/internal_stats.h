@@ -104,7 +104,7 @@ struct DBStatInfo {
 
 class InternalStats {
  public:
-  void PackRemote(TCPNode* node) const {
+  void PackRemote(TransferService* node) const {
     size_t ret_num = 0;
     size_t comp_stats_size = comp_stats_.size();
     node->send(&comp_stats_size, sizeof(size_t));
@@ -117,7 +117,7 @@ class InternalStats {
       node->send(&comp_stats_by_pri_[i], sizeof(CompactionStats));
   }
 
-  void UnPackRemote(TCPNode* node) {
+  void UnPackRemote(TransferService* node) {
     size_t comp_stats_size = 0;
     node->receive(&comp_stats_size, sizeof(size_t));
     assert(comp_stats_size == comp_stats_.size());

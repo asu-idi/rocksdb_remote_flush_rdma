@@ -47,6 +47,7 @@
 
 #include "db/dbformat.h"
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "memory/shared_package.h"
 #include "memtable/skiplist.h"
 #include "rocksdb/customizable.h"
@@ -69,7 +70,8 @@ extern Slice GetLengthPrefixedSlice(const char* data);
 
 class MemTableRep {
  public:
-  virtual void PackLocal(TCPNode* node, size_t protection_bytes_per_key) const {
+  virtual void PackLocal(TransferService* node,
+                         size_t protection_bytes_per_key) const {
     LOG("MemTableRep::PackLocal: error: not implemented");
     assert(false);
   }
@@ -83,7 +85,7 @@ class MemTableRep {
   // concatenated with values.
   class KeyComparator {
    public:
-    virtual void PackLocal(TCPNode* node) const {
+    virtual void PackLocal(TransferService* node) const {
       LOG("MemTableRep::KeyComparator::PackLocal: error: not implemented");
       assert(false);
     }

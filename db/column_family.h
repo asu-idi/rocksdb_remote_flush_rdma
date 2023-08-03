@@ -22,6 +22,7 @@
 #include "db/write_batch_internal.h"
 #include "db/write_controller.h"
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "options/cf_options.h"
 #include "rocksdb/compaction_job_stats.h"
 #include "rocksdb/db.h"
@@ -296,10 +297,10 @@ class ColumnFamilyData {
   };
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
-  void PackLocal(TCPNode* node) const;
-  static void* UnPackLocal(TCPNode* node);
-  void PackRemote(TCPNode* node) const;
-  void UnPackRemote(TCPNode* node);
+  void PackLocal(TransferService* node) const;
+  static void* UnPackLocal(TransferService* node);
+  void PackRemote(TransferService* node) const;
+  void UnPackRemote(TransferService* node);
 
  public:
   ~ColumnFamilyData();

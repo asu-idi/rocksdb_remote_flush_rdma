@@ -22,6 +22,7 @@
 #include <random>
 #include <sstream>
 
+#include "memory/remote_transfer_service.h"
 #include "logging/logging.h"
 #include "memory/remote_flush_service.h"
 #include "monitoring/statistics.h"
@@ -143,7 +144,7 @@ ColumnFamilyOptions::ColumnFamilyOptions()
 ColumnFamilyOptions::ColumnFamilyOptions(const Options& options)
     : ColumnFamilyOptions(*static_cast<const ColumnFamilyOptions*>(&options)) {}
 
-void ColumnFamilyOptions::PackLocal(TCPNode* node) const {
+void ColumnFamilyOptions::PackLocal(TransferService* node) const {
   std::function<std::string()> gen = []() {
     std::string ret = "/tmp/ColumnFamilyOptions-";
     for (int i = 0; i < 10; i++) {
@@ -178,7 +179,7 @@ void ColumnFamilyOptions::PackLocal(TCPNode* node) const {
   LOG("Packaging ColumnFamilyOptions");
 }
 
-void* ColumnFamilyOptions::UnPackLocal(TCPNode* node) {
+void* ColumnFamilyOptions::UnPackLocal(TransferService* node) {
   size_t recv_length = std::string("/tmp/ColumnFamilyOptions-").length() + 10;
   void* mem = malloc(recv_length);
   node->receive(mem, recv_length);

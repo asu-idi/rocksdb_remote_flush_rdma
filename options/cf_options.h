@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "memory/remote_transfer_service.h"
 #include "db/dbformat.h"
 #include "memory/remote_flush_service.h"
 #include "memory/shared_package.h"
@@ -97,10 +98,10 @@ struct ImmutableCFOptions {
 
 struct ImmutableOptions : public ImmutableDBOptions, public ImmutableCFOptions {
  public:
-  void PackLocal(TCPNode* node) const {
+  void PackLocal(TransferService* node) const {
     this->ImmutableDBOptions::PackLocal(node);
   }
-  static void* UnPackLocal(TCPNode* node,
+  static void* UnPackLocal(TransferService* node,
                            const ColumnFamilyOptions& cf_options) {
     void* immutabe_dboptions_ = ImmutableDBOptions::UnPackLocal(node);
     auto* db_options_ =
@@ -139,10 +140,10 @@ struct ImmutableOptions : public ImmutableDBOptions, public ImmutableCFOptions {
 
 struct MutableCFOptions {
  public:
-  void PackLocal(TCPNode* node) const {
+  void PackLocal(TransferService* node) const {
     node->send(reinterpret_cast<const void*>(this), sizeof(MutableCFOptions));
   }
-  static void* UnPackLocal(TCPNode* node) {
+  static void* UnPackLocal(TransferService* node) {
     // todo(iaIm14): not use empty mutable_cf_options to avoid crash
     void* mem = new MutableCFOptions();
     node->receive(mem, sizeof(MutableCFOptions));
