@@ -215,6 +215,13 @@ Status DBImpl::FlushMemTableToOutputFile(
   // picking so that no new snapshot can be taken between the two functions.
   LOG("Construct flush job");
   if (cfd->GetLatestCFOptions().server_use_remote_flush) {
+    if (!rdma_init_) {
+      size_t mem_size = 1ull << 26;
+      rdma_.config.server_name = "10.145.21.36"; // todo: to be configurable
+      rdma_.resources_create(mem_size, 1);
+      rdma_.connect_qp(0);
+      rdma_init_ = true;
+    }
     LOG("Construct remote flush job");
     std::shared_ptr<RemoteFlushJob> flush_job =
         RemoteFlushJob::CreateRemoteFlushJob(
@@ -287,7 +294,7 @@ Status DBImpl::FlushMemTableToOutputFile(
     if (s.ok()) {
       // TODO(iaIm14)
       LOG("flush job run remote: ptr = ", std::hex, flush_job.get(), std::dec);
-      s = flush_job->RunRemote(&logs_with_prep_tracker_, &file_meta,
+      s = flush_job->RunRemote(&rdma_, &logs_with_prep_tracker_, &file_meta,
                                &switched_to_mempurge);
       // s = flush_job->RunLocal(&logs_with_prep_tracker_, &file_meta,
       //                         &switched_to_mempurge);

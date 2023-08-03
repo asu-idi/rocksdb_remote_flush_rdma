@@ -147,6 +147,86 @@ void* FileMetaData::UnPackLocal(int sockfd) {
   return mem;
 }
 
+void FileMetaData::PackLocal(char*& buf) const {
+  LOG("server FileMetaData::PackLocal");
+  fd.PackLocal(buf);
+  LOG("server FileMetaData::PackLocal fd");
+  assert(table_reader_handle == nullptr);
+  assert(file_checksum == kUnknownFileChecksum);
+  assert(file_checksum_func_name == kUnknownFileChecksumFuncName);
+  void* mptr = reinterpret_cast<void*>(smallest.get_rep());
+  LOG("check data before PACK:", std::hex, *reinterpret_cast<int64_t*>(mptr),
+      ' ', *(reinterpret_cast<int64_t*>(mptr) + 1), ' ',
+      *(reinterpret_cast<int64_t*>(mptr) + 2), std::dec)
+  size_t ret_val = 0;
+  ret_val = smallest.size();
+  PACK_TO_BUF(&ret_val, buf, sizeof(size_t));
+  if (ret_val > 0) {
+    PACK_TO_BUF(smallest.get_rep(), buf, smallest.size());
+  }
+  ret_val = largest.size();
+  PACK_TO_BUF(&ret_val, buf, sizeof(size_t));
+  if (ret_val > 0) {
+    PACK_TO_BUF(largest.get_rep(), buf, largest.size());
+  }
+
+  uint64_t uid[2] = {unique_id.at(0), unique_id.at(1)};
+  PACK_TO_BUF(uid, buf, sizeof(uint64_t) * 2);
+  PACK_TO_BUF(reinterpret_cast<const char*>(this), buf, sizeof(FileMetaData));
+}
+
+void* FileMetaData::UnPackLocal(char*& buf) {
+  LOG("client FileMetaData::UnPackLocal");
+  void* local_fd = FileDescriptor::UnPackLocal(buf);
+  size_t len = 0, len2 = 0;
+  void *data = nullptr, *data2 = nullptr;
+  UNPACK_FROM_BUF(buf, &len, sizeof(size_t));
+  if (len > 0) {
+    data = malloc(len);
+    UNPACK_FROM_BUF(buf, data, len);
+  }
+
+  len2 = 0;
+  UNPACK_FROM_BUF(buf, &len2, sizeof(size_t));
+  if (len2 > 0) {
+    data2 = malloc(len2);
+    UNPACK_FROM_BUF(buf, data2, len2);
+  }
+
+  void* local_uid = malloc(2 * sizeof(uint64_t));
+  UNPACK_FROM_BUF(buf, local_uid, 2 * sizeof(uint64_t));
+
+  void* mem = malloc(sizeof(FileMetaData));
+  UNPACK_FROM_BUF(buf, mem, sizeof(FileMetaData));
+  auto ptr = reinterpret_cast<FileMetaData*>(mem);
+  ptr->fd = *reinterpret_cast<FileDescriptor*>(local_fd);
+  new (&ptr->file_checksum) std::string(kUnknownFileChecksum);
+  new (&ptr->file_checksum_func_name) std::string(kUnknownFileChecksumFuncName);
+  // new (&ptr->smallest.SharedSet(const std::string &now)) InternalKey();
+  if (len > 0) {
+    std::string* sptr = ptr->smallest.get_rep();
+    new (sptr) std::string(reinterpret_cast<const char*>(data), len);
+  } else {
+    std::string* sptr = ptr->smallest.get_rep();
+    new (sptr) std::string();
+  }
+  if (len2 > 0) {
+    std::string* sptr = ptr->largest.get_rep();
+    new (sptr) std::string(reinterpret_cast<const char*>(data2), len2);
+  } else {
+    std::string* sptr = ptr->largest.get_rep();
+    new (sptr) std::string();
+  }
+
+  LOG("client FileMetaData::UnPackLocal unique_id");
+  new (&ptr->unique_id) std::array<uint64_t, 2>();
+  ptr->unique_id.at(0) = reinterpret_cast<uint64_t*>(local_uid)[0];
+  ptr->unique_id.at(1) = reinterpret_cast<uint64_t*>(local_uid)[1];
+  LOG("client FileMetaData::UnPackLocal unique_id");
+
+  return mem;
+}
+
 FileMetaData* FileMetaData::CreateSharedMetaData() {
   void* mem = shm_alloc(sizeof(FileMetaData));
   auto* ret = new (mem) FileMetaData();
@@ -384,6 +464,153 @@ void VersionEdit::PackLocal(int sockfd) const {
   if (full_history_ts_low_size > 0) {
     send(sockfd, full_history_ts_low_.c_str(), full_history_ts_low_size, 0);
     read(sockfd, &ret_val, sizeof(size_t));
+  }
+}
+
+void* VersionEdit::UnPackLocal(char*& buf) {
+  void* mem = malloc(sizeof(VersionEdit));
+  UNPACK_FROM_BUF(buf, mem, sizeof(VersionEdit));
+  auto ret_version_edit_ = reinterpret_cast<VersionEdit*>(mem);
+  size_t db_id_len_ = 0;
+  UNPACK_FROM_BUF(buf, &db_id_len_, sizeof(size_t));
+  if (db_id_len_ > 0) {
+    char* db_id_ = new char[db_id_len_];
+    UNPACK_FROM_BUF(buf, db_id_, db_id_len_);
+    new (&ret_version_edit_->db_id_) std::string(db_id_, db_id_len_);
+    delete[] db_id_;
+  }
+
+  size_t comparator_len_ = 0;
+  UNPACK_FROM_BUF(buf, &comparator_len_, sizeof(size_t));
+  if (comparator_len_ > 0) {
+    char* comparator_ = new char[comparator_len_];
+    UNPACK_FROM_BUF(buf, comparator_, comparator_len_);
+    new (&ret_version_edit_->comparator_)
+        std::string(comparator_, comparator_len_);
+    delete[] comparator_;
+  }
+
+  new (&ret_version_edit_->compact_cursors_)
+      std::vector<std::pair<int, InternalKey>>();
+  size_t compact_cursors_size_ = 0;
+  UNPACK_FROM_BUF(buf, &compact_cursors_size_, sizeof(size_t));
+  for (size_t i = 0; i < compact_cursors_size_; i++) {
+    int level = 0;
+    UNPACK_FROM_BUF(buf, &level, sizeof(int));
+    size_t str_len_ = 0;
+    UNPACK_FROM_BUF(buf, &str_len_, sizeof(size_t));
+    char* str_ = new char[str_len_];
+    UNPACK_FROM_BUF(buf, str_, str_len_);
+    InternalKey key;
+    key.DecodeFrom(Slice(str_, str_len_));
+    ret_version_edit_->compact_cursors_.emplace_back(level, key);
+    delete[] str_;
+  }
+
+  new (&ret_version_edit_->deleted_files_)
+      std::vector<std::pair<int, uint64_t>>();
+  size_t deleted_files_size_ = 0;
+  UNPACK_FROM_BUF(buf, &deleted_files_size_, sizeof(size_t));
+  for (size_t i = 0; i < deleted_files_size_; i++) {
+    int level = 0;
+    UNPACK_FROM_BUF(buf, &level, sizeof(int));
+    uint64_t file_number = 0;
+    UNPACK_FROM_BUF(buf, &file_number, sizeof(uint64_t));
+    ret_version_edit_->deleted_files_.insert(
+        std::make_pair(level, file_number));
+  }
+
+  new (&ret_version_edit_->new_files_)
+      std::vector<std::pair<int, FileMetaData>>();
+  size_t new_files_size_ = 0;
+  UNPACK_FROM_BUF(buf, &new_files_size_, sizeof(size_t));
+  for (size_t i = 0; i < new_files_size_; i++) {
+    int level = 0;
+    UNPACK_FROM_BUF(buf, &level, sizeof(int));
+    auto local_file_meta_data =
+        reinterpret_cast<FileMetaData*>(FileMetaData::UnPackLocal(buf));
+    ret_version_edit_->new_files_.emplace_back(level, *local_file_meta_data);
+  }
+
+  new (&ret_version_edit_->blob_file_additions_)
+      std::vector<BlobFileAddition>();
+  new (&ret_version_edit_->blob_file_garbages_) std::vector<BlobFileGarbage>();
+
+  new (&ret_version_edit_->wal_additions_) std::vector<WalAddition>();
+  new (&ret_version_edit_->wal_deletion_) WalDeletion();
+
+  size_t column_family_name_len = 0;
+  UNPACK_FROM_BUF(buf, &column_family_name_len, sizeof(size_t));
+  if (column_family_name_len > 0) {
+    char* column_family_name_ = new char[column_family_name_len];
+    UNPACK_FROM_BUF(buf, column_family_name_, column_family_name_len);
+    new (&ret_version_edit_->column_family_name_)
+        std::string(column_family_name_, column_family_name_len);
+    delete[] column_family_name_;
+  }
+
+  size_t full_history_ts_low_size = 0;
+  UNPACK_FROM_BUF(buf, &full_history_ts_low_size, sizeof(size_t));
+  if (full_history_ts_low_size > 0) {
+    char* full_history_ts_low_ = new char[full_history_ts_low_size];
+    UNPACK_FROM_BUF(buf, full_history_ts_low_, full_history_ts_low_size);
+    new (&ret_version_edit_->full_history_ts_low_)
+        std::string(full_history_ts_low_, full_history_ts_low_size);
+    delete[] full_history_ts_low_;
+  }
+  return mem;
+}
+
+void VersionEdit::PackLocal(char*& buf) const {
+  size_t ret_val = 0;
+  PACK_TO_BUF(reinterpret_cast<const void*>(this), buf, sizeof(VersionEdit));
+
+  size_t db_id_len_ = db_id_.size();
+  PACK_TO_BUF(&db_id_len_, buf, sizeof(size_t));
+  if (db_id_len_ > 0) {
+    PACK_TO_BUF(db_id_.c_str(), buf, db_id_len_);
+  }
+
+  size_t comparator_len_ = 0;
+  PACK_TO_BUF(&comparator_len_, buf, sizeof(size_t));
+  if (comparator_.size() > 0) {
+    PACK_TO_BUF(comparator_.c_str(), buf, comparator_.size());
+  }
+
+  size_t compact_cursors_size_ = compact_cursors_.size();
+  PACK_TO_BUF(&compact_cursors_size_, buf, sizeof(size_t));
+  for (auto pr : compact_cursors_) {
+    PACK_TO_BUF(&pr.first, buf, sizeof(int));
+    auto string_ptr = pr.second.get_rep();
+    size_t str_len_ = string_ptr->length();
+    PACK_TO_BUF(&str_len_, buf, sizeof(size_t));
+    PACK_TO_BUF(string_ptr->c_str(), buf, str_len_);
+  }
+
+  size_t deleted_files_size_ = deleted_files_.size();
+  PACK_TO_BUF(&deleted_files_size_, buf, sizeof(size_t));
+  for (auto pr : deleted_files_) {
+    PACK_TO_BUF(&pr.first, buf, sizeof(int));
+    PACK_TO_BUF(&pr.second, buf, sizeof(uint64_t));
+  }
+
+  size_t new_files_size_ = new_files_.size();
+  PACK_TO_BUF(&new_files_size_, buf, sizeof(size_t));
+  for (auto pr : new_files_) {
+    PACK_TO_BUF(&pr.first, buf, sizeof(int));
+    pr.second.PackLocal(buf);
+  }
+
+  size_t column_family_name_len = column_family_name_.size();
+  PACK_TO_BUF(&column_family_name_len, buf, sizeof(size_t));
+  if (column_family_name_len > 0) {
+    PACK_TO_BUF(column_family_name_.c_str(), buf, column_family_name_len);
+  }
+
+  size_t full_history_ts_low_size = full_history_ts_low_.size();
+  PACK_TO_BUF(&full_history_ts_low_size, buf, sizeof(size_t));
+  if (full_history_ts_low_size > 0) {
+    PACK_TO_BUF(full_history_ts_low_.c_str(), buf, full_history_ts_low_size);
   }
 }
 

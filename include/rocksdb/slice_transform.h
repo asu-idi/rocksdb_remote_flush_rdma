@@ -17,6 +17,7 @@
 #include <memory>
 #include <string>
 
+#include "memory/remote_flush_service.h"
 #include "rocksdb/customizable.h"
 #include "rocksdb/rocksdb_namespace.h"
 #include "util/logger.hpp"
@@ -36,6 +37,10 @@ struct ConfigOptions;
 class SliceTransform : public Customizable {
  public:
   virtual void PackLocal(int sockfd) const {
+    LOG("SliceTransform::PackLocal: error: not implemented");
+    assert(false);
+  };
+  virtual void PackLocal(char*& buf) const {
     LOG("SliceTransform::PackLocal: error: not implemented");
     assert(false);
   };

@@ -116,6 +116,8 @@ struct JobContext {
  public:
   void PackLocal(int sockfd) const;
   static void* UnPackLocal(int sockfd);
+  void PackLocal(char*& buf) const;
+  static void* UnPackLocal(char*& buf);
 
  public:
   inline bool HaveSomethingToDelete() const {
@@ -285,6 +287,25 @@ inline void* JobContext::UnPackLocal(int sockfd) {
   read(sockfd, mem, sizeof(JobContext));
   auto ret_val = reinterpret_cast<int64_t>(mem);
   send(sockfd, &ret_val, sizeof(int64_t), 0);
+  return mem;
+}
+
+inline void JobContext::PackLocal(char*& buf) const {
+  LOG("JobContext::PackLocal");
+  PACK_TO_BUF(reinterpret_cast<const void*>(this), buf, sizeof(JobContext));
+  assert(job_snapshot == nullptr);
+}
+
+inline void* JobContext::UnPackLocal(char*& buf) {
+  size_t empty = 0;
+  UNPACK_FROM_BUF(buf, &empty, sizeof(size_t));
+  if (empty == 0) {
+    LOG("JobContext::UnPackLocal empty");
+    return nullptr;
+  }
+  LOG("JobContext::UnPackLocal");
+  void* mem = malloc(sizeof(JobContext));
+  UNPACK_FROM_BUF(buf, mem, sizeof(JobContext));
   return mem;
 }
 

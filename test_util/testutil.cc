@@ -559,6 +559,10 @@ class SpecialMemTableRep : public MemTableRep {
     assert(false);
     memtable_->PackLocal(sockfd);
   }
+  void PackLocal(char*& buf) const override {
+    assert(false);
+    memtable_->PackLocal(buf);
+  }
 
  public:
   explicit SpecialMemTableRep(Allocator* allocator, MemTableRep* memtable,

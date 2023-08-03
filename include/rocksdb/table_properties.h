@@ -13,6 +13,7 @@
 #include <string>
 
 #include "memory/shared_std.hpp"
+#include "memory/remote_flush_service.h"
 #include "rocksdb/customizable.h"
 #include "rocksdb/status.h"
 #include "rocksdb/types.h"
@@ -147,6 +148,11 @@ class TablePropertiesCollector {
 class TablePropertiesCollectorFactory : public Customizable {
  public:
   virtual void PackLocal(int sockfd) const {
+    LOG("TablePropertiesCollectorFactory::PackLocal not implemented. Name: ",
+        Name());
+    assert(false);
+  }
+  virtual void PackLocal(char*& buf) const {
     LOG("TablePropertiesCollectorFactory::PackLocal not implemented. Name: ",
         Name());
     assert(false);

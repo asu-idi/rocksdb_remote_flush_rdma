@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "port/port.h"
+#include "memory/remote_flush_service.h"
 #include "rocksdb/advanced_cache.h"
 #include "rocksdb/compaction_filter.h"
 #include "rocksdb/comparator.h"
@@ -485,6 +486,7 @@ struct rocksdb_env_t {
 struct rocksdb_slicetransform_t : public SliceTransform {
  public:
   void PackLocal(int sockfd) const override { assert(false); }
+  void PackLocal(char*& buf) const override { assert(false); }
   void* state_;
   void (*destructor_)(void*);
   const char* (*name_)(void*);

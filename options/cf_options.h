@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "db/dbformat.h"
+#include "memory/remote_flush_service.h"
 #include "options/db_options.h"
 #include "rocksdb/options.h"
 #include "util/compression.h"
@@ -108,6 +109,16 @@ struct ImmutableOptions : public ImmutableDBOptions, public ImmutableCFOptions {
     auto* ret = new ImmutableOptions(*db_options_, cf_options);
     return reinterpret_cast<void*>(ret);
   }
+  void PackLocal(char*& buf) const {
+    this->ImmutableDBOptions::PackLocal(buf);
+  }
+  static void* UnPackLocal(char*& buf, const ColumnFamilyOptions& cf_options) {
+    void* immutabe_dboptions_ = ImmutableDBOptions::UnPackLocal(buf);
+    auto* db_options_ =
+        reinterpret_cast<ImmutableDBOptions*>(immutabe_dboptions_);
+    auto* ret = new ImmutableOptions(*db_options_, cf_options);
+    return reinterpret_cast<void*>(ret);
+  }
 
  public:
   explicit ImmutableOptions();
@@ -140,6 +151,16 @@ struct MutableCFOptions {
     read(sockfd, mem, sizeof(MutableCFOptions));
     int64_t ret_val = 0;
     send(sockfd, &ret_val, sizeof(int64_t), 0);
+    void* mem2 = new MutableCFOptions();
+    return mem2;
+  }
+  void PackLocal(char*& buf) const {
+    PACK_TO_BUF(reinterpret_cast<const void*>(this), buf, sizeof(MutableCFOptions));
+  }
+  static void* UnPackLocal(char*& buf) {
+    // todo(iaIm14): not use empty mutable_cf_options to avoid crash
+    void* mem = new MutableCFOptions();
+    UNPACK_FROM_BUF(buf, mem, sizeof(MutableCFOptions));
     void* mem2 = new MutableCFOptions();
     return mem2;
   }

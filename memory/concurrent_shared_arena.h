@@ -18,6 +18,7 @@
 
 #include "memory/allocator.h"
 #include "memory/shared_std.hpp"
+#include "memory/remote_flush_service.h"
 #include "port/mmap.h"
 #include "rocksdb/env.h"
 
@@ -27,6 +28,8 @@ class ConSharedArena : public BasicArena {
  public:
   void PackLocal(int sockfd) const override;
   static void* UnPackLocal(int sockfd);
+  void PackLocal(char*& buf) const override;
+  static void* UnPackLocal(char*& buf);
 
  public:
   // No copying allowed

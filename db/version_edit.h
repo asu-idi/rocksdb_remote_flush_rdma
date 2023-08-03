@@ -138,6 +138,16 @@ struct FileDescriptor {
     assert(ptr->table_reader == nullptr);
     return mem;
   }
+  void PackLocal(char*& buf) const {
+    PACK_TO_BUF(reinterpret_cast<const void*>(this), buf, sizeof(FileDescriptor));
+  }
+  static void* UnPackLocal(char*& buf) {
+    void* mem = malloc(sizeof(FileDescriptor));
+    UNPACK_FROM_BUF(buf, mem, sizeof(FileDescriptor));
+    auto* ptr = reinterpret_cast<FileDescriptor*>(mem);
+    assert(ptr->table_reader == nullptr);
+    return mem;
+  }
 
  public:
   // Table reader in table_reader_handle
@@ -215,6 +225,8 @@ struct FileMetaData {
  public:
   void PackLocal(int sockfd) const;
   static void* UnPackLocal(int sockfd);
+  void PackLocal(char*& buf) const;
+  static void* UnPackLocal(char*& buf);
 
  public:
   FileDescriptor fd;
@@ -425,6 +437,8 @@ class VersionEdit {
  public:
   void PackLocal(int sockfd) const;
   static void* UnPackLocal(int sockfd);
+  void PackLocal(char*& buf) const;
+  static void* UnPackLocal(char*& buf);
 
  public:
   void Clear();
