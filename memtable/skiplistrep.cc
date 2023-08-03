@@ -31,7 +31,7 @@ class SkipListRep : public MemTableRep {
 
  public:
   void PackLocal(char*& buf) const override;
-  void PackLocal(int sockfd, size_t protection_bytes_per_key) const override;
+  void PackLocal(TCPNode* node, size_t protection_bytes_per_key) const override;
 
  private:
   InlineSkipList<const MemTableRep::KeyComparator&> skip_list_;
@@ -361,16 +361,14 @@ class SkipListRep : public MemTableRep {
   }
 };
 
-void SkipListRep::PackLocal(int sockfd, size_t protection_bytes_per_key) const {
-  LOG("SkipListRep::PackLocal sockfd=", sockfd);
+void SkipListRep::PackLocal(TCPNode* node,
+                            size_t protection_bytes_per_key) const {
+  LOG("SkipListRep::PackLocal");
   int64_t msg = 0x1;
-  assert(write(sockfd, &msg, sizeof(msg)) == sizeof(msg));
-  int64_t ret_val = 0;
-  assert(read_data(sockfd, &ret_val, sizeof(int64_t)) == sizeof(int64_t));
-  ret_val = 0;
+  node->send(&msg, sizeof(msg));
   ReadOnlyInlineSkipList<const MemTableRep::KeyComparator&>* ptr =
       skip_list_.Clone(protection_bytes_per_key);
-  ReadOnlySkipListRep::PackLocal(sockfd, ptr);
+  ReadOnlySkipListRep::PackLocal(node, ptr);
   LOG("SkipListRep::PackLocal finish");
 }
 void SkipListRep::PackLocal(char*& buf) const {
@@ -416,25 +414,6 @@ SkipListFactory::SkipListFactory(size_t lookahead) : lookahead_(lookahead) {
                   &skiplist_factory_info);
 }
 
-void* SkipListFactory::UnPackLocal(int sockfd) {
-  LOG("SkipListFactory::UnPackLocal ");
-  void* local_cmp_ = MemTable::KeyComparator::UnPackLocal(sockfd);
-  void* local_transform_ = SliceTransformFactory::UnPackLocal(sockfd);
-  void* local_skip_list_ = nullptr;
-  // InlineSkipList<MemTable::KeyComparator>::UnPackLocal(sockfd);
-  void* local_skiplistrep = malloc(sizeof(SkipListRep));
-  read(sockfd, local_skiplistrep, sizeof(SkipListRep));
-  auto* ptr = reinterpret_cast<SkipListRep*>(local_skiplistrep);
-  memcpy(reinterpret_cast<void*>(
-             const_cast<MemTableRep::KeyComparator*>(&ptr->cmp_)),
-         local_cmp_, sizeof(MemTable::KeyComparator));
-  ptr->transform_ = reinterpret_cast<const SliceTransform*>(local_transform_);
-  memcpy(
-      reinterpret_cast<void*>(&ptr->skip_list_), local_skip_list_,
-      sizeof(InlineSkipList<MemTable::KeyComparator>));  // todo: check sizeof
-  send(sockfd, reinterpret_cast<void*>(&local_skiplistrep), sizeof(int64_t), 0);
-  return nullptr;
-}
 void* SkipListFactory::UnPackLocal(char*& buf) {
   LOG("SkipListFactory::UnPackLocal ");
   void* local_cmp_ = MemTable::KeyComparator::UnPackLocal(buf);

@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 
+#include "memory/remote_flush_service.h"
 #include "memory/shared_package.h"
 #include "rocksdb/options.h"
 #include "memory/remote_flush_service.h"
@@ -18,10 +19,10 @@ class SystemClock;
 
 struct ImmutableDBOptions {
  public:
-  void PackLocal(int sockfd) const;
-  static void* UnPackLocal(int sockfd);
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
+  void PackLocal(TCPNode* node) const;
+  static void* UnPackLocal(TCPNode* node);
 
  public:
   static const char* kName() { return "ImmutableDBOptions"; }

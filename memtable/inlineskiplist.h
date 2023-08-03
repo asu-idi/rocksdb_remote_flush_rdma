@@ -47,6 +47,8 @@
 #include <chrono>
 #include <cstdlib>
 #include <thread>
+
+#include "memory/remote_flush_service.h"
 #ifdef __linux__
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -84,10 +86,10 @@ class InlineSkipList;
 template <class Comparator>
 class ReadOnlyInlineSkipList {
  public:
-  void PackLocal(int sockfd) const;
-  static void* UnPackLocal(int sockfd);
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
+  void PackLocal(TCPNode* node) const;
+  static void* UnPackLocal(TCPNode* node);
   void check_data() const;
 
  public:
@@ -142,59 +144,39 @@ inline void ReadOnlyInlineSkipList<Comparator>::check_data() const {
 }
 
 template <class Comparator>
-inline void* ReadOnlyInlineSkipList<Comparator>::UnPackLocal(int sockfd) {
+inline void* ReadOnlyInlineSkipList<Comparator>::UnPackLocal(TCPNode* node) {
   LOG("unpack ReadOnlyInlineSkipList");
   // void* local_cmp_ = MemTable::KeyComparator::UnPackLocal(sockfd);
-  int64_t total_len = 0;
-  int64_t ret_val = 0;
-  assert(read_data(sockfd, &total_len, sizeof(total_len)) == sizeof(total_len));
-  void* data = malloc(total_len);
-  assert(write_data(sockfd, &ret_val, sizeof(ret_val)) == sizeof(ret_val));
-  ssize_t sbyte = read_data(sockfd, data, total_len);
-  assert(sbyte == total_len);
-  assert(write_data(sockfd, &ret_val, sizeof(ret_val)) == sizeof(ret_val));
-  LOG("ReadOnlyInlineSkipList::UnPackLocal send ret_val:", ret_val);
+  int64_t* total_len = nullptr;
+  size_t size = sizeof(total_len);
+  node->receive(reinterpret_cast<void**>(&total_len), &size);
+  void* data = malloc(*total_len);
+  node->receive(&data, reinterpret_cast<size_t*>(total_len));
   void* mem = malloc(sizeof(ReadOnlyInlineSkipList));
   auto* local_readonly_skiplistrep =
       reinterpret_cast<ReadOnlyInlineSkipList*>(mem);
-  assert(read_data(sockfd, mem, sizeof(ReadOnlyInlineSkipList)) ==
-         sizeof(ReadOnlyInlineSkipList));
+  size = sizeof(ReadOnlyInlineSkipList);
+  node->receive(&mem, &size);
   LOG("ReadOnlyInlineSkipList::UnPackLocal read mem len:",
       sizeof(ReadOnlyInlineSkipList));
   local_readonly_skiplistrep->data_ = data;
-  local_readonly_skiplistrep->total_len_ = total_len;
-  assert(write_data(sockfd, &ret_val, sizeof(ret_val)) == sizeof(ret_val));
-  LOG("ReadOnlyInlineSkipList::UnPackLocal send ret_val:", ret_val);
+  local_readonly_skiplistrep->total_len_ = *total_len;
   LOG("unpack ReadOnlyInlineSkipList done");
   return mem;
 }
 
 template <class Comparator>
-inline void ReadOnlyInlineSkipList<Comparator>::PackLocal(int sockfd) const {
+inline void ReadOnlyInlineSkipList<Comparator>::PackLocal(TCPNode* node) const {
   LOG("pack ReadOnlyInlineSkipList");
   // compare_.PackLocal(sockfd);
   LOG("ReadOnlyInlineSkipList::PackLocal send tot_len start:", total_len_);
-  assert(write_data(sockfd, reinterpret_cast<const void*>(&total_len_),
-                    sizeof(total_len_)) == sizeof(total_len_));
+  node->send(reinterpret_cast<const void*>(&total_len_), sizeof(total_len_));
   LOG("ReadOnlyInlineSkipList::PackLocal send tot_len:", total_len_);
-  int64_t ret_val = 0;
-  assert(read_data(sockfd, reinterpret_cast<void*>(&ret_val),
-                   sizeof(ret_val)) == sizeof(ret_val));
-  LOG("ReadOnlyInlineSkipList::PackLocal read ret_val:", ret_val);
-  ssize_t sent_byte = write_data(sockfd, data_, total_len_);
-  LOG("CHECK DEBUG: ", sent_byte, ' ', total_len_);
-  assert(sent_byte == total_len_);
-  ret_val = 0;
-  assert(read_data(sockfd, &ret_val, sizeof(ret_val)) == sizeof(ret_val));
-  LOG("ReadOnlyInlineSkipList::PackLocal read_data ret_val:", ret_val);
-  assert(write_data(sockfd, reinterpret_cast<const void*>(this),
-                    sizeof(ReadOnlyInlineSkipList)) ==
-         sizeof(ReadOnlyInlineSkipList));
+  node->send(data_, total_len_);
+  node->send(reinterpret_cast<const void*>(this),
+             sizeof(ReadOnlyInlineSkipList));
   LOG("ReadOnlyInlineSkipList::PackLocal send data len:",
       sizeof(ReadOnlyInlineSkipList));
-  ret_val = 0;
-  assert(read_data(sockfd, &ret_val, sizeof(ret_val)) == sizeof(ret_val));
-  LOG("ReadOnlyInlineSkipList::PackLocal read_data ret_val:", ret_val);
   LOG("pack ReadOnlyInlineSkipList done");
 }
 

@@ -14,16 +14,18 @@
 namespace ROCKSDB_NAMESPACE {
 class BasicArenaFactory {
  public:
-  static BasicArena* UnPackLocal(int sockfd) {
+  static BasicArena* UnPackLocal(TCPNode* node) {
     std::string msg;
     msg.resize(15);
-    read_data(sockfd, msg.data(), 15);
+    void* ptr = msg.data();
+    size_t size = 15;
+    node->receive(&ptr, &size);
     if (msg.substr(0, 5) == "Arena") {
-      return reinterpret_cast<Arena*>(Arena::UnPackLocal(sockfd));
+      return reinterpret_cast<Arena*>(Arena::UnPackLocal(node));
     } else if (msg.substr(0, 15) ==
                std::string("ConcurrentArena").substr(0, 15)) {
       return reinterpret_cast<ConcurrentArena*>(
-          ConcurrentArena::UnPackLocal(sockfd));
+          ConcurrentArena::UnPackLocal(node));
     } else {
       LOG("BasicArenaFactory::UnPackLocal: error: ", msg, ' ', msg.substr(0, 5),
           ' ', msg.substr(0, 15));

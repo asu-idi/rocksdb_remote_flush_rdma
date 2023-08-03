@@ -46,47 +46,48 @@ auto main(int argc, char** argv) -> signed {
   // opt.min_write_buffer_number_to_merge = 2;
   DB::Open(opt, db_name, &db);
   assert(db != nullptr);
-  std::thread t[10];
-  for (size_t i = 0; i < 10; i++) {
-    t[i] = std::thread([i, db]() {
-      std::map<std::string, std::string> kv_pairs;
-      int cnt_miss = 0;
-      ColumnFamilyOptions cfo;
-      // cfo.write_buffer_size = 64 << 20;
-      // cfo.disable_auto_compactions = true;
-      ColumnFamilyHandle* cf = nullptr;
-      db->CreateColumnFamily(cfo, "cf_num_" + std::to_string(i), &cf);
-      for (size_t j = 0; j < 10000000; j++) {
-        std::random_device rd;
-        std::mt19937 gen(rd());
-        std::uniform_int_distribution<int64_t> dis(0, 1000000000000000000);
-        std::string key = std::to_string(dis(gen));
-        std::string value = std::to_string(dis(gen));
-        if (kv_pairs.find(key) != kv_pairs.end()) {
-          continue;
-        }
-        LOG("put, key=", key, " value=", value);
-        db->Put(WriteOptions(), key, value);
-        kv_pairs.insert(std::make_pair(key, value));
-      }
-      cnt_miss = 0;
-      for (auto kv : kv_pairs) {
-        std::string value;
-        db->Get(ReadOptions(), cf, kv.first, &value);
-        LOG("get, key=", kv.first, " value=\"", value, "\" \"", kv.second,
-            "\"");
-        if (value != kv.second) cnt_miss++;
-      }
-      cout << "cnt_miss=" << cnt_miss << endl;
-      db->DisableFileDeletions();
-      db->DropColumnFamily(cf);
-      db->DestroyColumnFamilyHandle(cf);
-    });
-  }
+  // std::thread t[10];
+  // for (size_t i = 0; i < 10; i++) {
+  //   t[i] = std::thread([i, db]() {
+  //     std::map<std::string, std::string> kv_pairs;
+  //     int cnt_miss = 0;
+  //     ColumnFamilyOptions cfo;
+  //     // cfo.write_buffer_size = 64 << 20;
+  //     // cfo.disable_auto_compactions = true;
+  //     ColumnFamilyHandle* cf = nullptr;
+  //     db->CreateColumnFamily(cfo, "cf_num_" + std::to_string(i), &cf);
+  //     for (size_t j = 0; j < 1000; j++) {
+  //       std::random_device rd;
+  //       std::mt19937 gen(rd());
+  //       std::uniform_int_distribution<int64_t> dis(0, 1000000000000000000);
+  //       std::string key = std::to_string(dis(gen));
+  //       std::string value = std::to_string(dis(gen));
+  //       if (kv_pairs.find(key) != kv_pairs.end()) {
+  //         continue;
+  //       }
+  //       LOG("put, key=", key, " value=", value);
+  //       db->Put(WriteOptions(), cf, key, value);
+  //       kv_pairs.insert(std::make_pair(key, value));
+  //     }
+  //     db->Flush(FlushOptions(), cf);
+  //     cnt_miss = 0;
+  //     for (auto kv : kv_pairs) {
+  //       std::string value;
+  //       db->Get(ReadOptions(), cf, kv.first, &value);
+  //       LOG("get, key=", kv.first, " value=\"", value, "\" \"", kv.second,
+  //           "\"");
+  //       if (value != kv.second) cnt_miss++;
+  //     }
+  //     cout << "cnt_miss=" << cnt_miss << endl;
+  //     db->DisableFileDeletions();
+  //     db->DropColumnFamily(cf);
+  //     db->DestroyColumnFamilyHandle(cf);
+  //   });
+  // }
 
   std::map<std::string, std::string> kv_pairs;
   int cnt_miss = 0;
-  for (size_t j = 0; j < 10000000; j++) {
+  for (size_t j = 0; j < 1000; j++) {
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_int_distribution<int64_t> dis(0, 1000000000000000000);
@@ -99,6 +100,7 @@ auto main(int argc, char** argv) -> signed {
     db->Put(WriteOptions(), key, value);
     kv_pairs.insert(std::make_pair(key, value));
   }
+  db->Flush(FlushOptions());
   cnt_miss = 0;
   for (auto kv : kv_pairs) {
     std::string value;
@@ -108,9 +110,9 @@ auto main(int argc, char** argv) -> signed {
   }
   cout << "cnt_miss=" << cnt_miss << endl;
   db->DisableFileDeletions();
-  for (auto& i : t) {
-    i.join();
-  }
+  // for (auto& i : t) {
+  //   i.join();
+  // }
   // int all_cf[] = {114514, 114515, 19119, 909090909, 233333333};
   // ColumnFamilyOptions cfo;
   // cfo.write_buffer_size = 1 << 20;

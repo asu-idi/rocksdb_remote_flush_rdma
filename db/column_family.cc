@@ -44,6 +44,7 @@
 #include "db/write_controller.h"
 #include "file/sst_file_manager_impl.h"
 #include "logging/logging.h"
+#include "memory/remote_flush_service.h"
 #include "monitoring/thread_status_util.h"
 #include "options/cf_options.h"
 #include "options/db_options.h"
@@ -741,89 +742,74 @@ ColumnFamilyData::~ColumnFamilyData() {
   }
 }
 
-void ColumnFamilyData::PackRemote(int sockfd) const {
+void ColumnFamilyData::PackRemote(TCPNode* node) const {
   LOG("ColumnFamilyData::PackRemote");
   assert(internal_stats_ != nullptr);
-  internal_stats_->PackRemote(sockfd);
+  internal_stats_->PackRemote(node);
   LOG("ColumnFamilyData::PackRemote done.");
 }
-void ColumnFamilyData::UnPackRemote(int sockfd) {
+void ColumnFamilyData::UnPackRemote(TCPNode* node) {
   auto* install_info = new ColumnFamilyData::cfd_pack_remote_data;
   LOG("ColumnFamilyData::UnPackRemote");
-  internal_stats_->UnPackRemote(sockfd);
+  internal_stats_->UnPackRemote(node);
 
   LOG("ColumnFamilyData::UnPackRemote done.");
 }
 
-void ColumnFamilyData::PackLocal(int sockfd) const {
-  initial_cf_options_.PackLocal(sockfd);
-  current_->PackLocal(sockfd);
+void ColumnFamilyData::PackLocal(TCPNode* node) const {
+  initial_cf_options_.PackLocal(node);
+  current_->PackLocal(node);
   assert(current_->cfd() == this);
-  ioptions_.PackLocal(sockfd);
-  mutable_cf_options_.PackLocal(sockfd);
+  ioptions_.PackLocal(node);
+  mutable_cf_options_.PackLocal(node);
   // int_tbl_prop_collector_factories_.PackLocal(sockfd);
   size_t int_tbl_prop_collector_factories_size =
       int_tbl_prop_collector_factories_.size();
-  send(sockfd, reinterpret_cast<void*>(&int_tbl_prop_collector_factories_size),
-       sizeof(size_t), 0);
-  size_t retval = 0;
-  read_data(sockfd, reinterpret_cast<void*>(&retval), sizeof(size_t));
+  node->send(
+      reinterpret_cast<const void*>(&int_tbl_prop_collector_factories_size),
+      sizeof(size_t));
   LOG("server check int_tbl_prop_collector_factories_: ");
   for (auto& factory : int_tbl_prop_collector_factories_) {
-    factory->PackLocal(sockfd);
+    factory->PackLocal(node);
   }
   LOG("server check int_tbl_prop_collector_factories_ done.");
 
-  int64_t ret_val = name_.size();
-  write_data(sockfd, reinterpret_cast<const void*>(&ret_val), sizeof(int64_t));
-  ret_val = 0;
-  read_data(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t));
-  write_data(sockfd, reinterpret_cast<const void*>(name_.data()), name_.size());
-  read_data(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t));
+  size_t ret_val = name_.size();
+  node->send(reinterpret_cast<const void*>(&ret_val), sizeof(size_t));
+  node->send(reinterpret_cast<const void*>(name_.data()), name_.size());
 
-  send(sockfd, reinterpret_cast<const void*>(this), sizeof(ColumnFamilyData),
-       0);
+  node->send(reinterpret_cast<const void*>(this), sizeof(ColumnFamilyData));
   //  todo: remove this
   LOG("server CHECK cfd_ Comparator: ");
   assert(internal_comparator_.user_comparator() ==
          initial_cf_options_.comparator);
-
-  int64_t ret_addr = 0;
-  read_data(sockfd, reinterpret_cast<void*>(&ret_addr), sizeof(int64_t));
 }
 
-void* ColumnFamilyData::UnPackLocal(int sockfd) {
+void* ColumnFamilyData::UnPackLocal(TCPNode* node) {
   void* mem = malloc(sizeof(ColumnFamilyData));
   auto* worker_initial_cf_options_ = reinterpret_cast<ColumnFamilyOptions*>(
-      ColumnFamilyOptions::UnPackLocal(sockfd));
+      ColumnFamilyOptions::UnPackLocal(node));
   auto* worker_current_ =
-      reinterpret_cast<Version*>(Version::UnPackLocal(sockfd, mem));
+      reinterpret_cast<Version*>(Version::UnPackLocal(node, mem));
   auto* worker_ioptions_ = reinterpret_cast<ImmutableOptions*>(
-      ImmutableOptions::UnPackLocal(sockfd, *worker_initial_cf_options_));
-  auto* worker_mutable_cf_options_ = reinterpret_cast<MutableCFOptions*>(
-      MutableCFOptions::UnPackLocal(sockfd));
+      ImmutableOptions::UnPackLocal(node, *worker_initial_cf_options_));
+  auto* worker_mutable_cf_options_ =
+      reinterpret_cast<MutableCFOptions*>(MutableCFOptions::UnPackLocal(node));
   size_t int_tbl_prop_collector_factories_size = 0;
-  read_data(sockfd,
-            reinterpret_cast<void*>(&int_tbl_prop_collector_factories_size),
-            sizeof(size_t));
-  send(sockfd,
-       reinterpret_cast<const void*>(&int_tbl_prop_collector_factories_size),
-       sizeof(size_t), 0);
+  node->receive(reinterpret_cast<void*>(&int_tbl_prop_collector_factories_size),
+                sizeof(size_t));
   std::vector<IntTblPropCollectorFactory*> temp_factories;
   for (size_t i = 0; i < int_tbl_prop_collector_factories_size; i++) {
     auto* int_tbl_prop_factory = reinterpret_cast<IntTblPropCollectorFactory*>(
-        IntTblPropCollectorPackFactory::UnPackLocal(sockfd));
+        IntTblPropCollectorPackFactory::UnPackLocal(node));
     temp_factories.emplace_back(int_tbl_prop_factory);
   }
-  int64_t ret_val = 0;
-  read_data(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t));
+  size_t ret_val = 0;
+  node->receive(reinterpret_cast<void*>(&ret_val), sizeof(size_t));
   std::string worker_name_(ret_val, '\0');
-  send(sockfd, reinterpret_cast<const void*>(&ret_val), sizeof(int64_t), 0);
-  read_data(sockfd, reinterpret_cast<void*>(worker_name_.data()),
-            worker_name_.size());
-  send(sockfd, reinterpret_cast<const void*>(&ret_val), sizeof(int64_t), 0);
+  node->receive(reinterpret_cast<void*>(worker_name_.data()), ret_val);
 
-  read_data(sockfd, mem, sizeof(ColumnFamilyData));
+  node->receive(reinterpret_cast<void*>(mem), sizeof(ColumnFamilyData));
   auto* worker_cfd_ = reinterpret_cast<ColumnFamilyData*>(mem);
   memcpy(reinterpret_cast<void*>(const_cast<ColumnFamilyOptions*>(
              &worker_cfd_->initial_cf_options_)),
@@ -857,7 +843,6 @@ void* ColumnFamilyData::UnPackLocal(int sockfd) {
           worker_cfd_->ioptions_.num_levels, worker_cfd_->ioptions_.clock,
           worker_cfd_));
   worker_cfd_->current_ = worker_current_;
-  send(sockfd, reinterpret_cast<const void*>(&mem), sizeof(int64_t), 0);
   return mem;
 }
 int ColumnFamilyData::Pack(shm_package::PackContext& ctx, int idx) {

@@ -15,6 +15,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "memory/remote_flush_service.h"
 #include "port/port.h"
 #include "memory/remote_flush_service.h"
 #include "rocksdb/advanced_cache.h"
@@ -485,8 +486,8 @@ struct rocksdb_env_t {
 
 struct rocksdb_slicetransform_t : public SliceTransform {
  public:
-  void PackLocal(int sockfd) const override { assert(false); }
   void PackLocal(char*& buf) const override { assert(false); }
+  void PackLocal(rocksdb::TCPNode* node) const override { assert(false); }
   void* state_;
   void (*destructor_)(void*);
   const char* (*name_)(void*);

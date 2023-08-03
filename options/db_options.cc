@@ -14,6 +14,7 @@
 
 #include "file/filename.h"
 #include "logging/logging.h"
+#include "memory/remote_flush_service.h"
 #include "options/configurable_helper.h"
 #include "options/options_helper.h"
 #include "options/options_parser.h"
@@ -775,7 +776,7 @@ ImmutableDBOptions::ImmutableDBOptions(const DBOptions& options)
   stats = statistics.get();
 }
 
-void ImmutableDBOptions::PackLocal(int sockfd) const {
+void ImmutableDBOptions::PackLocal(TCPNode* node) const {
   std::function<std::string()> gen = []() {
     std::string ret = "/tmp/DBOptions-";
     for (int i = 0; i < 10; i++) {
@@ -794,17 +795,14 @@ void ImmutableDBOptions::PackLocal(int sockfd) const {
   Status ret = PersistRocksDBOptions(dboptions, cf_names_, cf_opts_, file_name,
                                      Env::Default()->GetFileSystem().get());
   assert(ret.ok());
-  send(sockfd, file_name.c_str(), file_name.length(), 0);
+  node->send(file_name.c_str(), file_name.length());
   LOG("Packaging ImmutableDBOptions to file:", file_name.c_str());
-  int64_t ret_val = 0;
-  read_data(sockfd, &ret_val, sizeof(int64_t));
-  LOG("Packaging ImmutableDBOptions");
 }
 
-void* ImmutableDBOptions::UnPackLocal(int sockfd) {
+void* ImmutableDBOptions::UnPackLocal(TCPNode* node) {
   size_t recv_length = std::string("/tmp/DBOptions-").length() + 10;
   void* mem = malloc(recv_length);
-  read_data(sockfd, mem, recv_length);
+  node->receive(&mem, recv_length);
   std::string file_name =
       std::string(reinterpret_cast<char*>(mem)).substr(0, recv_length);
   LOG("UnPackaging ImmutableDBOptions from file:", file_name.c_str());
@@ -817,8 +815,6 @@ void* ImmutableDBOptions::UnPackLocal(int sockfd) {
   auto* immutable_dboptions = new ImmutableDBOptions();
   *immutable_dboptions = BuildImmutableDBOptions(db_options);
   LOG("UnPackaging ImmutableDBOptions");
-  int64_t ret_val = 0;
-  send(sockfd, &ret_val, sizeof(int64_t), 0);
   return reinterpret_cast<void*>(immutable_dboptions);
 }
 int ImmutableDBOptions::Pack(shm_package::PackContext& ctx, int idx) const {

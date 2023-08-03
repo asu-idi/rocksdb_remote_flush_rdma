@@ -104,45 +104,36 @@ struct DBStatInfo {
 
 class InternalStats {
  public:
-  void PackRemote(int sockfd) const {
+  void PackRemote(TCPNode* node) const {
     size_t ret_num = 0;
     size_t comp_stats_size = comp_stats_.size();
-    write(sockfd, &comp_stats_size, sizeof(size_t));
-    read_data(sockfd, &ret_num, sizeof(size_t));
-    for (size_t i = 0; i < comp_stats_size; ++i) {
-      write(sockfd, &comp_stats_[i], sizeof(CompactionStats));
-      read_data(sockfd, &ret_num, sizeof(size_t));
-    }
+    node->send(&comp_stats_size, sizeof(size_t));
+    for (size_t i = 0; i < comp_stats_size; ++i)
+      node->send(&comp_stats_[i], sizeof(CompactionStats));
+
     size_t comp_stats_by_pri_size = comp_stats_by_pri_.size();
-    write(sockfd, &comp_stats_by_pri_size, sizeof(size_t));
-    read_data(sockfd, &ret_num, sizeof(size_t));
-    for (size_t i = 0; i < comp_stats_by_pri_size; ++i) {
-      write(sockfd, &comp_stats_by_pri_[i], sizeof(CompactionStats));
-      read_data(sockfd, &ret_num, sizeof(size_t));
-    }
+    node->send(&comp_stats_by_pri_size, sizeof(size_t));
+    for (size_t i = 0; i < comp_stats_by_pri_size; ++i)
+      node->send(&comp_stats_by_pri_[i], sizeof(CompactionStats));
   }
 
-  void UnPackRemote(int sockfd) {
+  void UnPackRemote(TCPNode* node) {
     size_t comp_stats_size = 0;
-    read_data(sockfd, &comp_stats_size, sizeof(size_t));
-    write(sockfd, &comp_stats_size, sizeof(size_t));
+    node->receive(&comp_stats_size, sizeof(size_t));
     assert(comp_stats_size == comp_stats_.size());
     for (size_t i = 0; i < comp_stats_size; ++i) {
       CompactionStats comp_stat;
       size_t ret_val = 0;
-      read_data(sockfd, &comp_stat, sizeof(CompactionStats));
-      write(sockfd, &ret_val, sizeof(size_t));
+      node->receive(&comp_stat, sizeof(CompactionStats));
       comp_stats_[i].Add(comp_stat);
     }
     size_t comp_stats_by_pri_size = 0;
-    read_data(sockfd, &comp_stats_by_pri_size, sizeof(size_t));
-    write(sockfd, &comp_stats_by_pri_size, sizeof(size_t));
+    node->receive(&comp_stats_by_pri_size, sizeof(size_t));
     assert(comp_stats_by_pri_size == comp_stats_by_pri_.size());
     for (size_t i = 0; i < comp_stats_by_pri_size; ++i) {
       CompactionStats comp_stat;
       size_t ret_val = 0;
-      read_data(sockfd, &comp_stat, sizeof(CompactionStats));
-      write(sockfd, &ret_val, sizeof(size_t));
+      node->receive(&comp_stat, sizeof(CompactionStats));
       comp_stats_by_pri_[i].Add(comp_stat);
     }
   }

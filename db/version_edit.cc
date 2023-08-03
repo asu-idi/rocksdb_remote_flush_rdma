@@ -9,6 +9,7 @@
 
 #include "db/version_edit.h"
 
+#include "memory/remote_flush_service.h"
 #include "rocksdb/types.h"
 #include "util/socket_api.hpp"
 
@@ -107,61 +108,44 @@ std::string FileMetaData::DebugString() const {
   return r;
 }
 
-void FileMetaData::PackRemote(int sockfd) const {
+void FileMetaData::PackRemote(TCPNode* node) const {
   LOG("FileMetaData::PackRemote");
   assert(fd.table_reader == nullptr);
-  fd.PackRemote(sockfd);
+  fd.PackRemote(node);
   assert(table_reader_handle == nullptr);
 
   size_t file_checksum_len = file_checksum.size();
-  write(sockfd, &file_checksum_len, sizeof(size_t));
-  read_data(sockfd, &file_checksum_len, sizeof(size_t));
-  if (file_checksum_len > 0) {
-    write(sockfd, file_checksum.c_str(), file_checksum_len);
-    read_data(sockfd, &file_checksum_len, sizeof(size_t));
-  }
+  node->send(&file_checksum_len, sizeof(size_t));
+  if (file_checksum_len > 0)
+    node->send(file_checksum.c_str(), file_checksum_len);
 
   size_t file_checksum_func_name_len = file_checksum_func_name.size();
-  write(sockfd, &file_checksum_func_name_len, sizeof(size_t));
-  read_data(sockfd, &file_checksum_func_name_len, sizeof(size_t));
+  node->send(&file_checksum_func_name_len, sizeof(size_t));
   if (file_checksum_func_name_len > 0) {
-    write(sockfd, file_checksum_func_name.c_str(), file_checksum_func_name_len);
-    read_data(sockfd, &file_checksum_func_name_len, sizeof(size_t));
+    node->send(file_checksum_func_name.c_str(), file_checksum_func_name_len);
   }
 
   size_t ret_val = smallest.size();
-  send(sockfd, &ret_val, sizeof(size_t), 0);
+  node->send(&ret_val, sizeof(size_t));
   if (ret_val > 0) {
     ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(size_t));
-    send(sockfd, smallest.get_rep()->data(), smallest.size(), 0);
+    node->send(smallest.get_rep()->data(), smallest.size());
   }
   ret_val = 0;
-  read_data(sockfd, &ret_val, sizeof(size_t));
 
   ret_val = largest.size();
-  send(sockfd, &ret_val, sizeof(size_t), 0);
+  node->send(&ret_val, sizeof(size_t));
   LOG("FileMetaData::PackRemote largest_len ", ret_val);
   if (ret_val > 0) {
     ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(size_t));
-    send(sockfd, largest.get_rep()->data(), largest.size(), 0);
+    node->send(largest.get_rep()->data(), largest.size());
     LOG("FileMetaData::PackRemote largest: ",
         largest.get_rep()->substr(0, largest.size()));
-    ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(size_t));
-  } else {
-    ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(size_t));
   }
 
   uint64_t uid[2] = {unique_id.at(0), unique_id.at(1)};
-  send(sockfd, uid, sizeof(uint64_t) * 2, 0);
-  ret_val = 0;
-  read_data(sockfd, &ret_val, sizeof(size_t));
-  send(sockfd, reinterpret_cast<const char*>(this), sizeof(FileMetaData), 0);
-  ret_val = 0;
-  read_data(sockfd, &ret_val, sizeof(int64_t));
+  node->send(uid, sizeof(uint64_t) * 2);
+  node->send(reinterpret_cast<const char*>(this), sizeof(FileMetaData));
   LOG("FileMetaData::PackRemote done.");
 }
 int FileMetaData::Pack(shm_package::PackContext& ctx, int idx) {
@@ -189,57 +173,49 @@ void FileMetaData::UnPack(shm_package::PackContext& ctx, int idx,
   unique_id[1] = ctx.get_uint64(idx, offset);
 }
 
-void* FileMetaData::UnPackRemote(int sockfd) {
+void* FileMetaData::UnPackRemote(TCPNode* node) {
   LOG("server FileMetaData::UnPackRemote");
   void* mem = malloc(sizeof(FileMetaData));
   auto ptr = reinterpret_cast<FileMetaData*>(mem);
   size_t ret_val = 0;
-  void* local_fd = FileDescriptor::UnPackRemote(sockfd);
+  void* local_fd = FileDescriptor::UnPackRemote(node);
   std::string remote_file_checksum;
   size_t file_checksum_len = 0;
-  read_data(sockfd, &file_checksum_len, sizeof(size_t));
-  send(sockfd, &file_checksum_len, sizeof(size_t), 0);
+  node->receive(&file_checksum_len, sizeof(size_t));
   if (file_checksum_len > 0) {
     remote_file_checksum.resize(file_checksum_len);
-    read_data(sockfd, remote_file_checksum.data(), file_checksum_len);
-    write(sockfd, &file_checksum_len, sizeof(size_t));
+    node->receive(remote_file_checksum.data(), file_checksum_len);
   }
 
   std::string remote_file_checksum_func_name;
   size_t file_checksum_func_name_len = 0;
-  read_data(sockfd, &file_checksum_func_name_len, sizeof(size_t));
-  send(sockfd, &file_checksum_func_name_len, sizeof(size_t), 0);
+  node->receive(&file_checksum_func_name_len, sizeof(size_t));
   if (file_checksum_func_name_len > 0) {
     remote_file_checksum_func_name.resize(file_checksum_func_name_len);
-    read_data(sockfd, remote_file_checksum_func_name.data(),
-              file_checksum_func_name_len);
-    write(sockfd, &file_checksum_func_name_len, sizeof(size_t));
+    node->receive(remote_file_checksum_func_name.data(),
+                  file_checksum_func_name_len);
   }
 
   void* local_smallest = nullptr;
   size_t smallest_len = 0;
-  read_data(sockfd, &smallest_len, sizeof(size_t));
-  send(sockfd, &smallest_len, sizeof(size_t), 0);
+  node->receive(&smallest_len, sizeof(size_t));
   if (smallest_len > 0) {
     local_smallest = malloc(smallest_len);
-    read_data(sockfd, local_smallest, smallest_len);
-    write(sockfd, &smallest_len, sizeof(size_t));
+    node->receive(local_smallest, smallest_len);
   }
+
   void* local_largest = nullptr;
   size_t largest_len = 0;
-  read_data(sockfd, &largest_len, sizeof(size_t));
-  send(sockfd, &largest_len, sizeof(size_t), 0);
+  node->receive(&largest_len, sizeof(size_t));
   if (largest_len > 0) {
     local_largest = malloc(largest_len);
-    read_data(sockfd, local_largest, largest_len);
-    write(sockfd, &largest_len, sizeof(size_t));
+    node->receive(local_largest, largest_len);
   }
 
   void* local_uid = malloc(2 * sizeof(uint64_t));
-  read_data(sockfd, local_uid, 2 * sizeof(uint64_t));
-  send(sockfd, &local_uid, sizeof(size_t), 0);
+  node->receive(local_uid, 2 * sizeof(uint64_t));
 
-  read_data(sockfd, mem, sizeof(FileMetaData));
+  node->receive(mem, sizeof(FileMetaData));
   new (&ptr->file_checksum) std::string(remote_file_checksum);
   new (&ptr->file_checksum_func_name)
       std::string(remote_file_checksum_func_name);
@@ -256,81 +232,54 @@ void* FileMetaData::UnPackRemote(int sockfd) {
   ptr->unique_id.at(0) = reinterpret_cast<uint64_t*>(local_uid)[0];
   ptr->unique_id.at(1) = reinterpret_cast<uint64_t*>(local_uid)[1];
   ptr->fd = *reinterpret_cast<FileDescriptor*>(local_fd);
-  send(sockfd, &ret_val, sizeof(size_t), 0);
 
   LOG("server FileMetaData::UnPackRemote done.");
   return mem;
 }
 
-void FileMetaData::PackLocal(int sockfd) const {
+void FileMetaData::PackLocal(TCPNode* node) const {
   LOG("server FileMetaData::PackLocal");
-  fd.PackLocal(sockfd);
+  fd.PackLocal(node);
   LOG("server FileMetaData::PackLocal fd");
   assert(table_reader_handle == nullptr);
   assert(file_checksum == kUnknownFileChecksum);
   assert(file_checksum_func_name == kUnknownFileChecksumFuncName);
+
   size_t ret_val = smallest.size();
-  send(sockfd, &ret_val, sizeof(size_t), 0);
-  if (ret_val > 0) {
-    ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(size_t));
-    send(sockfd, smallest.get_rep()->data(), smallest.size(), 0);
-    ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(size_t));
-  } else {
-    ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(size_t));
-  }
+  node->send(&ret_val, sizeof(size_t));
+  if (ret_val > 0) node->send(smallest.get_rep()->data(), smallest.size());
+
   ret_val = largest.size();
-  send(sockfd, &ret_val, sizeof(size_t), 0);
-  if (ret_val > 0) {
-    ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(size_t));
-    send(sockfd, largest.get_rep()->data(), largest.size(), 0);
-    ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(size_t));
-  } else {
-    ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(size_t));
-  }
+  node->send(&ret_val, sizeof(size_t));
+  if (ret_val > 0) node->send(largest.get_rep()->data(), largest.size());
 
   uint64_t uid[2] = {unique_id.at(0), unique_id.at(1)};
-  send(sockfd, uid, sizeof(uint64_t) * 2, 0);
-  ret_val = 0;
-  read_data(sockfd, &ret_val, sizeof(int64_t));
-  send(sockfd, reinterpret_cast<const char*>(this), sizeof(FileMetaData), 0);
-  ret_val = 0;
-  read_data(sockfd, &ret_val, sizeof(int64_t));
+  node->send(uid, sizeof(uint64_t) * 2);
+  node->send(reinterpret_cast<const char*>(this), sizeof(FileMetaData));
 }
 
-void* FileMetaData::UnPackLocal(int sockfd) {
+void* FileMetaData::UnPackLocal(TCPNode* node) {
   LOG("client FileMetaData::UnPackLocal");
-  void* local_fd = FileDescriptor::UnPackLocal(sockfd);
+  void* local_fd = FileDescriptor::UnPackLocal(node);
   size_t len = 0, len2 = 0;
   void *data = nullptr, *data2 = nullptr;
-  read_data(sockfd, &len, sizeof(size_t));
-  send(sockfd, &len, sizeof(size_t), 0);
+  node->receive(&len, sizeof(size_t));
   if (len > 0) {
     data = malloc(len);
-    read_data(sockfd, data, len);
-    send(sockfd, &len, sizeof(size_t), 0);
+    node->receive(data, len);
   }
 
-  len2 = 0;
-  read_data(sockfd, &len2, sizeof(size_t));
-  send(sockfd, &len2, sizeof(size_t), 0);
+  node->receive(&len2, sizeof(size_t));
   if (len2 > 0) {
     data2 = malloc(len2);
-    read_data(sockfd, data2, len2);
-    send(sockfd, &len2, sizeof(size_t), 0);
+    node->receive(data2, len2);
   }
 
   void* local_uid = malloc(2 * sizeof(uint64_t));
-  read_data(sockfd, local_uid, 2 * sizeof(uint64_t));
-  send(sockfd, &local_uid, sizeof(int64_t), 0);
+  node->receive(local_uid, 2 * sizeof(uint64_t));
 
   void* mem = malloc(sizeof(FileMetaData));
-  read_data(sockfd, mem, sizeof(FileMetaData));
+  node->receive(mem, sizeof(FileMetaData));
   auto ptr = reinterpret_cast<FileMetaData*>(mem);
   ptr->fd = *reinterpret_cast<FileDescriptor*>(local_fd);
   new (&ptr->file_checksum) std::string(kUnknownFileChecksum);
@@ -356,8 +305,8 @@ void* FileMetaData::UnPackLocal(int sockfd) {
   ptr->unique_id.at(0) = reinterpret_cast<uint64_t*>(local_uid)[0];
   ptr->unique_id.at(1) = reinterpret_cast<uint64_t*>(local_uid)[1];
   LOG("client FileMetaData::UnPackLocal unique_id");
-
-  send(sockfd, &mem, sizeof(int64_t), 0);
+  free(data);
+  free(data2);
   return mem;
 }
 
@@ -471,29 +420,24 @@ Status FileMetaData::UpdateBoundaries(const Slice& key, const Slice& value,
   return Status::OK();
 }
 
-void* VersionEdit::UnPackLocal(int sockfd) {
+void* VersionEdit::UnPackLocal(TCPNode* node) {
   void* mem = malloc(sizeof(VersionEdit));
-  read_data(sockfd, mem, sizeof(VersionEdit));
-  send(sockfd, &mem, sizeof(size_t), 0);
+  node->receive(&mem, sizeof(VersionEdit));
   auto ret_version_edit_ = reinterpret_cast<VersionEdit*>(mem);
   size_t db_id_len_ = 0;
-  read_data(sockfd, &db_id_len_, sizeof(size_t));
-  send(sockfd, &db_id_len_, sizeof(size_t), 0);
+  node->receive(&db_id_len_, sizeof(size_t));
   if (db_id_len_ > 0) {
     char* db_id_ = new char[db_id_len_];
-    read_data(sockfd, db_id_, db_id_len_);
-    send(sockfd, &db_id_len_, sizeof(size_t), 0);
+    node->receive(&db_id_, db_id_len_);
     new (&ret_version_edit_->db_id_) std::string(db_id_, db_id_len_);
     delete[] db_id_;
   }
 
   size_t comparator_len_ = 0;
-  read_data(sockfd, &comparator_len_, sizeof(size_t));
-  send(sockfd, &comparator_len_, sizeof(size_t), 0);
+  node->receive(&comparator_len_, sizeof(size_t));
   if (comparator_len_ > 0) {
     char* comparator_ = new char[comparator_len_];
-    read_data(sockfd, comparator_, comparator_len_);
-    send(sockfd, &comparator_len_, sizeof(size_t), 0);
+    node->receive(comparator_, comparator_len_);
     new (&ret_version_edit_->comparator_)
         std::string(comparator_, comparator_len_);
     delete[] comparator_;
@@ -502,18 +446,14 @@ void* VersionEdit::UnPackLocal(int sockfd) {
   new (&ret_version_edit_->compact_cursors_)
       std::vector<std::pair<int, InternalKey>>();
   size_t compact_cursors_size_ = 0;
-  read_data(sockfd, &compact_cursors_size_, sizeof(size_t));
-  send(sockfd, &compact_cursors_size_, sizeof(size_t), 0);
+  node->receive(&compact_cursors_size_, sizeof(size_t));
   for (size_t i = 0; i < compact_cursors_size_; i++) {
     int level = 0;
-    read_data(sockfd, &level, sizeof(int));
-    send(sockfd, &level, sizeof(size_t), 0);
+    node->receive(&level, sizeof(int));
     size_t str_len_ = 0;
-    read_data(sockfd, &str_len_, sizeof(size_t));
-    send(sockfd, &str_len_, sizeof(size_t), 0);
+    node->receive(&str_len_, sizeof(size_t));
     char* str_ = new char[str_len_];
-    read_data(sockfd, str_, str_len_);
-    send(sockfd, &str_len_, sizeof(size_t), 0);
+    node->receive(str_, str_len_);
     InternalKey key;
     key.DecodeFrom(Slice(str_, str_len_));
     ret_version_edit_->compact_cursors_.emplace_back(level, key);
@@ -523,15 +463,12 @@ void* VersionEdit::UnPackLocal(int sockfd) {
   new (&ret_version_edit_->deleted_files_)
       std::vector<std::pair<int, uint64_t>>();
   size_t deleted_files_size_ = 0;
-  read_data(sockfd, &deleted_files_size_, sizeof(size_t));
-  send(sockfd, &deleted_files_size_, sizeof(size_t), 0);
+  node->receive(&deleted_files_size_, sizeof(size_t));
   for (size_t i = 0; i < deleted_files_size_; i++) {
     int level = 0;
-    read_data(sockfd, &level, sizeof(int));
-    send(sockfd, &level, sizeof(size_t), 0);
+    node->receive(&level, sizeof(int));
     uint64_t file_number = 0;
-    read_data(sockfd, &file_number, sizeof(uint64_t));
-    send(sockfd, &file_number, sizeof(size_t), 0);
+    node->receive(&file_number, sizeof(uint64_t));
     ret_version_edit_->deleted_files_.insert(
         std::make_pair(level, file_number));
   }
@@ -539,14 +476,12 @@ void* VersionEdit::UnPackLocal(int sockfd) {
   new (&ret_version_edit_->new_files_)
       std::vector<std::pair<int, FileMetaData>>();
   size_t new_files_size_ = 0;
-  read_data(sockfd, &new_files_size_, sizeof(size_t));
-  send(sockfd, &new_files_size_, sizeof(size_t), 0);
+  node->receive(&new_files_size_, sizeof(size_t));
   for (size_t i = 0; i < new_files_size_; i++) {
     int level = 0;
-    read_data(sockfd, &level, sizeof(int));
-    send(sockfd, &level, sizeof(size_t), 0);
+    node->receive(&level, sizeof(int));
     auto local_file_meta_data =
-        reinterpret_cast<FileMetaData*>(FileMetaData::UnPackLocal(sockfd));
+        reinterpret_cast<FileMetaData*>(FileMetaData::UnPackLocal(node));
     ret_version_edit_->new_files_.emplace_back(level, *local_file_meta_data);
   }
 
@@ -558,24 +493,20 @@ void* VersionEdit::UnPackLocal(int sockfd) {
   new (&ret_version_edit_->wal_deletion_) WalDeletion();
 
   size_t column_family_name_len = 0;
-  read_data(sockfd, &column_family_name_len, sizeof(size_t));
-  send(sockfd, &column_family_name_len, sizeof(size_t), 0);
+  node->receive(&column_family_name_len, sizeof(size_t));
   if (column_family_name_len > 0) {
     char* column_family_name_ = new char[column_family_name_len];
-    read_data(sockfd, column_family_name_, column_family_name_len);
-    send(sockfd, &column_family_name_len, sizeof(size_t), 0);
+    node->receive(column_family_name_, column_family_name_len);
     new (&ret_version_edit_->column_family_name_)
         std::string(column_family_name_, column_family_name_len);
     delete[] column_family_name_;
   }
 
   size_t full_history_ts_low_size = 0;
-  read_data(sockfd, &full_history_ts_low_size, sizeof(size_t));
-  send(sockfd, &full_history_ts_low_size, sizeof(size_t), 0);
+  node->receive(&full_history_ts_low_size, sizeof(size_t));
   if (full_history_ts_low_size > 0) {
     char* full_history_ts_low_ = new char[full_history_ts_low_size];
-    read_data(sockfd, full_history_ts_low_, full_history_ts_low_size);
-    send(sockfd, &full_history_ts_low_size, sizeof(size_t), 0);
+    node->receive(full_history_ts_low_, full_history_ts_low_size);
     new (&ret_version_edit_->full_history_ts_low_)
         std::string(full_history_ts_low_, full_history_ts_low_size);
     delete[] full_history_ts_low_;
@@ -583,77 +514,51 @@ void* VersionEdit::UnPackLocal(int sockfd) {
   return mem;
 }
 
-void VersionEdit::PackLocal(int sockfd) const {
-  size_t ret_val = 0;
-  send(sockfd, reinterpret_cast<const void*>(this), sizeof(VersionEdit), 0);
-  ret_val = 0;
-  read_data(sockfd, &ret_val, sizeof(size_t));
-
+void VersionEdit::PackLocal(TCPNode* node) const {
+  node->send(reinterpret_cast<const void*>(this), sizeof(VersionEdit));
   size_t db_id_len_ = db_id_.size();
-  send(sockfd, &db_id_len_, sizeof(size_t), 0);
-  read_data(sockfd, &ret_val, sizeof(size_t));
-  if (db_id_len_ > 0) {
-    send(sockfd, db_id_.c_str(), db_id_len_, 0);
-    ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(size_t));
-  }
+  node->send(&db_id_len_, sizeof(size_t));
+  if (db_id_len_ > 0) node->send(db_id_.c_str(), db_id_len_);
 
   size_t comparator_len_ = 0;
-  send(sockfd, &comparator_len_, sizeof(size_t), 0);
-  read_data(sockfd, &ret_val, sizeof(size_t));
-  if (comparator_.size() > 0) {
-    send(sockfd, comparator_.c_str(), comparator_.size(), 0);
-    ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(size_t));
-  }
+  node->send(&comparator_len_, sizeof(size_t));
+  if (comparator_.size() > 0)
+    node->send(comparator_.c_str(), comparator_.size());
 
   size_t compact_cursors_size_ = compact_cursors_.size();
-  send(sockfd, &compact_cursors_size_, sizeof(size_t), 0);
-  read_data(sockfd, &ret_val, sizeof(size_t));
+  node->send(&compact_cursors_size_, sizeof(size_t));
   for (auto pr : compact_cursors_) {
-    send(sockfd, &pr.first, sizeof(int), 0);
-    read_data(sockfd, &ret_val, sizeof(size_t));
+    node->send(&pr.first, sizeof(int));
     auto string_ptr = pr.second.get_rep();
     size_t str_len_ = string_ptr->length();
-    send(sockfd, &str_len_, sizeof(size_t), 0);
-    read_data(sockfd, &ret_val, sizeof(size_t));
-    send(sockfd, string_ptr->c_str(), str_len_, 0);
-    read_data(sockfd, &ret_val, sizeof(size_t));
+    node->send(&str_len_, sizeof(size_t));
+    node->send(string_ptr->c_str(), str_len_);
   }
 
   size_t deleted_files_size_ = deleted_files_.size();
-  send(sockfd, &deleted_files_size_, sizeof(size_t), 0);
-  read_data(sockfd, &ret_val, sizeof(size_t));
+  node->send(&deleted_files_size_, sizeof(size_t));
   for (auto pr : deleted_files_) {
-    send(sockfd, &pr.first, sizeof(int), 0);
-    read_data(sockfd, &ret_val, sizeof(size_t));
-    send(sockfd, &pr.second, sizeof(uint64_t), 0);
-    read_data(sockfd, &ret_val, sizeof(size_t));
+    node->send(&pr.first, sizeof(int));
+    node->send(&pr.second, sizeof(uint64_t));
   }
 
   size_t new_files_size_ = new_files_.size();
-  send(sockfd, &new_files_size_, sizeof(size_t), 0);
-  read_data(sockfd, &ret_val, sizeof(size_t));
+  node->send(&new_files_size_, sizeof(size_t));
   for (auto pr : new_files_) {
-    send(sockfd, &pr.first, sizeof(int), 0);
-    read_data(sockfd, &ret_val, sizeof(size_t));
-    pr.second.PackLocal(sockfd);
+    node->send(&pr.first, sizeof(int));
+    pr.second.PackLocal(node);
   }
 
   size_t column_family_name_len = column_family_name_.size();
-  send(sockfd, &column_family_name_len, sizeof(size_t), 0);
-  read_data(sockfd, &ret_val, sizeof(size_t));
+  node->send(&column_family_name_len, sizeof(size_t));
   if (column_family_name_len > 0) {
-    send(sockfd, column_family_name_.c_str(), column_family_name_len, 0);
-    read_data(sockfd, &ret_val, sizeof(size_t));
+    node->send(column_family_name_.c_str(), column_family_name_len);
   }
 
   size_t full_history_ts_low_size = full_history_ts_low_.size();
-  send(sockfd, &full_history_ts_low_size, sizeof(size_t), 0);
-  read_data(sockfd, &ret_val, sizeof(size_t));
+  node->send(&full_history_ts_low_size, sizeof(size_t));
   if (full_history_ts_low_size > 0) {
-    send(sockfd, full_history_ts_low_.c_str(), full_history_ts_low_size, 0);
-    read_data(sockfd, &ret_val, sizeof(size_t));
+    node->send(full_history_ts_low_.c_str(), full_history_ts_low_size);
   }
 }
 
@@ -804,46 +709,37 @@ void VersionEdit::PackLocal(char*& buf) const {
   }
 }
 
-void VersionEdit::PackRemote(int sockfd) const {
+
+void VersionEdit::PackRemote(TCPNode* node) const {
   LOG("VersionEdit::PackRemote");
   size_t ret_val = 0;
   size_t new_file_size_ = new_files_.size();
-  write(sockfd, &new_file_size_, sizeof(size_t));
-  read_data(sockfd, &ret_val, sizeof(size_t));
+  node->send(&new_file_size_, sizeof(size_t));
   for (size_t i = 0; i < new_file_size_; i++) {
-    send(sockfd, &new_files_[i].first, sizeof(int), 0);
-    read_data(sockfd, &ret_val, sizeof(size_t));
-    new_files_[i].second.PackRemote(sockfd);
+    node->send(&new_files_[i].first, sizeof(int));
+    new_files_[i].second.PackRemote(node);
   }
-  write(sockfd, &has_last_sequence_, sizeof(bool));
-  read_data(sockfd, &ret_val, sizeof(size_t));
-  write(sockfd, &last_sequence_, sizeof(SequenceNumber));
-  read_data(sockfd, &ret_val, sizeof(size_t));
+  node->send(&has_last_sequence_, sizeof(bool));
+  node->send(&last_sequence_, sizeof(SequenceNumber));
   LOG("VersionEdit::PackRemote done.");
 }
 
-void VersionEdit::UnPackRemote(int sockfd) {
+void VersionEdit::UnPackRemote(TCPNode* node) {
   LOG("VersionEdit::UnPackRemote");
   size_t ret_val = 0;
   size_t new_file_size_ = 0;
   NewFiles remote_new_files_;
-  read_data(sockfd, &new_file_size_, sizeof(size_t));
-  write(sockfd, &new_file_size_, sizeof(size_t));
+  node->receive(&new_file_size_, sizeof(size_t));
   for (size_t i = 0; i < new_file_size_; i++) {
     int level = 0;
-    read_data(sockfd, &level, sizeof(int));
-    write(sockfd, &level, sizeof(size_t));
+    node->receive(&level, sizeof(int));
     auto local_file_meta_data =
-        reinterpret_cast<FileMetaData*>(FileMetaData::UnPackRemote(sockfd));
+        reinterpret_cast<FileMetaData*>(FileMetaData::UnPackRemote(node));
     remote_new_files_.emplace_back(level, *local_file_meta_data);
   }
   new_files_ = remote_new_files_;
-
-  read_data(sockfd, &has_last_sequence_, sizeof(bool));
-  write(sockfd, &ret_val, sizeof(size_t));
-
-  read_data(sockfd, &last_sequence_, sizeof(SequenceNumber));
-  write(sockfd, &ret_val, sizeof(size_t));
+  node->receive(&has_last_sequence_, sizeof(bool));
+  node->receive(&last_sequence_, sizeof(SequenceNumber));
   LOG("VersionEdit::UnPackRemote done.");
 }
 

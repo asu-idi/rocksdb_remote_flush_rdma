@@ -47,6 +47,7 @@
 #include "db/version_builder.h"
 #include "db/version_edit_handler.h"
 #include "db/wal_edit.h"
+#include "memory/remote_flush_service.h"
 #include "options/db_options.h"
 #include "rocksdb/advanced_cache.h"
 #include "rocksdb/file_system.h"
@@ -1557,21 +1558,18 @@ void Version::check() {
   LOG("Version::check done");
 }
 
-void Version::PackLocal(int sockfd) const {
-  storage_info_.PackLocal(sockfd);
-  send(sockfd, reinterpret_cast<const void*>(this), sizeof(Version), 0);
-  int64_t ret_val = 0;
-  read_data(sockfd, &ret_val, sizeof(int64_t));
+void Version::PackLocal(TCPNode* node) const {
+  storage_info_.PackLocal(node);
+  node->send(reinterpret_cast<const void*>(this), sizeof(Version));
 }
-void* Version::UnPackLocal(int sockfd, void* cfd_ptr) {
+void* Version::UnPackLocal(TCPNode* node, void* cfd_ptr) {
   void* mem = malloc(sizeof(Version));
   auto* mem_ptr = reinterpret_cast<Version*>(mem);
-  void* worker_storage_info = VersionStorageInfo::UnPackLocal(sockfd);
-  read_data(sockfd, mem, sizeof(Version));
+  void* worker_storage_info = VersionStorageInfo::UnPackLocal(node);
+  node->receive(mem, sizeof(Version));
   memcpy(reinterpret_cast<void*>(&mem_ptr->storage_info_), worker_storage_info,
          sizeof(VersionStorageInfo));
   mem_ptr->cfd_ = reinterpret_cast<ColumnFamilyData*>(cfd_ptr);
-  send(sockfd, &mem_ptr, sizeof(int64_t), 0);
   return mem;
 }
 
@@ -3178,18 +3176,13 @@ void VersionStorageInfo::check() {
   LOG("finalized_: ", finalized_);
 }
 
-void VersionStorageInfo::PackLocal(int sockfd) const {
-  send(sockfd, reinterpret_cast<const void*>(this), sizeof(VersionStorageInfo),
-       0);
-  int64_t ret = 0;
-  read_data(sockfd, reinterpret_cast<void*>(&ret), sizeof(int64_t));
+void VersionStorageInfo::PackLocal(TCPNode* node) const {
+  node->send(reinterpret_cast<const void*>(this), sizeof(VersionStorageInfo));
 }
 
-void* VersionStorageInfo::UnPackLocal(int sockfd) {
+void* VersionStorageInfo::UnPackLocal(TCPNode* node) {
   void* mem = malloc(sizeof(VersionStorageInfo));
-  read_data(sockfd, mem, sizeof(VersionStorageInfo));
-  int64_t ret = 0;
-  send(sockfd, reinterpret_cast<void*>(&ret), sizeof(int64_t), 0);
+  node->receive(mem, sizeof(VersionStorageInfo));
   return mem;
 }
 
@@ -4864,25 +4857,21 @@ void VersionSet::check() {
   LOG("VersionSet::check done.");
 }
 
-void VersionSet::PackLocal(int sockfd) const {
+void VersionSet::PackLocal(TCPNode* node) const {
   LOG("VersionSet::PackLocal dump ImmutablDBOptions file");
-  db_options_->PackLocal(sockfd);
+  db_options_->PackLocal(node);
   LOG("VersionSet::PackLocal dump ImmutablDBOptions file done.");
-  send(sockfd, reinterpret_cast<const void*>(this), sizeof(VersionSet), 0);
-  int64_t ret_val = 0;
-  read_data(sockfd, reinterpret_cast<void*>(&ret_val), sizeof(int64_t));
+  node->send(reinterpret_cast<const void*>(this), sizeof(VersionSet));
 }
-void* VersionSet::UnPackLocal(int sockfd) {
-  void* local_db_options_ = ImmutableDBOptions::UnPackLocal(sockfd);
+
+void* VersionSet::UnPackLocal(TCPNode* node) {
+  void* local_db_options_ = ImmutableDBOptions::UnPackLocal(node);
   void* mem = malloc(sizeof(VersionSet));
   auto ptr = reinterpret_cast<VersionSet*>(mem);
-  int64_t ret_val = 0;
-  read_data(sockfd, reinterpret_cast<void*>(ptr), sizeof(VersionSet));
+  node->receive(reinterpret_cast<void**>(&ptr), sizeof(VersionSet));
   memcpy(
       const_cast<void*>(reinterpret_cast<const void* const>(&ptr->db_options_)),
       &local_db_options_, sizeof(ImmutableDBOptions*));
-
-  send(sockfd, reinterpret_cast<const void*>(&ret_val), sizeof(int64_t), 0);
   return mem;
 }
 

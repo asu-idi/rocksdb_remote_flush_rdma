@@ -25,7 +25,7 @@ class Slice;
 // Comparator and some internal data structures.
 class CompareInterface {
  public:
-  virtual void PackLocal(int sockfd) const {
+  virtual void PackLocal(TCPNode* node) const {
     LOG("CompareInterface::PackLocal");
     assert(false);
   };
@@ -57,7 +57,7 @@ class CompareInterface {
 // including data loss, unreported corruption, deadlocks, and more.
 class Comparator : public Customizable, public CompareInterface {
  public:
-  void PackLocal(int sockfd) const override {
+  void PackLocal(TCPNode* node) const override {
     LOG("Comparator::PackLocal");
     assert(false);
   }

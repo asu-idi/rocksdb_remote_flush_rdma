@@ -130,10 +130,10 @@ enum EpochNumberRequirement {
 class VersionStorageInfo {
  public:
   void check();
-  void PackLocal(int sockfd) const;
-  static void* UnPackLocal(int sockfd);
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
+  void PackLocal(TCPNode* node) const;
+  static void* UnPackLocal(TCPNode* node);
 
  public:
   VersionStorageInfo(const InternalKeyComparator* internal_comparator,
@@ -829,10 +829,10 @@ using MultiGetRange = MultiGetContext::Range;
 class Version {
  public:
   void check();
-  void PackLocal(int sockfd) const;
-  static void* UnPackLocal(int sockfd, void* cfd_ptr);
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
+  void PackLocal(TCPNode* node) const;
+  static void* UnPackLocal(TCPNode* node, void* cfd_ptr);
 
  public:
   // Append to *iters a sequence of iterators that will
@@ -1133,10 +1133,10 @@ class AtomicGroupReadBuffer {
 class VersionSet {
  public:
   void check();
-  void PackLocal(int sockfd) const;
-  static void* UnPackLocal(int sockfd);
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
+  void PackLocal(TCPNode* node) const;
+  static void* UnPackLocal(TCPNode* node);
 
  public:
   VersionSet(const std::string& dbname, const ImmutableDBOptions* db_options,

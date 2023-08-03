@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include "memory/remote_flush_service.h"
 #ifdef __linux__
 #include <sys/socket.h>
 #endif
@@ -57,13 +58,11 @@ class DbStressTablePropertiesCollector : public TablePropertiesCollector {
 class DbStressTablePropertiesCollectorFactory
     : public TablePropertiesCollectorFactory {
  public:
-  void PackLocal(int sockfd) const override {
+  void PackLocal(TCPNode* node) const override {
     size_t msg_len = sizeof(size_t) + sizeof(size_t) * 2 + sizeof(double);
     char* msg = reinterpret_cast<char*>(malloc(msg_len));
     *reinterpret_cast<size_t*>(msg) = 1;
-    send(sockfd, msg, msg_len, 0);
-    size_t ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(ret_val));
+    node->send(msg, msg_len);
   }
   void PackLocal(char*& buf) const override {
     size_t msg_len = sizeof(size_t) + sizeof(size_t) * 2 + sizeof(double);

@@ -143,7 +143,7 @@ ColumnFamilyOptions::ColumnFamilyOptions()
 ColumnFamilyOptions::ColumnFamilyOptions(const Options& options)
     : ColumnFamilyOptions(*static_cast<const ColumnFamilyOptions*>(&options)) {}
 
-void ColumnFamilyOptions::PackLocal(int sockfd) const {
+void ColumnFamilyOptions::PackLocal(TCPNode* node) const {
   std::function<std::string()> gen = []() {
     std::string ret = "/tmp/ColumnFamilyOptions-";
     for (int i = 0; i < 10; i++) {
@@ -163,35 +163,25 @@ void ColumnFamilyOptions::PackLocal(int sockfd) const {
       PersistRocksDBOptions(db_options, cf_names_, cf_options_, file_name,
                             Env::Default()->GetFileSystem().get());
   assert(ret.ok());
-  send(sockfd, file_name.c_str(), file_name.length(), 0);
+  node->send(file_name.c_str(), file_name.length());
   LOG("Packaging ColumnFamilyOptions to file:", file_name.c_str());
-  int64_t ret_val = 0;
-  read_data(sockfd, &ret_val, sizeof(ret_val));
   size_t cf_path_size = cf_paths.size();
-  send(sockfd, &cf_path_size, sizeof(cf_path_size), 0);
-  ret_val = 0;
-  read_data(sockfd, &ret_val, sizeof(ret_val));
+  node->send(&cf_path_size, sizeof(cf_path_size));
   for (auto& cf_path : cf_paths) {
-    send(sockfd, &cf_path.target_size, sizeof(uint64_t), 0);
-    ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(ret_val));
+    node->send(&cf_path.target_size, sizeof(uint64_t));
     size_t path_len = cf_path.path.length();
-    send(sockfd, &path_len, sizeof(path_len), 0);
-    ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(ret_val));
-    send(sockfd, cf_path.path.c_str(), path_len, 0);
-    ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(ret_val));
+    node->send(&path_len, sizeof(path_len));
+    node->send(cf_path.path.c_str(), path_len);
   }
   // table_factory
-  table_factory->PackLocal(sockfd);
+  table_factory->PackLocal(node);
   LOG("Packaging ColumnFamilyOptions");
 }
 
-void* ColumnFamilyOptions::UnPackLocal(int sockfd) {
+void* ColumnFamilyOptions::UnPackLocal(TCPNode* node) {
   size_t recv_length = std::string("/tmp/ColumnFamilyOptions-").length() + 10;
   void* mem = malloc(recv_length);
-  read_data(sockfd, mem, recv_length);
+  node->receive(mem, recv_length);
   LOG("read file name:", static_cast<char*>(mem));
   std::string file_name =
       std::string(static_cast<char*>(mem)).substr(0, recv_length);
@@ -208,25 +198,15 @@ void* ColumnFamilyOptions::UnPackLocal(int sockfd) {
   assert(loaded_cf_descs.size() == 1);
   *options = loaded_cf_descs[0].options;
   LOG("Unpackaging ColumnFamilyOptions");
-  int64_t ret_val = 4321;
-  send(sockfd, &ret_val, sizeof(int64_t), 0);
   size_t cf_path_size = 0;
-  read_data(sockfd, &cf_path_size, sizeof(cf_path_size));
-  ret_val = 4321;
-  send(sockfd, &ret_val, sizeof(int64_t), 0);
+  node->receive(&cf_path_size, sizeof(cf_path_size));
   for (size_t i = 0; i < cf_path_size; i++) {
     uint64_t target_size = 0;
-    read_data(sockfd, &target_size, sizeof(uint64_t));
-    ret_val = 4321;
-    send(sockfd, &ret_val, sizeof(int64_t), 0);
+    node->receive(&target_size, sizeof(uint64_t));
     size_t path_len = 0;
-    read_data(sockfd, &path_len, sizeof(path_len));
-    ret_val = 4321;
-    send(sockfd, &ret_val, sizeof(int64_t), 0);
+    node->receive(&path_len, sizeof(path_len));
     void* path_mem = malloc(path_len);
-    read_data(sockfd, path_mem, path_len);
-    ret_val = 4321;
-    send(sockfd, &ret_val, sizeof(int64_t), 0);
+    node->receive(path_mem, path_len);
     std::string path =
         std::string(static_cast<char*>(path_mem)).substr(0, path_len);
     options->cf_paths.emplace_back(path, target_size);
@@ -234,7 +214,7 @@ void* ColumnFamilyOptions::UnPackLocal(int sockfd) {
   // assert(options->table_factory == nullptr);
   LOG("checkpoint TIME:", options->table_factory->Name());
   auto* local_table_factory =
-      reinterpret_cast<TableFactory*>(TablePackFactory::UnPackLocal(sockfd));
+      reinterpret_cast<TableFactory*>(TablePackFactory::UnPackLocal(node));
   options->table_factory.reset(local_table_factory);
   return reinterpret_cast<void*>(options);
 }

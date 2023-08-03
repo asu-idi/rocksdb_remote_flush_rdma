@@ -90,29 +90,20 @@ enum class IOType : uint8_t {
 // storage media (HDD/SSD) to be used, replication level etc.
 struct IOOptions {
  public:
-  void PackLocal(int sockfd) const {
+  void PackLocal(TCPNode* node) const {
     assert(property_bag.empty());
     // assert(timeout.count() >= 0);
     size_t timeout_ = timeout.count();
-    send(sockfd, reinterpret_cast<const void*>(&timeout_), sizeof(size_t), 0);
-    timeout_ = 0;
-    read_data(sockfd, &timeout_, sizeof(size_t));
-
-    send(sockfd, reinterpret_cast<const void*>(this), sizeof(IOOptions), 0);
-    size_t ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(size_t));
+    node->send(reinterpret_cast<const void*>(&timeout_), sizeof(size_t));
+    node->send(reinterpret_cast<const void*>(this), sizeof(IOOptions));
   }
-  static void* UnPackLocal(int sockfd) {
+  static void* UnPackLocal(TCPNode* node) {
     void* mem = malloc(sizeof(IOOptions));
     size_t timeout_ = 0;
-    read_data(sockfd, &timeout_, sizeof(size_t));
-    send(sockfd, &timeout_, sizeof(size_t), 0);
-
-    read_data(sockfd, mem, sizeof(IOOptions));
+    node->receive(&timeout_, sizeof(size_t));
+    node->receive(mem, sizeof(IOOptions));
     auto ptr = reinterpret_cast<IOOptions*>(mem);
     new (&ptr->timeout) std::chrono::microseconds(timeout_);
-    size_t ret_val = 0;
-    send(sockfd, &ret_val, sizeof(size_t), 0);
     return mem;
   }
   void PackLocal(char*& buf) const {
@@ -200,28 +191,24 @@ struct DirFsyncOptions {
 // redundancy level, media to use etc.
 struct FileOptions : EnvOptions {
  public:
-  void PackLocal(int sockfd) const {
-    EnvOptions::PackLocal(sockfd);
-    io_options.PackLocal(sockfd);
-    send(sockfd, reinterpret_cast<const void*>(this), sizeof(FileOptions), 0);
-    int64_t ret_val = 0;
-    read_data(sockfd, &ret_val, sizeof(int64_t));
+  void PackLocal(TCPNode* node) const {
+    EnvOptions::PackLocal(node);
+    io_options.PackLocal(node);
+    node->send(reinterpret_cast<const void*>(this), sizeof(FileOptions));
   }
-  static void* UnPackLocal(int sockfd) {
+  static void* UnPackLocal(TCPNode* node) {
     auto* local_env_options_ =
-        reinterpret_cast<EnvOptions*>(EnvOptions::UnPackLocal(sockfd));
+        reinterpret_cast<EnvOptions*>(EnvOptions::UnPackLocal(node));
     auto* local_io_options =
-        reinterpret_cast<IOOptions*>(IOOptions::UnPackLocal(sockfd));
+        reinterpret_cast<IOOptions*>(IOOptions::UnPackLocal(node));
     void* mem = new FileOptions(*local_env_options_);
     void* mem2 = malloc(sizeof(FileOptions));
-    read_data(sockfd, mem2, sizeof(FileOptions));
+    node->receive(mem2, sizeof(FileOptions));
     auto ptr = reinterpret_cast<FileOptions*>(mem2);
     auto local_file_options = reinterpret_cast<FileOptions*>(mem);
     new (&local_file_options->io_options) IOOptions(*local_io_options);
     local_file_options->temperature = ptr->temperature;
     local_file_options->handoff_checksum_type = ptr->handoff_checksum_type;
-    int64_t ret_val = 0;
-    send(sockfd, &ret_val, sizeof(int64_t), 0);
     free(mem2);
     return mem;
   }

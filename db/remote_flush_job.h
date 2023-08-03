@@ -63,6 +63,8 @@ class Arena;
 
 class RemoteFlushJob {
  public:
+  TCPNode local_generator_node;
+  TCPNode remote_consumer_node;
   int server_socket_fd_;
   int worker_socket_fd_;
 
@@ -86,14 +88,14 @@ class RemoteFlushJob {
       const std::string& db_session_id = "",
       std::string full_history_ts_low = "",
       BlobFileCompletionCallback* blob_callback = nullptr);
-  void PackLocal(int sockfd) const;
-  static void* UnPackLocal(int sockfd, DBImpl* remote_db);
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf, DBImpl* remote_db);
-  void PackRemote(int sockfd) const;
   void PackRemote(char*& buf) const;
   static void* UnPackRemote(char*& buf);
-  void UnPackRemote(int sockfd);
+  void PackLocal(TCPNode* node) const;
+  static void* UnPackLocal(TCPNode* node, DBImpl* remote_db);
+  void PackRemote(TCPNode* node) const;
+  void UnPackRemote(TCPNode* node);
 
  private:
   // TODO(icanadi) make effort to reduce number of parameters here
@@ -134,6 +136,8 @@ class RemoteFlushJob {
                    LogsWithPrepTracker* prep_tracker = nullptr,
                    FileMetaData* file_meta = nullptr,
                    bool* switched_to_mempurge = nullptr);
+  Status MatchMemNode();
+  Status QuitMemNode();
   Status MatchRemoteWorker();
   Status QuitRemoteWorker();
 

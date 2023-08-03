@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <unordered_set>
 
+#include "memory/remote_flush_service.h"
 #include "memtable/readonly_inlineskiplist.h"
 #include "memory/remote_flush_service.h"
 #include "rocksdb/memtablerep.h"
@@ -28,8 +29,8 @@
 namespace ROCKSDB_NAMESPACE {
 class MemTableRepPackFactory {
  public:
-  static void* UnPackLocal(int sockfd);
   static void* UnPackLocal(char*& buf);
+  static void* UnPackLocal(TCPNode* node);
   MemTableRepPackFactory(const MemTableRepPackFactory&) = delete;
   MemTableRepPackFactory& operator=(const MemTableRepPackFactory&) = delete;
   MemTableRepPackFactory& operator=(MemTableRepPackFactory&&) = delete;
@@ -39,20 +40,19 @@ class MemTableRepPackFactory {
   ~MemTableRepPackFactory() = default;
 };
 
-inline void* MemTableRepPackFactory::UnPackLocal(int sockfd) {
-  int64_t msg = 0;
-  read_data(sockfd, &msg, sizeof(msg));
-  int64_t type = msg & 0xff;
-  int64_t info = msg >> 8;
+inline void* MemTableRepPackFactory::UnPackLocal(TCPNode* node) {
+  int64_t* msg = nullptr;
+  size_t size = sizeof(int64_t);
+  node->receive(reinterpret_cast<void**>(&msg), &size);
+  int64_t type = *msg & 0xff;
+  int64_t info = *msg >> 8;
   if (type == 1 /*SkipListRep*/) {
-    write_data(sockfd, &msg, sizeof(msg));
-    void* local_skiplistrep = ReadOnlySkipListRep::UnPackLocal(sockfd);
+    void* local_skiplistrep = ReadOnlySkipListRep::UnPackLocal(node);
     return local_skiplistrep;
   } else if (type == 2 /*Test SpecialMemTableRep*/) {
     LOG("MemTableRepPackFactory::UnPackLocal: SpecialMemTableRep: ", type, ' ',
         info);
-    send(sockfd, &msg, sizeof(msg), 0);
-    void* sub_memtable_ = UnPackLocal(sockfd);
+    void* sub_memtable_ = UnPackLocal(node);
     auto memtable_ = reinterpret_cast<MemTableRep*>(sub_memtable_);
 #ifdef ROCKSDB_ALL_TESTS_ENABLED
     int num_entries_flush = info;

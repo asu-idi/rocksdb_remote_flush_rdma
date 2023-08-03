@@ -1,5 +1,6 @@
 #pragma once
 
+#include "memory/remote_flush_service.h"
 #ifdef __linux__
 #include <sys/socket.h>
 #include <unistd.h>
@@ -18,8 +19,8 @@
 namespace ROCKSDB_NAMESPACE {
 class SliceTransformFactory {
  public:
-  static void* UnPackLocal(int sockfd);
   static void* UnPackLocal(char*& buf);
+  static void* UnPackLocal(TCPNode* node);
 
   SliceTransformFactory(const SliceTransformFactory&) = delete;
   void operator=(const SliceTransformFactory&) = delete;
@@ -29,30 +30,25 @@ class SliceTransformFactory {
   ~SliceTransformFactory() = default;
 };
 
-inline void* SliceTransformFactory::UnPackLocal(int sockfd) {
-  int64_t msg = 0;
-  read_data(sockfd, &msg, sizeof(msg));
-  int64_t type = msg & 0xff;
-  int64_t info = (msg >> 8);
+inline void* SliceTransformFactory::UnPackLocal(TCPNode* node) {
+  int64_t* msg = nullptr;
+  size_t size = sizeof(int64_t);
+  node->receive(reinterpret_cast<void**>(&msg), &size);
+  int64_t type = *msg & 0xff;
+  int64_t info = (*msg >> 8);
   if (type == 0 /*InternalKeySliceTransform*/) {
-    send(sockfd, &msg, sizeof(msg), 0);
-    void* ptr = SliceTransformFactory::UnPackLocal(sockfd);
-    return reinterpret_cast<void*>(
-        InternalKeySliceTransform::UnPackLocal(ptr, sockfd));
+    void* ptr = SliceTransformFactory::UnPackLocal(node);
+    return reinterpret_cast<void*>(InternalKeySliceTransform::UnPackLocal(ptr));
   } else if (type == 1 /*FixedPrefixListRep*/) {
-    send(sockfd, &msg, sizeof(msg), 0);
     const SliceTransform* local_ptr = NewFixedPrefixTransform(info);
     return reinterpret_cast<void*>(const_cast<SliceTransform*>(local_ptr));
   } else if (type == 2 /*CappedPrefixTransform*/) {
-    send(sockfd, &msg, sizeof(msg), 0);
     const SliceTransform* local_ptr = NewCappedPrefixTransform(info);
     return reinterpret_cast<void*>(const_cast<SliceTransform*>(local_ptr));
   } else if (type == 3 /*NoopTransform*/) {
-    send(sockfd, &msg, sizeof(msg), 0);
     const SliceTransform* local_ptr = NewNoopTransform();
     return reinterpret_cast<void*>(const_cast<SliceTransform*>(local_ptr));
   } else if (type == 0xff) {
-    send(sockfd, &msg, sizeof(msg), 0);
     return nullptr;
   } else {
     LOG("SliceTransformFactory::UnPackLocal: error: ", type, ' ', info);

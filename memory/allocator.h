@@ -36,8 +36,8 @@ class Allocator {
 
 class BasicArena : public Allocator {
  public:
-  virtual void PackLocal(int sockfd) const = 0;
   virtual void PackLocal(char*& buf) const = 0;
+  virtual void PackLocal(TCPNode* node) const = 0;
 
  public:
   virtual size_t ApproximateMemoryUsage() const = 0;

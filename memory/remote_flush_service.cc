@@ -8,12 +8,22 @@
 #include <inttypes.h>
 #include <netdb.h>
 #include <stdint.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
 
-namespace ROCKSDB_NAMESPACE {
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <mutex>
+#include <thread>
+#include <utility>
+
+#include "util/logger.hpp"
 
 #define MAX_POLL_CQ_TIMEOUT 2000
 #if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -25,6 +35,220 @@ static inline uint64_t ntohll(uint64_t x) { return x; }
 #else
 #error __BYTE_ORDER is neither __LITTLE_ENDIAN nor __BIG_ENDIAN
 #endif
+
+namespace ROCKSDB_NAMESPACE {
+
+bool TCPNode::send(const void *buf, size_t size) {
+  size_t total = 0;
+  const char *hheader = "Header";
+  void *header_ = malloc(sizeof(size) + 6);
+  memcpy(header_, hheader, 6);
+  memcpy(reinterpret_cast<char *>(header_) + 6, &size, sizeof(size));
+  assert(write(connection_info_.client_sockfd, header_, sizeof(size) + 6) ==
+         sizeof(size) + 6);
+
+  char *buf_ = reinterpret_cast<char *>(const_cast<void *>(buf));
+  while (total < size) {
+    fd_set write_fds;
+    FD_ZERO(&write_fds);
+    FD_SET(connection_info_.client_sockfd, &write_fds);
+    int ret = select(connection_info_.client_sockfd + 1, nullptr, &write_fds,
+                     nullptr, nullptr);
+    if (ret == -1) {
+      LOG("TCPNode::send: select error");
+      assert(false);
+    } else if (ret == 0) {
+      continue;
+    }
+    ssize_t n =
+        write(connection_info_.client_sockfd, buf_ + total, size - total);
+    if (n == -1) {
+      LOG("TCPNode::send: write error");
+      assert(false);
+    }
+    total += n;
+  }
+  assert(total == size);
+  return true;
+}
+
+// recv(buf!=nullptr,size!=0) => receive size bytes data to specific address
+// recv(buf==nullptr,size==0) => receive n bytes data to new allocated address
+bool TCPNode::receive(void **buf, size_t *size) {
+  char *buf_ = reinterpret_cast<char *>(*buf);
+  void *header_ = malloc(sizeof(size_t) + 6);
+  ssize_t temp =
+      read(connection_info_.client_sockfd, header_, sizeof(size_t) + 6);
+  LOG("TCPNode::receive: read header:", temp, ' ',
+      reinterpret_cast<char *>(header_), ' ',
+      *reinterpret_cast<size_t *>(reinterpret_cast<char *>(header_) + 6));
+
+  assert(memcmp(header_, "Header", 6) == 0);
+  size_t package_size = 0;
+  memcpy(&package_size, reinterpret_cast<char *>(header_) + 6,
+         sizeof(package_size));
+  free(header_);
+  if (*size == 0)
+    *size = package_size;
+  else
+    assert(package_size == *size);
+
+  if (buf_ == nullptr) {
+    buf_ = reinterpret_cast<char *>(memory_.allocate(package_size));
+    *buf = buf_;
+  }
+  LOG("TCPNode::receive: package size:", package_size);
+  size_t total = 0;
+  while (total < package_size) {
+    fd_set read_fds;
+    FD_ZERO(&read_fds);
+    FD_SET(connection_info_.client_sockfd, &read_fds);
+    int ret = select(connection_info_.client_sockfd + 1, &read_fds, nullptr,
+                     nullptr, nullptr);
+    if (ret == -1) {
+      LOG("TCPNode::receive: select error");
+      assert(false);
+    } else if (ret == 0) {
+      continue;
+    }
+
+    ssize_t n = read(connection_info_.client_sockfd, buf_ + total,
+                     package_size - total);
+    if (n == -1) {
+      LOG("TCPNode::receive: read error");
+      assert(false);
+    } else if (n == 0) {
+      break;
+    }
+    total += n;
+  }
+  assert(total == package_size);
+  return true;
+}
+
+bool RemoteFlushJobPD::closetcp() {
+  if (server_info_.tcp_server_sockfd_ == -1) {
+    LOG("tcp server not opened");
+    return false;
+  }
+  assert(false);
+  return true;
+}
+
+bool RemoteFlushJobPD::opentcp(int port) {
+  if (server_info_.tcp_server_sockfd_ != -1) {
+    LOG("tcp server already opened");
+    return false;
+  }
+  int opt = ~SOCK_NONBLOCK;  // debug
+  server_info_.tcp_server_sockfd_ = socket(AF_INET, SOCK_STREAM, 0);
+  assert(server_info_.tcp_server_sockfd_ != -1);
+  setsockopt(server_info_.tcp_server_sockfd_, SOL_SOCKET, SO_REUSEADDR, &opt,
+             sizeof(opt));
+  server_info_.server_address.sin_family = AF_INET;
+  server_info_.server_address.sin_addr.s_addr = htonl(INADDR_ANY);
+  server_info_.server_address.sin_port = htons(port);
+  assert(bind(server_info_.tcp_server_sockfd_,
+              (struct sockaddr *)&server_info_.server_address,
+              sizeof(server_info_.server_address)) >= 0);
+  assert(listen(server_info_.tcp_server_sockfd_, 10) >= 0);
+  while (true) {
+    struct sockaddr_in client_address;
+    socklen_t client_address_len = sizeof(client_address);
+    int client_sockfd =
+        accept(server_info_.tcp_server_sockfd_,
+               (struct sockaddr *)&client_address, &client_address_len);
+    if (client_sockfd < 0) {
+      LOG("tcp server accept error");
+      continue;
+    }
+    auto *node = new TCPNode(client_address, client_sockfd);
+    register_flush_job_generator(client_sockfd, node);
+    LOG("tcp server accept success");
+    std::thread([client_sockfd, this]() {
+      // BGworkRemoteFlush
+      LOG("remote flush job generator connected. start receiving.");
+      flushjob_package *package = receive_remote_flush_job(client_sockfd);
+      LOG("remote flush job received from generator.");
+      TCPNode *worker_tcpnode = choose_flush_job_executor();
+      assert(worker_tcpnode != nullptr);
+      LOG("remote flush job executor chosen.");
+      send_remote_flush_job(package, worker_tcpnode);
+      LOG("remote flush job sent to worker.");
+      setfree_flush_job_executor(worker_tcpnode);
+      LOG("remote flush job executor set free.");
+      unregister_flush_job_generator(client_sockfd);
+      LOG("remote flush job generator unregistered.");
+    }).detach();
+  }
+  return true;
+}
+
+RemoteFlushJobPD::flushjob_package *RemoteFlushJobPD::receive_remote_flush_job(
+    int client_sockfd) {
+  auto tcpnode = flush_job_generators_.at(client_sockfd);
+  auto *package = new flushjob_package();
+  const char *bye = "byebyemessage";
+  while (true) {
+    void *buf_ = nullptr;
+    size_t size = 0;
+    tcpnode->receive(&buf_, &size);
+    assert(buf_ != nullptr);
+    if (size == 0) assert(false);
+    LOG("memnode recv data from generator:", reinterpret_cast<char *>(buf_),
+        ' ', size);
+    if (size == strlen(bye) &&
+        strncmp(reinterpret_cast<char *>(buf_), bye, size) == 0) {
+      break;
+    }
+    package->package.push_back(std::make_pair(buf_, size));
+  }
+  LOG("receive_remote_flush_job: receive bye message");
+  close(client_sockfd);
+  return package;
+}
+
+void RemoteFlushJobPD::send_remote_flush_job(flushjob_package *package,
+                                             TCPNode *worker_node) {
+  for (auto &it : package->package) {
+    LOG("remote flushjob worker send data:",
+        *reinterpret_cast<size_t *>(it.first), ' ', it.second);
+    worker_node->send(it.first, it.second);
+  }
+  worker_node->send("byebyemessage", strlen("byebyemessage"));
+  close(worker_node->connection_info_.client_sockfd);
+}
+
+void RemoteFlushJobPD::setfree_flush_job_executor(TCPNode *worker_node) {
+  std::lock_guard<std::mutex> lock(mtx_);
+  flush_job_executors_status_.at(worker_node) = true;
+  flush_job_executors_in_use_.erase(
+      worker_node->connection_info_.client_sockfd);
+  worker_node->connection_info_.client_sockfd = {};
+}
+TCPNode *RemoteFlushJobPD::choose_flush_job_executor() {
+  std::lock_guard<std::mutex> lock(mtx_);
+  for (auto &it : flush_job_executors_status_) {
+    if (it.second) {
+      it.second = false;
+      int client_sockfd = socket(AF_INET, SOCK_STREAM, 0);
+      assert(client_sockfd != -1);
+      if (connect(client_sockfd,
+                  reinterpret_cast<struct sockaddr *>(
+                      &it.first->connection_info_.sin_addr),
+                  sizeof(it.first->connection_info_.sin_addr)) < 0) {
+        LOG("remote flushjob worker connect error");
+        assert(false);
+      }
+      it.first->connection_info_.client_sockfd = client_sockfd;
+      flush_job_executors_in_use_.insert(
+          std::make_pair(client_sockfd, it.first));
+      return it.first;
+    }
+  }
+  LOG("no available worker");
+  return nullptr;
+}
 
 RDMANode::RDMANode() {
   config = (config_t){
@@ -75,7 +299,7 @@ std::vector<int> RDMANode::sock_connect(const char *servername, int port,
         if (bind(listenfd, iterator->ai_addr, iterator->ai_addrlen))
           goto sock_connect_exit;
         listen(listenfd, 1);
-        for (int i = 0; i < conn_cnt; i++) {
+        for (size_t i = 0; i < conn_cnt; i++) {
           sockfd = accept(listenfd, nullptr, 0);
           if (sockfd >= 0) ret.push_back(sockfd);
         }
@@ -277,7 +501,7 @@ int RDMANode::resources_create(size_t size, size_t conn_cnt, size_t max_wr) {
   }
   // LOG("found %d device(s)\n", num_devices);
   // search for the specific device we want to work with
-  for (i = 0; i < num_devices; i++) {
+  for (i = 0; i < (size_t)num_devices; i++) {
     if (config.dev_name == "") {
       config.dev_name = std::string(strdup(ibv_get_device_name(dev_list[i])));
       // LOG("device not specified, using first one found: %s\n",
@@ -604,7 +828,7 @@ std::pair<long long, long long> RDMAClient::allocate_mem_request(int idx,
   int read_bytes = 0;
   int total_read_bytes = 0;
   rc = write(res->sock[idx], reinterpret_cast<void *>(&req_type), sizeof(char));
-  if (rc < sizeof(char))
+  if (rc < (int)(sizeof(char)))
     fprintf(stderr, "Failed writing data during allocate_mem_request\n");
   else
     rc = 0;
@@ -687,7 +911,7 @@ bool RDMAClient::modify_mem_request(int idx,
   int read_bytes = 0;
   int total_read_bytes = 0;
   rc = write(res->sock[idx], reinterpret_cast<void *>(&req_type), sizeof(char));
-  if (rc < sizeof(char))
+  if (rc < (int)sizeof(char))
     fprintf(stderr, "Failed writing data during modify_mem_request\n");
   else
     rc = 0;

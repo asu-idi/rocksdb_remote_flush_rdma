@@ -7,6 +7,7 @@
 
 #include <cassert>
 
+#include "memory/remote_flush_service.h"
 #include "util/socket_api.hpp"
 #ifdef __linux__
 #include <sys/socket.h>
@@ -29,7 +30,7 @@ enum class SnapshotCheckerResult : int {
 // Callback class that control GC of duplicate keys in flush/compaction.
 class SnapshotChecker {
  public:
-  virtual void PackLocal(int sockfd) const {
+  virtual void PackLocal(TCPNode* node) const {
     LOG("should not use default SnapshotChecker::PackLocal");
     assert(false);
   }
@@ -46,11 +47,10 @@ class SnapshotChecker {
 
 class DisableGCSnapshotChecker : public SnapshotChecker {
  public:
-  void PackLocal(int sockfd) const override {
+  void PackLocal(TCPNode* node) const override {
     size_t msg = 0;
     msg += (0x2);
-    send(sockfd, &msg, sizeof(msg), 0);
-    read_data(sockfd, &msg, sizeof(msg));
+    node->send(&msg, sizeof(msg));
   }
   void PackLocal(char*& buf) const override {
     size_t msg = 0;
@@ -90,8 +90,8 @@ class WritePreparedSnapshotChecker : public SnapshotChecker {
 
 class SnapshotCheckerFactory {
  public:
-  static void* UnPackLocal(int sockfd);
   static void* UnPackLocal(char*& buf);
+  static void* UnPackLocal(TCPNode* node);
 
  public:
   SnapshotCheckerFactory& operator=(const SnapshotCheckerFactory&) = delete;
@@ -103,17 +103,15 @@ class SnapshotCheckerFactory {
   ~SnapshotCheckerFactory() = default;
 };
 
-inline void* SnapshotCheckerFactory::UnPackLocal(int sockfd) {
+inline void* SnapshotCheckerFactory::UnPackLocal(TCPNode* node) {
   size_t msg = 0;
-  read_data(sockfd, &msg, sizeof(msg));
-  send(sockfd, &msg, sizeof(msg), 0);
+  node->receive(&msg, sizeof(msg));
   if (msg == 0xff) {
     return nullptr;
   }
   msg = 0;
-  read_data(sockfd, &msg, sizeof(msg));
+  node->receive(&msg, sizeof(msg));
   if (msg == 0x02) {
-    send(sockfd, &msg, sizeof(msg), 0);
     return DisableGCSnapshotChecker::Instance();
   } else {
     LOG("SnapshotCheckerFactory::UnPackLocal: invalid msg:", msg);

@@ -25,6 +25,7 @@
 #include "db/retrieve_info.h"
 #include "db/seqno_to_time_mapping.h"
 #include "db/snapshot_checker.h"
+#include "memory/remote_flush_service.h"
 #include "monitoring/instrumented_mutex.h"
 #include "options/cf_options.h"
 #include "rocksdb/file_system.h"
@@ -104,7 +105,9 @@ RemoteFlushJob::RemoteFlushJob(
     const SeqnoToTimeMapping& seqno_time_mapping, const std::string& db_id,
     const std::string& db_session_id, std::string full_history_ts_low,
     BlobFileCompletionCallback* blob_callback)
-    : dbname_(dbname),
+    : local_generator_node(sockaddr_in{}, 0),
+      remote_consumer_node(sockaddr_in{}, 0),
+      dbname_(dbname),
       db_id_(db_id),
       db_session_id_(db_session_id),
       cfd_(cfd),
@@ -137,7 +140,7 @@ RemoteFlushJob::RemoteFlushJob(
   TEST_SYNC_POINT("RemoteFlushJob::RemoteFlushJob()");
 }
 
-void RemoteFlushJob::PackLocal(int server_socket_fd) const {
+void RemoteFlushJob::PackLocal(TCPNode* node) const {
   LOG("RemoteFlushJob::PackLocal thread_id:", std::this_thread::get_id(),
       "Pack data from local side");
   // if (output_file_directory_ != nullptr) {
@@ -155,111 +158,81 @@ void RemoteFlushJob::PackLocal(int server_socket_fd) const {
   //   read_data(server_socket_fd, &msg, sizeof(size_t));
   // }
   // Pack clock
-  clock_->PackLocal(server_socket_fd);
+  clock_->PackLocal(node);
   // Pack mems_
   size_t mem_size = mems_.size();
-  send(server_socket_fd, &mem_size, sizeof(size_t), 0);
-  size_t mem_size_ret = 0;
-  read_data(server_socket_fd, &mem_size_ret, sizeof(size_t));
-  assert(mem_size == mem_size_ret);
+  node->send(&mem_size, sizeof(size_t));
   for (auto& memtable : mems_) {
-    memtable->PackLocal(server_socket_fd);
+    memtable->PackLocal(node);
   }
-  versions_->PackLocal(server_socket_fd);
-  edit_->PackLocal(server_socket_fd);
+  versions_->PackLocal(node);
+  edit_->PackLocal(node);
   if (job_context_ != nullptr) {
     LOG("jobcontext not null");
     size_t msg_ = 1;
-    send(server_socket_fd, &msg_, sizeof(size_t), 0);
-    read_data(server_socket_fd, &msg_, sizeof(size_t));
-    job_context_->PackLocal(server_socket_fd);
+    node->send(&msg_, sizeof(size_t));
+    job_context_->PackLocal(node);
   } else {
     LOG("jobcontext null");
     size_t msg_ = 0;
-    send(server_socket_fd, &msg_, sizeof(size_t), 0);
-    read_data(server_socket_fd, &msg_, sizeof(size_t));
+    node->send(&msg_, sizeof(size_t));
   }
   // Pack db_impl_seqno_time_mapping_
-  db_impl_seqno_time_mapping_.PackLocal(server_socket_fd);
-  seqno_to_time_mapping_.PackLocal(server_socket_fd);
+  db_impl_seqno_time_mapping_.PackLocal(node);
+  seqno_to_time_mapping_.PackLocal(node);
   // Pack cfd_
-  cfd_->PackLocal(server_socket_fd);
-  meta_.PackLocal(server_socket_fd);
-  file_options_.PackLocal(server_socket_fd);
+  cfd_->PackLocal(node);
+  meta_.PackLocal(node);
+  file_options_.PackLocal(node);
 
   assert(base_ != nullptr && base_->cfd() == cfd_);
   if (base_ != cfd_->current()) {
     size_t msg = 0;
-    write(server_socket_fd, &msg, sizeof(size_t));
-    read_data(server_socket_fd, &msg, sizeof(size_t));
-    base_->PackLocal(server_socket_fd);
+    node->send(&msg, sizeof(size_t));
+    base_->PackLocal(node);
   } else {
     size_t msg = 1;
-    write(server_socket_fd, &msg, sizeof(size_t));
-    read_data(server_socket_fd, &msg, sizeof(size_t));
+    node->send(&msg, sizeof(size_t));
   }
   // mutable_cf_options_.PackLocal(server_socket_fd);
   size_t dbname_len = dbname_.size();
-  send(server_socket_fd, &dbname_len, sizeof(size_t), 0);
-  read_data(server_socket_fd, &dbname_len, sizeof(size_t));
-  if (!dbname_.empty()) {
-    send(server_socket_fd, dbname_.data(), dbname_len, 0);
-    read_data(server_socket_fd, &dbname_len, sizeof(size_t));
-  }
+  node->send(&dbname_len, sizeof(size_t));
+  if (!dbname_.empty()) node->send(dbname_.data(), dbname_len);
+
   size_t len = full_history_ts_low_.size();
-  send(server_socket_fd, &len, sizeof(size_t), 0);
-  read_data(server_socket_fd, &len, sizeof(size_t));
-  if (!full_history_ts_low_.empty()) {
-    send(server_socket_fd, full_history_ts_low_.data(), len, 0);
-    read_data(server_socket_fd, &len, sizeof(size_t));
-  }
+  node->send(&len, sizeof(size_t));
+  if (!full_history_ts_low_.empty())
+    node->send(full_history_ts_low_.data(), len);
+
   size_t db_id_len = db_id_.size();
-  send(server_socket_fd, &db_id_len, sizeof(size_t), 0);
-  read_data(server_socket_fd, &db_id_len, sizeof(size_t));
-  if (!db_id_.empty()) {
-    send(server_socket_fd, db_id_.data(), db_id_len, 0);
-    read_data(server_socket_fd, &db_id_len, sizeof(size_t));
-  }
+  node->send(&db_id_len, sizeof(size_t));
+  if (!db_id_.empty()) node->send(db_id_.data(), db_id_len);
+
   size_t db_session_id_len = db_session_id_.size();
-  send(server_socket_fd, &db_session_id_len, sizeof(size_t), 0);
-  read_data(server_socket_fd, &db_session_id_len, sizeof(size_t));
-  if (!db_session_id_.empty()) {
-    send(server_socket_fd, db_session_id_.data(), db_session_id_len, 0);
-    read_data(server_socket_fd, &db_session_id_len, sizeof(size_t));
-  }
+  node->send(&db_session_id_len, sizeof(size_t));
+  if (!db_session_id_.empty())
+    node->send(db_session_id_.data(), db_session_id_len);
+
   size_t existing_snapshots_len = existing_snapshots_.size();
-  send(server_socket_fd, &existing_snapshots_len, sizeof(size_t), 0);
-  read_data(server_socket_fd, &existing_snapshots_len, sizeof(size_t));
+  node->send(&existing_snapshots_len, sizeof(size_t));
   if (existing_snapshots_len) {
-    for (size_t i = 0; i < existing_snapshots_len; i++) {
-      send(server_socket_fd, &existing_snapshots_[i], sizeof(SequenceNumber),
-           0);
-      size_t temp_buf = 0;
-      read_data(server_socket_fd, &temp_buf, sizeof(size_t));
-    }
+    for (size_t i = 0; i < existing_snapshots_len; i++)
+      node->send(&existing_snapshots_[i], sizeof(SequenceNumber));
   }
 
   if (snapshot_checker_ == nullptr) {
     size_t msg = 0xff;
-    send(server_socket_fd, &msg, sizeof(size_t), 0);
-    read_data(server_socket_fd, &msg, sizeof(size_t));
+    node->send(&msg, sizeof(size_t));
   } else {
     size_t msg = 0x02;
-    send(server_socket_fd, &msg, sizeof(size_t), 0);
-    msg = 0;
-    read_data(server_socket_fd, &msg, sizeof(size_t));
-    snapshot_checker_->PackLocal(server_socket_fd);
+    node->send(&msg, sizeof(size_t));
+    snapshot_checker_->PackLocal(node);
   }
 
-  send(server_socket_fd, reinterpret_cast<const void*>(this),
-       sizeof(RemoteFlushJob), 0);
-  int64_t ret_addr = 0;
-  read_data(server_socket_fd, &ret_addr, sizeof(int64_t));
-  LOG("RemoteFlushJob::PackLocal done, remote_handler = ", std::hex, ret_addr,
-      std::dec);
+  node->send(reinterpret_cast<const void*>(this), sizeof(RemoteFlushJob));
 }
 
-void* RemoteFlushJob::UnPackLocal(int worker_socket_fd, DBImpl* remote_db) {
+void* RemoteFlushJob::UnPackLocal(TCPNode* node, DBImpl* remote_db) {
   LOG("RemoteFlushJob::UnPackLocal thread_id:", std::this_thread::get_id(),
       "UnPack data from local side");
   void* mem = malloc(sizeof(RemoteFlushJob));
@@ -270,95 +243,75 @@ void* RemoteFlushJob::UnPackLocal(int worker_socket_fd, DBImpl* remote_db) {
   // void* db_directory_ret = FSDirectoryFactory::UnPackLocal(worker_socket_fd);
   std::string clock_info_;
   clock_info_.resize(20);
-  read_data(worker_socket_fd, clock_info_.data(), clock_info_.length());
+  node->receive(clock_info_.data(), 20);
   void* clock_ret_addr = retrieve_from(clock_info_);
-  send(worker_socket_fd, &local_handler->clock_, sizeof(int64_t), 0);
-  LOG("worker send ", std::hex, &local_handler->clock_, std::dec);
 
   // RemoteFlushJob recv other data
-  size_t mems_size_ = 0;
-  read_data(worker_socket_fd, &mems_size_, sizeof(size_t));
-  LOG("worker recv mems size: ", mems_size_);
-  send(worker_socket_fd, &mems_size_, sizeof(size_t), 0);
-  LOG("worker send back mems size: ", mems_size_);
+  size_t* mems_size_ = nullptr;
+  node->receive(reinterpret_cast<void**>(&mems_size_), sizeof(size_t));
+
   std::vector<MemTable*> mems_temp;
-  for (size_t i = 0; i < mems_size_; i++) {
-    void* local_mem_handler = MemTable::UnPackLocal(worker_socket_fd);
+  for (size_t i = 0; i < *mems_size_; i++) {
+    void* local_mem_handler = MemTable::UnPackLocal(node);
     mems_temp.emplace_back(reinterpret_cast<MemTable*>(local_mem_handler));
   }
-  void* versions_ret = VersionSet::UnPackLocal(worker_socket_fd);
-  void* edit_ret = VersionEdit::UnPackLocal(worker_socket_fd);
-  void* job_context_ret = JobContext::UnPackLocal(worker_socket_fd);
-  void* db_impl_seqno_time_mapping_ret =
-      SeqnoToTimeMapping::UnPackLocal(worker_socket_fd);
-  void* seqno_to_time_mapping_ret =
-      SeqnoToTimeMapping::UnPackLocal(worker_socket_fd);
-  void* cfd_ret = ColumnFamilyData::UnPackLocal(worker_socket_fd);
-  void* meta_ret = FileMetaData::UnPackLocal(worker_socket_fd);
-  void* file_options_ret = FileOptions::UnPackLocal(worker_socket_fd);
+  void* versions_ret = VersionSet::UnPackLocal(node);
+  void* edit_ret = VersionEdit::UnPackLocal(node);
+  void* job_context_ret = JobContext::UnPackLocal(node);
+  void* db_impl_seqno_time_mapping_ret = SeqnoToTimeMapping::UnPackLocal(node);
+  void* seqno_to_time_mapping_ret = SeqnoToTimeMapping::UnPackLocal(node);
+  void* cfd_ret = ColumnFamilyData::UnPackLocal(node);
+  void* meta_ret = FileMetaData::UnPackLocal(node);
+  void* file_options_ret = FileOptions::UnPackLocal(node);
   void* base_version_ret = nullptr;
   size_t base_version_flag = 0;
-  read_data(worker_socket_fd, &base_version_flag, sizeof(size_t));
-  send(worker_socket_fd, &base_version_flag, sizeof(size_t), 0);
+  node->receive(&base_version_flag, sizeof(size_t));
   if (base_version_flag == 0) {
-    base_version_ret = Version::UnPackLocal(worker_socket_fd, cfd_ret);
+    base_version_ret = Version::UnPackLocal(node, cfd_ret);
   }
   // void* mutable_cf_options_ret =
   //     MutableCFOptions::UnPackLocal(worker_socket_fd);
   size_t dbname_len = 0;
-  read_data(worker_socket_fd, &dbname_len, sizeof(size_t));
-  send(worker_socket_fd, &dbname_len, sizeof(size_t), 0);
+  node->receive(&dbname_len, sizeof(size_t));
   std::string local_dbname;
   local_dbname.resize(dbname_len);
-  if (local_dbname.size()) {
-    read_data(worker_socket_fd, local_dbname.data(), local_dbname.size());
-    send(worker_socket_fd, &dbname_len, sizeof(size_t), 0);
-  }
+  if (local_dbname.size())
+    node->receive(local_dbname.data(), local_dbname.size());
 
   size_t ts_len = 0;
-  read_data(worker_socket_fd, &ts_len, sizeof(size_t));
-  send(worker_socket_fd, &ts_len, sizeof(size_t), 0);
+  node->receive(&ts_len, sizeof(size_t));
   std::string local_ts_low;
   local_ts_low.resize(ts_len);
-  if (local_ts_low.size()) {
-    read_data(worker_socket_fd, local_ts_low.data(), local_ts_low.size());
-    send(worker_socket_fd, &ts_len, sizeof(size_t), 0);
-  }
+  if (local_ts_low.size())
+    node->receive(local_ts_low.data(), local_ts_low.size());
+
   size_t db_id_len = 0;
-  read_data(worker_socket_fd, &db_id_len, sizeof(size_t));
-  send(worker_socket_fd, &db_id_len, sizeof(size_t), 0);
+  node->receive(&db_id_len, sizeof(size_t));
   std::string local_db_id;
   local_db_id.resize(db_id_len);
-  if (local_db_id.size()) {
-    read_data(worker_socket_fd, local_db_id.data(), local_db_id.size());
-    send(worker_socket_fd, &db_id_len, sizeof(size_t), 0);
-  }
+  if (local_db_id.size()) node->receive(local_db_id.data(), local_db_id.size());
+
   size_t db_session_id_len = 0;
-  read_data(worker_socket_fd, &db_session_id_len, sizeof(size_t));
-  send(worker_socket_fd, &db_session_id_len, sizeof(size_t), 0);
+  node->receive(&db_session_id_len, sizeof(size_t));
   std::string local_db_session_id;
   local_db_session_id.resize(db_session_id_len);
-  if (local_db_session_id.size()) {
-    read_data(worker_socket_fd, local_db_session_id.data(),
-              local_db_session_id.size());
-    send(worker_socket_fd, &db_session_id_len, sizeof(size_t), 0);
-  }
+  if (local_db_session_id.size())
+    node->receive(local_db_session_id.data(), local_db_session_id.size());
 
   size_t existing_snapshots_len = 0;
-  read_data(worker_socket_fd, &existing_snapshots_len, sizeof(size_t));
-  send(worker_socket_fd, &existing_snapshots_len, sizeof(size_t), 0);
+  node->receive(&existing_snapshots_len, sizeof(size_t));
   std::vector<SequenceNumber> existing_snapshots;
   existing_snapshots.resize(existing_snapshots_len);
   if (existing_snapshots_len) {
     for (size_t i = 0; i < existing_snapshots_len; i++) {
-      read_data(worker_socket_fd, &existing_snapshots[i],
-                sizeof(SequenceNumber));
-      send(worker_socket_fd, &existing_snapshots_len, sizeof(size_t), 0);
+      node->receive(&existing_snapshots[i], sizeof(SequenceNumber));
     }
   }
+
   auto* local_snapshot_checker = reinterpret_cast<SnapshotChecker*>(
-      SnapshotCheckerFactory::UnPackLocal(worker_socket_fd));
-  read_data(worker_socket_fd, mem, sizeof(RemoteFlushJob));
+      SnapshotCheckerFactory::UnPackLocal(node));
+
+  node->receive(mem, sizeof(RemoteFlushJob));
   LOG("worker recv ", std::hex, mem, std::dec);
 
   // fill local_handler
@@ -430,8 +383,6 @@ void* RemoteFlushJob::UnPackLocal(int worker_socket_fd, DBImpl* remote_db) {
   LOG("local_handler copy done");
   // new (const_cast<MutableCFOptions*>(&local_handler->mutable_cf_options_))
   //     MutableCFOptions(*local_handler->cfd_->GetLatestMutableCFOptions());
-  send(worker_socket_fd, &mem, sizeof(int64_t), 0);
-  LOG("worker send ", std::hex, mem, std::dec);
   LOG("RemoteFlushJob::UnPackLocal done");
   return mem;
 }
@@ -649,32 +600,32 @@ void* RemoteFlushJob::UnPackLocal(char*& buf, DBImpl* remote_db) {
   return mem;
 }
 
-void RemoteFlushJob::PackRemote(int worker_socket_fd) const {
+void RemoteFlushJob::PackRemote(TCPNode* node) const {
   LOG("RemoteFlushJob::PackRemote thread_id:", std::this_thread::get_id(),
       "Pack data from remote side");
   assert(mems_.size() > 0);
-  mems_[0]->PackRemote(worker_socket_fd);
-  cfd_->PackRemote(worker_socket_fd);
-  table_properties_.PackRemote(worker_socket_fd);
-  edit_->PackRemote(worker_socket_fd);
-  meta_.PackRemote(worker_socket_fd);
+  mems_[0]->PackRemote(node);
+  cfd_->PackRemote(node);
+  table_properties_.PackRemote(node);
+  edit_->PackRemote(node);
+  meta_.PackRemote(node);
   LOG("RemoteFlushJob::PackRemote done");
 }
-void RemoteFlushJob::UnPackRemote(int server_socket_fd) {
+void RemoteFlushJob::UnPackRemote(TCPNode* node) {
   LOG("RemoteFlushJob::UnPackRemote thread_id:", std::this_thread::get_id(),
       "UnPack data from remote side");
   assert(mems_.size() > 0);
   LOG("RemoteFlushJob::UnPackRemote mems_[0]");
-  mems_[0]->UnPackRemote(server_socket_fd);
+  mems_[0]->UnPackRemote(node);
   LOG("RemoteFlushJob::UnPackRemote cfd_");
-  cfd_->UnPackRemote(server_socket_fd);
-  auto new_table_properties = reinterpret_cast<TableProperties*>(
-      TableProperties::UnPackRemote(server_socket_fd));
+  cfd_->UnPackRemote(node);
+  auto new_table_properties =
+      reinterpret_cast<TableProperties*>(TableProperties::UnPackRemote(node));
   table_properties_ = *new_table_properties;
   delete new_table_properties;
-  edit_->UnPackRemote(server_socket_fd);
-  auto remote_metadata = reinterpret_cast<FileMetaData*>(
-      FileMetaData::UnPackRemote(server_socket_fd));
+  edit_->UnPackRemote(node);
+  auto remote_metadata =
+      reinterpret_cast<FileMetaData*>(FileMetaData::UnPackRemote(node));
   meta_.fd.file_size = remote_metadata->fd.file_size;
   meta_.fd.smallest_seqno = remote_metadata->fd.smallest_seqno;
   meta_.fd.largest_seqno = remote_metadata->fd.largest_seqno;
@@ -904,38 +855,54 @@ Status RemoteFlushJob::RunRemote(RDMAClient* rdma,
 
     assert(MatchRemoteWorker() == Status::OK());
 
-    char* buf = rdma->get_buf();
-    PackLocal(buf);
-    auto mem_seg = rdma->allocate_mem_request(0, buf - rdma->get_buf());
-    rdma->rdma_write(0, mem_seg.second - mem_seg.first, 0, mem_seg.first);
-    assert(rdma->poll_completion(0) == 0);
-    assert(rdma->modify_mem_request(0, mem_seg, 2));
-    long long rdma_info[2] = {mem_seg.first, mem_seg.second};
-    send(server_socket_fd_, rdma_info, 2 * sizeof(long long), 0);
+    // todo: fix this
+    // char* buf = rdma->get_buf();
+    // PackLocal(buf);
+    // auto mem_seg = rdma->allocate_mem_request(0, buf - rdma->get_buf());
+    // rdma->rdma_write(0, mem_seg.second - mem_seg.first, 0, mem_seg.first);
+    // assert(rdma->poll_completion(0) == 0);
+    // assert(rdma->modify_mem_request(0, mem_seg, 2));
+    // long long rdma_info[2] = {mem_seg.first, mem_seg.second};
+    // send(server_socket_fd_, rdma_info, 2 * sizeof(long long), 0);
 
-    int64_t signal = 4321;
-    send(server_socket_fd_, &signal, sizeof(int64_t), 0);
-    LOG("server Message sent2: ", signal, ' ', server_socket_fd_);
+    // int64_t signal = 4321;
+    // send(server_socket_fd_, &signal, sizeof(int64_t), 0);
+    // LOG("server Message sent2: ", signal, ' ', server_socket_fd_);
+
+    // We create connection with one memnode and send package to it
+    assert(MatchMemNode() == Status::OK());
+    // int64_t signal = 4321;
+    // local_generator_node.send(&signal, sizeof(int64_t));
+    // LOG("server sent Msg1: ", signal, ' ', server_socket_fd_);
+    // local_generator_node.send(&signal, sizeof(int64_t));
+    // LOG("server sent Msg2: ", signal, ' ', server_socket_fd_);
+    // local_generator_node.send(&signal, sizeof(int64_t));
+    // LOG("server sent Msg3: ", signal, ' ', server_socket_fd_);
+    PackLocal(&local_generator_node);
+    // close connection with memnode
+    assert(QuitMemNode().ok());
 
     // s = WriteLevel0Table();
     // assert(s == Status::OK());
 
-    std::chrono::steady_clock::time_point local_pack_finish =
-        std::chrono::steady_clock::now();
-    LOG("RemoteFlushJob::RunRemote pack_local_data_transfer_time: ",
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            local_pack_finish - remote_flush_begin)
-            .count(),
-        "ms");
-    s = Status::OK();
-    UnPackRemote(server_socket_fd_);
-    std::chrono::steady_clock::time_point remote_flush_end =
-        std::chrono::steady_clock::now();
-    LOG("RemoteFlushJob::RunRemote remote_flush_all_time: ",
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            remote_flush_end - remote_flush_begin)
-            .count(),
-        "ms");
+    // We receive some metadata directly from remote worker
+    // Or maybe we could receive from memnode
+    assert(MatchRemoteWorker() == Status::OK());
+
+    // size_t msg = 0;
+    // void* ptr = reinterpret_cast<void*>(&msg);
+    // LOG("server start recv msg");
+    // local_generator_node.receive(&ptr, sizeof(size_t));
+    // LOG("server recv Msg1: ", msg, ' ', server_socket_fd_);
+    // local_generator_node.receive(&ptr, sizeof(size_t));
+    // LOG("server recv Msg2: ", msg, ' ', server_socket_fd_);
+    // local_generator_node.receive(&ptr, sizeof(size_t));
+    // LOG("server recv Msg3: ", msg, ' ', server_socket_fd_);
+
+    UnPackRemote(&local_generator_node);
+    // s = Status::OK();
+
+    // close connection with remote worker
     assert(QuitRemoteWorker() == Status::OK());
 
     LOG("Run job: write l0table done");
@@ -978,50 +945,91 @@ Status RemoteFlushJob::RunRemote(RDMAClient* rdma,
 }
 
 Status RemoteFlushJob::MatchRemoteWorker() {
-  int sock = 0;
-  struct sockaddr_in serv_addr;
-  size_t buffer = 0;
-  if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+  memset(reinterpret_cast<void*>(&local_generator_node), 0, sizeof(TCPNode));
+  if ((local_generator_node.connection_info_.client_sockfd =
+           socket(AF_INET, SOCK_STREAM, 0)) < 0) {
     LOG("Socket creation error");
     return Status::IOError("Socket creation error");
   }
-  memset(&serv_addr, 0, sizeof(serv_addr));
-  serv_addr.sin_family = AF_INET;
-  serv_addr.sin_port = htons(8980);
-  if (inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) {
+  // memset(&serv_addr, 0, sizeof(serv_addr));
+  // serv_addr.sin_family = AF_INET;
+  // serv_addr.sin_port = htons(8980);
+  // if (inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) {
+  int opt = ~SOCK_NONBLOCK;
+  if (setsockopt(local_generator_node.connection_info_.client_sockfd,
+                 SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
+    LOG("setsockopt failed");
+    return Status::IOError("setsockopt");
+  }
+  local_generator_node.connection_info_.sin_addr.sin_family = AF_INET;
+  local_generator_node.connection_info_.sin_addr.sin_port = htons(9089);
+  if (bind(local_generator_node.connection_info_.client_sockfd,
+           (struct sockaddr*)&local_generator_node.connection_info_.sin_addr,
+           sizeof(local_generator_node.connection_info_.sin_addr)) < 0) {
+    LOG("bind failed");
+    return Status::IOError("bind failed");
+  }
+  if (listen(local_generator_node.connection_info_.client_sockfd, 1) < 0) {
+    LOG("listen failed");
+    return Status::IOError("listen failed");
+  }
+  socklen_t len = sizeof(local_generator_node.connection_info_.sin_addr);
+  if ((local_generator_node.connection_info_.client_sockfd = accept(
+           local_generator_node.connection_info_.client_sockfd,
+           (struct sockaddr*)&local_generator_node.connection_info_.sin_addr,
+           &len)) < 0) {
+    LOG("accept failed");
+    return Status::IOError("accept failed");
+  }
+
+  LOG("create connection with remote flush worker, ready to receive data");
+  return Status::OK();
+}
+
+Status RemoteFlushJob::QuitMemNode() {
+  const char* bye = "byebyemessage";
+  local_generator_node.send(bye, strlen(bye));
+  LOG("server sent: ", strlen(bye), ' ', bye, ' ', server_socket_fd_);
+  close(local_generator_node.connection_info_.client_sockfd);
+  return Status::OK();
+}
+Status RemoteFlushJob::MatchMemNode() {
+  memset(reinterpret_cast<void*>(&local_generator_node), 0, sizeof(TCPNode));
+  if ((local_generator_node.connection_info_.client_sockfd =
+           socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+    LOG("Socket creation error");
+    return Status::IOError("Socket creation error");
+  }
+  memset(&local_generator_node.connection_info_.sin_addr, 0,
+         sizeof(local_generator_node.connection_info_.sin_addr));
+  local_generator_node.connection_info_.sin_addr.sin_family = AF_INET;
+  local_generator_node.connection_info_.sin_addr.sin_port = htons(9091);
+  if (inet_pton(AF_INET, "127.0.0.1",
+                &local_generator_node.connection_info_.sin_addr.sin_addr) <=
+      0) {
     LOG("Invalid address / Address not supported");
     return Status::IOError("Invalid address / Address not supported");
   }
-  if (connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+  if (connect(local_generator_node.connection_info_.client_sockfd,
+              reinterpret_cast<struct sockaddr*>(
+                  &local_generator_node.connection_info_.sin_addr),
+              sizeof(local_generator_node.connection_info_.sin_addr)) < 0) {
     LOG("Connection Failed");
     return Status::IOError("Connection Failed");
   }
-  server_socket_fd_ = sock;
-  auto data = this;
-  send(server_socket_fd_, &data, sizeof(long long), 0);
-  LOG("server Message sent1 / JobHandle: ", std::hex, data, std::dec, ' ',
-      server_socket_fd_);
-
-  read_data(server_socket_fd_, &buffer, sizeof(size_t));
-  LOG("server Message received1: ", buffer, ' ', server_socket_fd_);
-
-  return buffer == 4321 ? Status::OK()
-                        : Status::Corruption("MatchRemoteWorker error");
+  server_socket_fd_ = local_generator_node.connection_info_.client_sockfd;
+  return Status::OK();
 }
 
 Status RemoteFlushJob::QuitRemoteWorker() {
-  int64_t signal_ret = 0;
-  read_data(server_socket_fd_, &signal_ret, sizeof(int64_t));
-  LOG("server Message received3: ", signal_ret, ' ', server_socket_fd_);
-  int64_t data = 1234;
-  send(server_socket_fd_, &data, sizeof(int64_t), 0);
-  LOG("server Message sent4: ", data, ' ', server_socket_fd_);
-  int64_t buffer = 0;
-  read_data(server_socket_fd_, &buffer, sizeof(int64_t));
-  LOG("server Message received5: ", buffer, ' ', server_socket_fd_);
-  close(server_socket_fd_);
-  return buffer == 1234 ? Status::OK()
-                        : Status::Aborted("QuitRemoteWorker error");
+  const char* bye = "byebyemessage";
+  void* mem = reinterpret_cast<void*>(malloc(strlen(bye)));
+  size_t mem_size = strlen(bye);
+  local_generator_node.receive(&mem, &mem_size);
+  LOG("server recv: ", reinterpret_cast<char*>(mem), ' ', server_socket_fd_);
+  assert(strncmp(reinterpret_cast<char*>(mem), bye, mem_size) == 0);
+  close(local_generator_node.connection_info_.client_sockfd);
+  return Status::OK();
 }
 
 Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
@@ -1042,7 +1050,6 @@ Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
           .count(),
       "ms");
   LOG("worker calculation finished");
-  PackRemote(worker_socket_fd_);
   return Status::OK();
 }
 

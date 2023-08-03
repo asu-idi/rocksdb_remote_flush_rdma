@@ -15,6 +15,7 @@
 #include <cstdint>
 
 #include "logging/logging.h"
+#include "memory/remote_flush_service.h"
 #include "port/malloc.h"
 #include "port/port.h"
 #include "rocksdb/env.h"
@@ -24,18 +25,15 @@
 
 namespace ROCKSDB_NAMESPACE {
 
-void Arena::PackLocal(int sockfd) const {
+void Arena::PackLocal(TCPNode* node) const {
   LOG("Arena::PackLocal");
   std::string name = "Arena";
   name.resize(15);
-  send(sockfd, name.data(), name.size(), 0);
-  int64_t ret = 0;
-  read_data(sockfd, &ret, sizeof(int64_t));
+  node->send(name.data(), 15);
 }
 
-void* Arena::UnPackLocal(int sockfd) {
+void* Arena::UnPackLocal(TCPNode* node) {
   void* arena = reinterpret_cast<void*>(new Arena());
-  send(sockfd, &arena, sizeof(void*), 0);
   return arena;
 }
 

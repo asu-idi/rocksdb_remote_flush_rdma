@@ -20,6 +20,7 @@
 #include "db/column_family.h"
 #include "db/log_writer.h"
 #include "db/version_set.h"
+#include "memory/remote_flush_service.h"
 #include "rocksdb/types.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -113,10 +114,10 @@ struct SuperVersionContext {
 
 struct JobContext {
  public:
-  void PackLocal(int sockfd) const;
-  static void* UnPackLocal(int sockfd);
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
+  void PackLocal(TCPNode* node) const;
+  static void* UnPackLocal(TCPNode* node);
 
  public:
   inline bool HaveSomethingToDelete() const {
@@ -250,27 +251,22 @@ struct JobContext {
   }
 };
 
-inline void JobContext::PackLocal(int sockfd) const {
+inline void JobContext::PackLocal(TCPNode* node) const {
   LOG("JobContext::PackLocal");
-  send(sockfd, reinterpret_cast<const void*>(this), sizeof(JobContext), 0);
+  node->send(reinterpret_cast<const void*>(this), sizeof(JobContext));
   assert(job_snapshot == nullptr);
-  int64_t ret_val = 0;
-  read_data(sockfd, &ret_val, sizeof(int64_t));
 }
 
-inline void* JobContext::UnPackLocal(int sockfd) {
+inline void* JobContext::UnPackLocal(TCPNode* node) {
   size_t empty = 0;
-  read_data(sockfd, &empty, sizeof(size_t));
-  write_data(sockfd, &empty, sizeof(size_t));
+  node->receive(&empty, sizeof(size_t));
   if (empty == 0) {
     LOG("JobContext::UnPackLocal empty");
     return nullptr;
   }
   LOG("JobContext::UnPackLocal");
   void* mem = malloc(sizeof(JobContext));
-  read_data(sockfd, mem, sizeof(JobContext));
-  auto ret_val = reinterpret_cast<int64_t>(mem);
-  send(sockfd, &ret_val, sizeof(int64_t), 0);
+  node->receive(mem, sizeof(JobContext));
   return mem;
 }
 

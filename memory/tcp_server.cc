@@ -33,15 +33,13 @@
 #include "util/random.h"
 #include "util/string_util.h"
 
+// flush_server:localhost:9089
+// memnode:localhost:9091
+// flush_worker:localhost:9090
 int main(int argc, char** argv) {
-  if (argc > 3) {
-    fprintf(stderr, "Parameters: [port] [mem size]\n");
-    return 0;
-  }
-  rocksdb::RDMANode server;
-  server.config.tcp_port = std::atoi(argv[1]);
-  server.resources_create(argc == 3 ? std::atoll(argv[2]) : 1ull << 27);
-  server.connect_qp(1);
+  rocksdb::RemoteFlushJobPD& memnode = rocksdb::RemoteFlushJobPD::Instance();
+  memnode.register_flush_job_executor("127.0.0.1", 9090);
+  memnode.opentcp(9091);
   while (true) {
     std::string command;
     std::cin >> command;

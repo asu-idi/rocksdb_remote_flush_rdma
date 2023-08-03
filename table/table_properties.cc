@@ -43,265 +43,211 @@ void AppendProperty(std::string& props, const std::string& key,
 }
 }  // namespace
 
-void TableProperties::PackRemote(int sockfd) const {
+void TableProperties::PackRemote(TCPNode* node) const {
   LOG("TableProperties::PackRemote");
-  size_t ret_num = 0;
-  write(sockfd, reinterpret_cast<const void*>(this), sizeof(TableProperties));
-  read_data(sockfd, &ret_num, sizeof(size_t));
+  node->send(reinterpret_cast<const void*>(this), sizeof(TableProperties));
   size_t db_id_len = db_id.size();
-  write(sockfd, &db_id_len, sizeof(size_t));
-  read_data(sockfd, &ret_num, sizeof(size_t));
-  write(sockfd, db_id.c_str(), db_id_len);
-  read_data(sockfd, &ret_num, sizeof(size_t));
+  node->send(&db_id_len, sizeof(size_t));
+  node->send(db_id.c_str(), db_id_len);
+
   size_t db_session_id_len = db_session_id.size();
-  write(sockfd, &db_session_id_len, sizeof(size_t));
-  read_data(sockfd, &ret_num, sizeof(size_t));
-  write(sockfd, db_session_id.c_str(), db_session_id_len);
-  read_data(sockfd, &ret_num, sizeof(size_t));
+  node->send(&db_session_id_len, sizeof(size_t));
+  node->send(db_session_id.c_str(), db_session_id_len);
   size_t db_host_id_len = db_host_id.size();
-  write(sockfd, &db_host_id_len, sizeof(size_t));
-  read_data(sockfd, &ret_num, sizeof(size_t));
-  write(sockfd, db_host_id.c_str(), db_host_id_len);
-  read_data(sockfd, &ret_num, sizeof(size_t));
+  node->send(&db_host_id_len, sizeof(size_t));
+  node->send(db_host_id.c_str(), db_host_id_len);
   size_t column_family_name_len = column_family_name.size();
-  write(sockfd, &column_family_name_len, sizeof(size_t));
-  read_data(sockfd, &ret_num, sizeof(size_t));
-  write(sockfd, column_family_name.c_str(), column_family_name_len);
-  read_data(sockfd, &ret_num, sizeof(size_t));
+  node->send(&column_family_name_len, sizeof(size_t));
+  node->send(column_family_name.c_str(), column_family_name_len);
   size_t filter_policy_name_len = filter_policy_name.size();
-  write(sockfd, &filter_policy_name_len, sizeof(size_t));
-  read_data(sockfd, &ret_num, sizeof(size_t));
-  write(sockfd, filter_policy_name.c_str(), filter_policy_name_len);
-  read_data(sockfd, &ret_num, sizeof(size_t));
+  node->send(&filter_policy_name_len, sizeof(size_t));
+  if (filter_policy_name_len)
+    node->send(filter_policy_name.c_str(), filter_policy_name_len);
   size_t comparator_name_len = comparator_name.size();
-  write(sockfd, &comparator_name_len, sizeof(size_t));
-  read_data(sockfd, &ret_num, sizeof(size_t));
-  write(sockfd, comparator_name.c_str(), comparator_name_len);
-  read_data(sockfd, &ret_num, sizeof(size_t));
+  node->send(&comparator_name_len, sizeof(size_t));
+  node->send(comparator_name.c_str(), comparator_name_len);
+
   size_t merge_operator_name_len = merge_operator_name.size();
-  write(sockfd, &merge_operator_name_len, sizeof(size_t));
-  read_data(sockfd, &ret_num, sizeof(size_t));
-  write(sockfd, merge_operator_name.c_str(), merge_operator_name_len);
-  read_data(sockfd, &ret_num, sizeof(size_t));
+  node->send(&merge_operator_name_len, sizeof(size_t));
+  node->send(merge_operator_name.c_str(), merge_operator_name_len);
   size_t prefix_extractor_name_len = prefix_extractor_name.size();
-  write(sockfd, &prefix_extractor_name_len, sizeof(size_t));
-  read_data(sockfd, &ret_num, sizeof(size_t));
-  write(sockfd, prefix_extractor_name.c_str(), prefix_extractor_name_len);
-  read_data(sockfd, &ret_num, sizeof(size_t));
+  node->send(&prefix_extractor_name_len, sizeof(size_t));
+  node->send(prefix_extractor_name.c_str(), prefix_extractor_name_len);
   size_t property_collectors_names_len = property_collectors_names.size();
-  write(sockfd, &property_collectors_names_len, sizeof(size_t));
-  read_data(sockfd, &ret_num, sizeof(size_t));
-  write(sockfd, property_collectors_names.c_str(),
-        property_collectors_names_len);
-  read_data(sockfd, &ret_num, sizeof(size_t));
+  node->send(&property_collectors_names_len, sizeof(size_t));
+  node->send(property_collectors_names.c_str(), property_collectors_names_len);
   size_t compression_name_len = compression_name.size();
-  write(sockfd, &compression_name_len, sizeof(size_t));
-  read_data(sockfd, &ret_num, sizeof(size_t));
-  write(sockfd, compression_name.c_str(), compression_name_len);
-  read_data(sockfd, &ret_num, sizeof(size_t));
+  node->send(&compression_name_len, sizeof(size_t));
+  node->send(compression_name.c_str(), compression_name_len);
   size_t compression_options_len = compression_options.size();
-  write(sockfd, &compression_options_len, sizeof(size_t));
-  read_data(sockfd, &ret_num, sizeof(size_t));
-  write(sockfd, compression_options.c_str(), compression_options_len);
-  read_data(sockfd, &ret_num, sizeof(size_t));
+  node->send(&compression_options_len, sizeof(size_t));
+  node->send(compression_options.c_str(), compression_options_len);
+
   size_t seqno_to_time_mapping_len = seqno_to_time_mapping.size();
-  write(sockfd, &seqno_to_time_mapping_len, sizeof(size_t));
-  read_data(sockfd, &ret_num, sizeof(size_t));
-  write(sockfd, seqno_to_time_mapping.c_str(), seqno_to_time_mapping_len);
-  read_data(sockfd, &ret_num, sizeof(size_t));
+  node->send(&seqno_to_time_mapping_len, sizeof(size_t));
+  if (seqno_to_time_mapping_len)
+    node->send(seqno_to_time_mapping.c_str(), seqno_to_time_mapping_len);
+
   size_t user_collected_properties_len = user_collected_properties.size();
-  write(sockfd, &user_collected_properties_len, sizeof(size_t));
-  read_data(sockfd, &ret_num, sizeof(size_t));
+  node->send(&user_collected_properties_len, sizeof(size_t));
   for (auto iter = user_collected_properties.begin();
        iter != user_collected_properties.end(); ++iter) {
     size_t key_len = iter->first.size();
-    write(sockfd, &key_len, sizeof(size_t));
-    read_data(sockfd, &ret_num, sizeof(size_t));
-    write(sockfd, iter->first.c_str(), key_len);
-    read_data(sockfd, &ret_num, sizeof(size_t));
+    node->send(&key_len, sizeof(size_t));
+    node->send(iter->first.c_str(), key_len);
     size_t value_len = iter->second.size();
-    write(sockfd, &value_len, sizeof(size_t));
-    read_data(sockfd, &ret_num, sizeof(size_t));
-    write(sockfd, iter->second.c_str(), value_len);
-    read_data(sockfd, &ret_num, sizeof(size_t));
+    node->send(&value_len, sizeof(size_t));
+    node->send(iter->second.c_str(), value_len);
   }
+
   size_t readable_properties_len = readable_properties.size();
-  write(sockfd, &readable_properties_len, sizeof(size_t));
-  read_data(sockfd, &ret_num, sizeof(size_t));
+  node->send(&readable_properties_len, sizeof(size_t));
   for (auto iter = readable_properties.begin();
        iter != readable_properties.end(); ++iter) {
     size_t key_len = iter->first.size();
-    write(sockfd, &key_len, sizeof(size_t));
-    read_data(sockfd, &ret_num, sizeof(size_t));
-    write(sockfd, iter->first.c_str(), key_len);
-    read_data(sockfd, &ret_num, sizeof(size_t));
+    node->send(&key_len, sizeof(size_t));
+    node->send(iter->first.c_str(), key_len);
     size_t value_len = iter->second.size();
-    write(sockfd, &value_len, sizeof(size_t));
-    read_data(sockfd, &ret_num, sizeof(size_t));
-    write(sockfd, iter->second.c_str(), value_len);
-    read_data(sockfd, &ret_num, sizeof(size_t));
+    node->send(&value_len, sizeof(size_t));
+    node->send(iter->second.c_str(), value_len);
   }
 }
 
-void* TableProperties::UnPackRemote(int sockfd) {
+void* TableProperties::UnPackRemote(TCPNode* node) {
   size_t ret_num = 0;
   auto* ret_ptr = new TableProperties();
   void* mem = reinterpret_cast<void*>(ret_ptr);
 
-  read_data(sockfd, mem, sizeof(TableProperties));
-  write(sockfd, &ret_num, sizeof(size_t));
+  node->receive(mem, sizeof(TableProperties));
   size_t db_id_len = 0;
-  read_data(sockfd, &db_id_len, sizeof(size_t));
-  write(sockfd, &ret_num, sizeof(size_t));
+  node->receive(&db_id_len, sizeof(size_t));
   char* db_id = new char[db_id_len];
-  read_data(sockfd, db_id, db_id_len);
-  write(sockfd, &ret_num, sizeof(size_t));
+  node->receive(db_id, db_id_len);
   LOG("TableProperties::UnPackRemote");
   new (&ret_ptr->db_id) std::string(db_id, db_id_len);
   size_t db_session_id_len = 0;
-  read_data(sockfd, &db_session_id_len, sizeof(size_t));
-  write(sockfd, &ret_num, sizeof(size_t));
+  node->receive(&db_session_id_len, sizeof(size_t));
   char* db_session_id = new char[db_session_id_len];
-  read_data(sockfd, db_session_id, db_session_id_len);
-  write(sockfd, &ret_num, sizeof(size_t));
+  node->receive(db_session_id, db_session_id_len);
   new (&ret_ptr->db_session_id) std::string(db_session_id, db_session_id_len);
   size_t db_host_id_len = 0;
-  read_data(sockfd, &db_host_id_len, sizeof(size_t));
-  write(sockfd, &ret_num, sizeof(size_t));
+  node->receive(&db_host_id_len, sizeof(size_t));
   char* db_host_id = new char[db_host_id_len];
-  read_data(sockfd, db_host_id, db_host_id_len);
-  write(sockfd, &ret_num, sizeof(size_t));
+  node->receive(db_host_id, db_host_id_len);
   new (&ret_ptr->db_host_id) std::string(db_host_id, db_host_id_len);
-
+  LOG("TableProperties::UnPackRemote");
   size_t column_family_name_len = 0;
-  read_data(sockfd, &column_family_name_len, sizeof(size_t));
-  write(sockfd, &ret_num, sizeof(size_t));
+  node->receive(&column_family_name_len, sizeof(size_t));
   char* column_family_name = new char[column_family_name_len];
-  read_data(sockfd, column_family_name, column_family_name_len);
-  write(sockfd, &ret_num, sizeof(size_t));
+  node->receive(column_family_name, column_family_name_len);
   new (&ret_ptr->column_family_name)
       std::string(column_family_name, column_family_name_len);
-
+  LOG("TableProperties::UnPackRemote");
   size_t filter_policy_name_len = 0;
-  read_data(sockfd, &filter_policy_name_len, sizeof(size_t));
-  write(sockfd, &ret_num, sizeof(size_t));
-  char* filter_policy_name = new char[filter_policy_name_len];
-  read_data(sockfd, filter_policy_name, filter_policy_name_len);
-  write(sockfd, &ret_num, sizeof(size_t));
-  new (&ret_ptr->filter_policy_name)
-      std::string(filter_policy_name, filter_policy_name_len);
-
+  node->receive(&filter_policy_name_len, sizeof(size_t));
+  if (filter_policy_name_len > 0) {
+    char* filter_policy_name = new char[filter_policy_name_len];
+    node->receive(filter_policy_name, filter_policy_name_len);
+    new (&ret_ptr->filter_policy_name)
+        std::string(filter_policy_name, filter_policy_name_len);
+  } else {
+    new (&ret_ptr->filter_policy_name) std::string();
+  }
+  LOG("TableProperties::UnPackRemote");
   size_t comparator_name_len = 0;
-  read_data(sockfd, &comparator_name_len, sizeof(size_t));
-  write(sockfd, &ret_num, sizeof(size_t));
+  node->receive(&comparator_name_len, sizeof(size_t));
   char* comparator_name = new char[comparator_name_len];
-  read_data(sockfd, comparator_name, comparator_name_len);
-  write(sockfd, &ret_num, sizeof(size_t));
+  node->receive(comparator_name, comparator_name_len);
   new (&ret_ptr->comparator_name)
       std::string(comparator_name, comparator_name_len);
-
+  LOG("TableProperties::UnPackRemote");
   size_t merge_operator_name_len = 0;
-  read_data(sockfd, &merge_operator_name_len, sizeof(size_t));
-  write(sockfd, &ret_num, sizeof(size_t));
+  node->receive(&merge_operator_name_len, sizeof(size_t));
   char* merge_operator_name = new char[merge_operator_name_len];
-  read_data(sockfd, merge_operator_name, merge_operator_name_len);
-  write(sockfd, &ret_num, sizeof(size_t));
+  node->receive(merge_operator_name, merge_operator_name_len);
   new (&ret_ptr->merge_operator_name)
       std::string(merge_operator_name, merge_operator_name_len);
-
+  LOG("TableProperties::UnPackRemote");
   size_t prefix_extractor_name_len = 0;
-  read_data(sockfd, &prefix_extractor_name_len, sizeof(size_t));
-  write(sockfd, &ret_num, sizeof(size_t));
+  node->receive(&prefix_extractor_name_len, sizeof(size_t));
   char* prefix_extractor_name = new char[prefix_extractor_name_len];
-  read_data(sockfd, prefix_extractor_name, prefix_extractor_name_len);
-  write(sockfd, &ret_num, sizeof(size_t));
+  node->receive(prefix_extractor_name, prefix_extractor_name_len);
   new (&ret_ptr->prefix_extractor_name)
       std::string(prefix_extractor_name, prefix_extractor_name_len);
-
+  LOG("TableProperties::UnPackRemote");
   size_t property_collectors_names_len = 0;
-  read_data(sockfd, &property_collectors_names_len, sizeof(size_t));
-  write(sockfd, &ret_num, sizeof(size_t));
+  node->receive(&property_collectors_names_len, sizeof(size_t));
   char* property_collectors_names = new char[property_collectors_names_len];
-  read_data(sockfd, property_collectors_names, property_collectors_names_len);
-  write(sockfd, &ret_num, sizeof(size_t));
+  node->receive(property_collectors_names, property_collectors_names_len);
   new (&ret_ptr->property_collectors_names)
       std::string(property_collectors_names, property_collectors_names_len);
-
+  LOG("TableProperties::UnPackRemote");
   size_t compression_name_len = 0;
-  read_data(sockfd, &compression_name_len, sizeof(size_t));
-  write(sockfd, &ret_num, sizeof(size_t));
+  node->receive(&compression_name_len, sizeof(size_t));
   char* compression_name = new char[compression_name_len];
-  read_data(sockfd, compression_name, compression_name_len);
-  write(sockfd, &ret_num, sizeof(size_t));
+  node->receive(compression_name, compression_name_len);
   new (&ret_ptr->compression_name)
       std::string(compression_name, compression_name_len);
-
+  LOG("TableProperties::UnPackRemote");
   size_t compression_options_len = 0;
-  read_data(sockfd, &compression_options_len, sizeof(size_t));
-  write(sockfd, &ret_num, sizeof(size_t));
+  node->receive(&compression_options_len, sizeof(size_t));
   char* compression_options = new char[compression_options_len];
-  read_data(sockfd, compression_options, compression_options_len);
-  write(sockfd, &ret_num, sizeof(size_t));
+  node->receive(compression_options, compression_options_len);
   new (&ret_ptr->compression_options)
       std::string(compression_options, compression_options_len);
+  LOG("TableProperties::UnPackRemote");
   size_t seqno_to_time_mapping_len = 0;
-  read_data(sockfd, &seqno_to_time_mapping_len, sizeof(size_t));
-  write(sockfd, &ret_num, sizeof(size_t));
-  char* seqno_to_time_mapping = new char[seqno_to_time_mapping_len];
-  read_data(sockfd, seqno_to_time_mapping, seqno_to_time_mapping_len);
-  write(sockfd, &ret_num, sizeof(size_t));
-  new (&ret_ptr->seqno_to_time_mapping)
-      std::string(seqno_to_time_mapping, seqno_to_time_mapping_len);
+  node->receive(&seqno_to_time_mapping_len, sizeof(size_t));
+  if (seqno_to_time_mapping_len > 0) {
+    char* seqno_to_time_mapping = new char[seqno_to_time_mapping_len];
+    node->receive(seqno_to_time_mapping, seqno_to_time_mapping_len);
+    new (&ret_ptr->seqno_to_time_mapping)
+        std::string(seqno_to_time_mapping, seqno_to_time_mapping_len);
+  } else {
+    new (&ret_ptr->seqno_to_time_mapping) std::string();
+  }
+
+  LOG("TableProperties::UnPackRemote");
   size_t user_collected_properties_len = 0;
-  read_data(sockfd, &user_collected_properties_len, sizeof(size_t));
-  write(sockfd, &ret_num, sizeof(size_t));
+  node->receive(&user_collected_properties_len, sizeof(size_t));
   new (&ret_ptr->user_collected_properties)
       std::map<std::string, std::string>();
   new (&ret_ptr->readable_properties) std::map<std::string, std::string>();
-
+  LOG("TableProperties::UnPackRemote");
   for (size_t i = 0; i < user_collected_properties_len; i++) {
     std::string key = "";
     std::string value = "";
     size_t key_len = 0;
-    read_data(sockfd, &key_len, sizeof(size_t));
-    write(sockfd, &ret_num, sizeof(size_t));
+    node->receive(&key_len, sizeof(size_t));
     char* key_cp = new char[key_len];
-    read_data(sockfd, key_cp, key_len);
-    write(sockfd, &ret_num, sizeof(size_t));
+    node->receive(key_cp, key_len);
     key = key_cp;
     size_t value_len = 0;
-    read_data(sockfd, &value_len, sizeof(size_t));
-    write(sockfd, &ret_num, sizeof(size_t));
+    node->receive(&value_len, sizeof(size_t));
     char* value_cp = new char[value_len];
-    read_data(sockfd, value_cp, value_len);
-    write(sockfd, &ret_num, sizeof(size_t));
+    node->receive(value_cp, value_len);
     value = value_cp;
     ret_ptr->user_collected_properties[key] = value;
   }
   size_t readable_properties_len = 0;
-  read_data(sockfd, &readable_properties_len, sizeof(size_t));
-  write(sockfd, &ret_num, sizeof(size_t));
-
+  node->receive(&readable_properties_len, sizeof(size_t));
+  LOG("TableProperties::UnPackRemote");
   for (size_t i = 0; i < readable_properties_len; i++) {
     std::string key = "";
     std::string value = "";
     size_t key_len = 0;
-    read_data(sockfd, &key_len, sizeof(size_t));
-    write(sockfd, &ret_num, sizeof(size_t));
+    node->receive(&key_len, sizeof(size_t));
     char* key_cp = new char[key_len];
-    read_data(sockfd, key_cp, key_len);
-    write(sockfd, &ret_num, sizeof(size_t));
+    node->receive(key_cp, key_len);
     key = key_cp;
     size_t value_len = 0;
-    read_data(sockfd, &value_len, sizeof(size_t));
-    write(sockfd, &ret_num, sizeof(size_t));
+    node->receive(&value_len, sizeof(size_t));
     char* value_cp = new char[value_len];
-    read_data(sockfd, value_cp, value_len);
-    write(sockfd, &ret_num, sizeof(size_t));
+    node->receive(value_cp, value_len);
     value = value_cp;
     ret_ptr->readable_properties[key] = value;
   }
-
+  LOG("TableProperties::UnPackRemote");
   return mem;
 }
 

@@ -36,7 +36,7 @@ struct ConfigOptions;
 // including data loss, unreported corruption, deadlocks, and more.
 class SliceTransform : public Customizable {
  public:
-  virtual void PackLocal(int sockfd) const {
+  virtual void PackLocal(TCPNode* node) const {
     LOG("SliceTransform::PackLocal: error: not implemented");
     assert(false);
   };

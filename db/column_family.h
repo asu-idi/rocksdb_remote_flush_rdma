@@ -294,12 +294,12 @@ class ColumnFamilyData {
     std::vector<CompactionStats> compaction_stats;
     std::vector<CompactionJobStats> compaction_stats_by_pri;
   };
-  void PackLocal(int sockfd) const;
-  static void* UnPackLocal(int sockfd);
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
-  void PackRemote(int sockfd) const;
-  void UnPackRemote(int sockfd);
+  void PackLocal(TCPNode* node) const;
+  static void* UnPackLocal(TCPNode* node);
+  void PackRemote(TCPNode* node) const;
+  void UnPackRemote(TCPNode* node);
 
  public:
   ~ColumnFamilyData();

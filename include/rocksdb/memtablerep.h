@@ -69,7 +69,7 @@ extern Slice GetLengthPrefixedSlice(const char* data);
 
 class MemTableRep {
  public:
-  virtual void PackLocal(int sockfd, size_t protection_bytes_per_key) const {
+  virtual void PackLocal(TCPNode* node, size_t protection_bytes_per_key) const {
     LOG("MemTableRep::PackLocal: error: not implemented");
     assert(false);
   }
@@ -83,7 +83,7 @@ class MemTableRep {
   // concatenated with values.
   class KeyComparator {
    public:
-    virtual void PackLocal(int sockfd) const {
+    virtual void PackLocal(TCPNode* node) const {
       LOG("MemTableRep::KeyComparator::PackLocal: error: not implemented");
       assert(false);
     }
