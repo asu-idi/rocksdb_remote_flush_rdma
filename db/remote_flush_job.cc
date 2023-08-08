@@ -137,6 +137,7 @@ RemoteFlushJob::RemoteFlushJob(
       thread_pri_(thread_pri),
       clock_(db_options_.clock),
       full_history_ts_low_(std::move(full_history_ts_low)),
+      stats_(stats),
       db_impl_seqno_time_mapping_(seqno_time_mapping) {
   // Update the thread status to indicate flush.
   ReportStartedFlush();
@@ -234,7 +235,7 @@ void RemoteFlushJob::PackLocal(TransferService* node) const {
     node->send(&msg, sizeof(size_t));
     snapshot_checker_->PackLocal(node);
   }
-
+  assert(stats_ == cfd_->ioptions()->stats);
   node->send(reinterpret_cast<const void*>(this), sizeof(RemoteFlushJob));
 }
 
@@ -386,6 +387,7 @@ void* RemoteFlushJob::UnPackLocal(TransferService* node, DBImpl* remote_db) {
   auto* mptr = local_handler->cfd_->GetLatestMutableCFOptions();
   memcpy(reinterpret_cast<void*>(hack_dboption_ptr),
          reinterpret_cast<const void*>(&mptr), sizeof(MutableCFOptions*));
+  local_handler->stats_ = local_handler->cfd_->ioptions()->stats;
   LOG("local_handler copy done");
   // new (const_cast<MutableCFOptions*>(&local_handler->mutable_cf_options_))
   //     MutableCFOptions(*local_handler->cfd_->GetLatestMutableCFOptions());
@@ -714,6 +716,7 @@ void RemoteFlushJob::ReportFlushInputSize(const autovector<MemTable*>& mems) {
 }
 
 void RemoteFlushJob::RecordFlushIOStats() {
+  RecordTick(stats_, FLUSH_WRITE_BYTES, IOSTATS(bytes_written));
   ThreadStatusUtil::IncreaseThreadOperationProperty(
       ThreadStatus::FLUSH_BYTES_WRITTEN, IOSTATS(bytes_written));
   IOSTATS_RESET(bytes_written);
@@ -885,6 +888,7 @@ Status RemoteFlushJob::RunRemote(
     assert(port >= 5000 && port <= 5100);
     LOG("Get available port from port list: ", port);
     transfer_service.send(&port, sizeof(int));
+    assert(local_ip.size());
     transfer_service.send(local_ip.c_str(), local_ip.size());
 
     // close connection with memnode
@@ -902,6 +906,19 @@ Status RemoteFlushJob::RunRemote(
     UnPackRemote(&transfer_service2);
     db_mutex_->Unlock();
     // s = Status::OK();
+    LOG("rebuild table cache");
+    cfd_->table_cache()->NewIterator(
+        ReadOptions(), file_options_, cfd_->internal_comparator(), meta_,
+        nullptr /* range_del_agg */, mutable_cf_options_.prefix_extractor,
+        nullptr,
+        (cfd_->internal_stats() == nullptr)
+            ? nullptr
+            : cfd_->internal_stats()->GetFileReadHist(0),
+        TableReaderCaller::kFlush, /*arena=*/nullptr,
+        /*skip_filter=*/false, 0, MaxFileSizeForL0MetaPin(mutable_cf_options_),
+        /*smallest_compaction_key=*/nullptr,
+        /*largest_compaction_key*/ nullptr,
+        /*allow_unprepared_value*/ false);
 
     // close connection with remote worker
     assert(QuitRemoteWorker() == Status::OK());
@@ -910,6 +927,7 @@ Status RemoteFlushJob::RunRemote(
     LOG(edit_->DebugString());
     LOG(meta_.DebugString());
     LOG(table_properties_.ToString());
+    assert(stats_ == cfd_->ioptions()->stats);
   }
 
   if (s.ok() && cfd_->IsDropped()) {
@@ -999,6 +1017,7 @@ Status RemoteFlushJob::QuitMemNode() {
 }
 Status RemoteFlushJob::MatchMemNode(
     std::vector<std::pair<std::string, size_t>>* ip_port_list) {
+  assert(ip_port_list->size() != 0);
   int choosen = (int)(rand() % ip_port_list->size());
 #ifdef ROCKSDN_RDMA
   // TODO(rdma): create one RDMA connection.
@@ -1665,6 +1684,10 @@ Status RemoteFlushJob::WriteLevel0Table() {
       }
       if (tboptions.reason == TableFileCreationReason::kFlush) {
         TEST_SYNC_POINT("DBImpl::RemoteFlushJob:Flush");
+        RecordTick(stats_, MEMTABLE_PAYLOAD_BYTES_AT_FLUSH,
+                   memtable_payload_bytes);
+        RecordTick(stats_, MEMTABLE_GARBAGE_BYTES_AT_FLUSH,
+                   memtable_garbage_bytes);
       }
       LogFlush(db_options_.info_log);
     }
@@ -1728,6 +1751,7 @@ Status RemoteFlushJob::WriteLevel0Table() {
 
   stats.num_output_files_blob = static_cast<int>(blobs.size());
 
+  RecordTimeToHistogram(stats_, FLUSH_TIME, stats.micros);
   cfd_->internal_stats()->AddCompactionStats(0 /* level */, thread_pri_,
                                              stats);  // packremote
   cfd_->internal_stats()->AddCFStats(
