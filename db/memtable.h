@@ -121,7 +121,13 @@ using MultiGetRange = MultiGetContext::Range;
 // written to (aka the 'immutable memtables').
 class MemTable {
  public:
-  void check();
+  void free_remote() {
+    flush_job_info_.reset();
+    delete arena_;
+    delete prefix_extractor_;
+    delete table_;
+    delete range_del_table_;
+  }
   static void* UnPackLocal(char*& buf);
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(TransferService* node);

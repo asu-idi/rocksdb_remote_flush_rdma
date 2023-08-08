@@ -84,7 +84,7 @@ class RegularMemNode {
 class TCPNode {
  public:
   explicit TCPNode(sockaddr_in client_addr, int32_t client_sockfd)
-      : connection_info_{client_addr, client_sockfd} {}
+      : connection_info_{client_addr, client_sockfd, 0} {}
   ~TCPNode() = default;
   bool send(const void *buf, size_t size);
 
@@ -104,6 +104,7 @@ class TCPNode {
   struct tcp_connect_meta {
     struct sockaddr_in sin_addr;
     int32_t client_sockfd;
+    int32_t listen_sockfd;
   } __attribute__((aligned)) connection_info_;
 
  private:
@@ -157,7 +158,7 @@ class RDMANode {
 
  public:
   RDMANode();
-  ~RDMANode() = default;
+  ~RDMANode() { delete res; }
   int resources_create(size_t size, size_t conn_cnt = 1, size_t max_wr = 5);
   int connect_qp(int idx);
   int send(int idx, size_t msg_size, long long local_offset) {

@@ -202,11 +202,13 @@ struct FileOptions : EnvOptions {
     auto* local_io_options =
         reinterpret_cast<IOOptions*>(IOOptions::UnPackLocal(node));
     void* mem = new FileOptions(*local_env_options_);
+    free(local_env_options_);
     void* mem2 = malloc(sizeof(FileOptions));
     node->receive(mem2, sizeof(FileOptions));
     auto ptr = reinterpret_cast<FileOptions*>(mem2);
     auto local_file_options = reinterpret_cast<FileOptions*>(mem);
     new (&local_file_options->io_options) IOOptions(*local_io_options);
+    free(reinterpret_cast<void*>(local_io_options));
     local_file_options->temperature = ptr->temperature;
     local_file_options->handoff_checksum_type = ptr->handoff_checksum_type;
     free(mem2);

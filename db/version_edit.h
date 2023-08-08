@@ -411,6 +411,7 @@ struct LevelFilesBrief {
 // to the MANIFEST file.
 class VersionEdit {
  public:
+  void free_remote();
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
   void PackRemote(TransferService* node) const;

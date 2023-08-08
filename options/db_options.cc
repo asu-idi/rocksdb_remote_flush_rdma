@@ -14,8 +14,8 @@
 
 #include "file/filename.h"
 #include "logging/logging.h"
-#include "memory/remote_transfer_service.h"
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "options/configurable_helper.h"
 #include "options/options_helper.h"
 #include "options/options_parser.h"
@@ -805,7 +805,8 @@ void* ImmutableDBOptions::UnPackLocal(TransferService* node) {
   void* mem = malloc(recv_length);
   node->receive(&mem, recv_length);
   std::string file_name =
-      std::string(reinterpret_cast<char*>(mem)).substr(0, recv_length);
+      std::string(reinterpret_cast<char*>(mem), recv_length);
+  free(mem);
   LOG("UnPackaging ImmutableDBOptions from file:", file_name.c_str());
   DBOptions db_options = DBOptions();
   ConfigOptions config_options;
@@ -884,7 +885,7 @@ void* ImmutableDBOptions::UnPackLocal(char*& buf) {
   void* mem = malloc(recv_length);
   UNPACK_FROM_BUF(buf, mem, recv_length);
   std::string file_name =
-      std::string(reinterpret_cast<char*>(mem)).substr(0, recv_length);
+      std::string(reinterpret_cast<char*>(mem), recv_length);
   LOG("UnPackaging ImmutableDBOptions from file:", file_name.c_str());
   DBOptions db_options = DBOptions();
   ConfigOptions config_options;
