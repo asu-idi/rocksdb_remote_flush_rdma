@@ -289,15 +289,8 @@ Status DBImpl::FlushMemTableToOutputFile(
     if (s.ok()) {
       LOG("flush job run remote: ptr = ", std::hex, flush_job.get(), std::dec);
       std::function<int()> get_available_port = [&]() -> int {
-        std::lock_guard<std::mutex> lock(transfer_mutex_);
-        for (int i = 0; i < 100; i++) {
-          if (metadata_recv_ports_in_used_[i] == false) {
-            metadata_recv_ports_in_used_[i] = true;
-            return i + 5000;
-          }
-        }
-        LOG("All port in used");
-        assert(false);
+        int32_t port = port_index_.fetch_add(1);
+        return port % 500 + 5000;
       };
       s = flush_job->RunRemote(&memnodes_ip_port_, &get_available_port,
                                local_ip_, &logs_with_prep_tracker_, &file_meta,
@@ -399,7 +392,6 @@ Status DBImpl::FlushMemTableToOutputFile(
     }
     TEST_SYNC_POINT("DBImpl::FlushMemTableToOutputFile:Finish");
     return s;
-
   } else {
     LOG("Construct traditional flush job");
     FlushJob flush_job(

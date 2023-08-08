@@ -885,7 +885,6 @@ Status RemoteFlushJob::RunRemote(
     PackLocal(&transfer_service);
 
     int port = (*get_available_port)();
-    assert(port >= 5000 && port <= 5100);
     LOG("Get available port from port list: ", port);
     transfer_service.send(&port, sizeof(int));
     assert(local_ip.size());
@@ -966,38 +965,38 @@ Status RemoteFlushJob::RunRemote(
 Status RemoteFlushJob::MatchRemoteWorker(int port) {
   LOG_CERR("waiting to connect with remote flush worker on localhost:", port);
   memset(reinterpret_cast<void*>(&local_generator_node), 0, sizeof(TCPNode));
-  if ((local_generator_node.connection_info_.client_sockfd =
+  if ((local_generator_node.connection_info_.listen_sockfd =
            socket(AF_INET, SOCK_STREAM, 0)) < 0) {
     LOG("Socket creation error");
     return Status::IOError("Socket creation error");
   }
   int opt = ~SOCK_NONBLOCK;
-  if (setsockopt(local_generator_node.connection_info_.client_sockfd,
+  if (setsockopt(local_generator_node.connection_info_.listen_sockfd,
                  SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
     LOG("setsockopt failed");
     return Status::IOError("setsockopt");
   }
   local_generator_node.connection_info_.sin_addr.sin_family = AF_INET;
   local_generator_node.connection_info_.sin_addr.sin_port = htons(port);
-  if (bind(local_generator_node.connection_info_.client_sockfd,
+  if (bind(local_generator_node.connection_info_.listen_sockfd,
            (struct sockaddr*)&local_generator_node.connection_info_.sin_addr,
            sizeof(local_generator_node.connection_info_.sin_addr)) < 0) {
     LOG("bind failed");
     return Status::IOError("bind failed");
   }
-  if (listen(local_generator_node.connection_info_.client_sockfd, 1) < 0) {
+  if (listen(local_generator_node.connection_info_.listen_sockfd, 1) < 0) {
     LOG("listen failed");
     return Status::IOError("listen failed");
   }
   socklen_t len = sizeof(local_generator_node.connection_info_.sin_addr);
   if ((local_generator_node.connection_info_.client_sockfd = accept(
-           local_generator_node.connection_info_.client_sockfd,
+           local_generator_node.connection_info_.listen_sockfd,
            (struct sockaddr*)&local_generator_node.connection_info_.sin_addr,
            &len)) < 0) {
     LOG("accept failed");
     return Status::IOError("accept failed");
   }
-
+  close(local_generator_node.connection_info_.listen_sockfd);
   LOG("create connection with remote flush worker, ready to receive data");
   return Status::OK();
 }

@@ -2725,7 +2725,7 @@ class DBImpl : public DB {
 
   // remote flush
   std::mutex transfer_mutex_;
-  bool metadata_recv_ports_in_used_[100] = {false};
+  std::atomic<int> port_index_ = {0};
   std::vector<std::pair<std::string, size_t>> memnodes_ip_port_;
   std::string local_ip_;
 
