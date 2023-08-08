@@ -47,6 +47,78 @@ shell3: ./remote_flush_test_worker 1
 shell4: ./tcp_server 9091 # 在remote_flush_test_worker.cpp 注册
 ```
 
+## HDFS
+
+###### 配置一台memnode，两台compNode，1generator+1worker。HDFS跑在memnode上面。
+
+- 在每台机器/etc/hosts中添加memnode generator worker ，类似这样：
+  
+
+```shell
+vim /etc/hosts
+10.206.16.16 memnode
+10.206.16.17 compnode-generator
+10.206.16.8 compnode-worker
+```
+
+- memnode配置 ${HADOOP_HOME}/etc/hadoop/core-site.xml：
+  
+
+```xml
+<configuration>
+    <property>
+        <name>fs.defaultFS</name>
+        <value>hdfs://memnode:9000</value>
+    </property>
+</configuration>
+```
+
+- ${HADOOP_HOME}/sbin/start-dfs.sh 启动不了hdfs，应该需要：
+  
+  - 脚本添加声明。stop-dfs.sh同理
+    
+  
+  ```shell
+  HDFS_DATANODE_USER=root
+  HADOOP_SECURE_DN_USER=hdfs
+  HDFS_NAMENODE_USER=root
+  HDFS_SECONDARYNAMENODE_USER=root
+  ```
+  
+  - chsh -s $(which bash) 默认终端需要是bash
+    
+  - ${HADOOP_HOME}/etc/hadoop/hadoop-env.sh 添加
+    
+  
+  ```shell
+  JAVA_HOME=....
+  ```
+  
+- compNode 不修改hdfs-site.xml，${HADOOP_HOME}/etc/hadoop/core-site.xml配置为：
+  
+
+```xml
+<configuration>
+    <property>
+        <name>fs.defaultFS</name>
+        <value>hdfs://memnode:9000</value>
+    </property>
+</configuration>
+```
+
+### db_bench
+
+```shell
+./db_bench --db=/tmp/rrtest --num=1000000 --key_size=50 --value_size=100 --benchmarks=readwhilewriting --disable_wal=1 --max_bytes_for_level_base=4194304 --num_levels=1 --target_file_size_base=4194304 --write_buffer_size=4194304 --level0_file_num_compaction_trigger=10 --level0_slowdown_writes_trigger=10 --level0_stop_writes_trigger=10 --use_remote_flush=1 --memnode_ip=127.0.0.1 --memnode_port=9091 --local_ip=127.0.0.1
+ --use_remote_flush=1 # 开启remote flush
+--memnode_ip=127.0.0.1 
+--memnode_port=9091 
+--local_ip=127.0.0.1 # 本机内网ip
+```
+
+- 在 env_posix.cc 修改运行HDFS的主机ip&port。
+  
+
 ### TODO
 
 - add RDMA support
