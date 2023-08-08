@@ -35,6 +35,7 @@ class ReadOnlySkipListRep : public MemTableRep {
     auto readonly_skiplistrep_ = new ReadOnlySkipListRep(readonly_skiplistrep);
     node->send(reinterpret_cast<void*>(readonly_skiplistrep_),
                sizeof(ReadOnlySkipListRep));
+    delete readonly_skiplistrep_;
   }
 
   static void* UnPackLocal(TransferService* node) {

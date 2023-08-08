@@ -46,7 +46,7 @@ bool TCPNode::send(const void *buf, size_t size) {
   memcpy(reinterpret_cast<char *>(header_) + 6, &size, sizeof(size));
   assert(write(connection_info_.client_sockfd, header_, sizeof(size) + 6) ==
          sizeof(size) + 6);
-
+  free(header_);
   char *buf_ = reinterpret_cast<char *>(const_cast<void *>(buf));
   while (total < size) {
     fd_set write_fds;
@@ -79,10 +79,9 @@ bool TCPNode::receive(void **buf, size_t *size) {
   void *header_ = malloc(sizeof(size_t) + 6);
   ssize_t temp =
       read(connection_info_.client_sockfd, header_, sizeof(size_t) + 6);
-  LOG("TCPNode::receive: read header:", temp, ' ',
-      reinterpret_cast<char *>(header_), ' ',
-      *reinterpret_cast<size_t *>(reinterpret_cast<char *>(header_) + 6));
-
+  if (memcmp(header_, "Header", 6)) {
+    LOG("TCPNode::receive: header error");
+  }
   assert(memcmp(header_, "Header", 6) == 0);
   size_t package_size = 0;
   memcpy(&package_size, reinterpret_cast<char *>(header_) + 6,
@@ -201,8 +200,8 @@ RemoteFlushJobPD::flushjob_package *RemoteFlushJobPD::receive_remote_flush_job(
     tcpnode->receive(&buf_, &size);
     assert(buf_ != nullptr);
     if (size == 0) assert(false);
-    LOG("memnode recv data from generator:", reinterpret_cast<char *>(buf_),
-        ' ', size);
+    LOG("memnode recv data from generator:",
+        std::string(reinterpret_cast<char *>(buf_), size), ' ', size);
     if (size == strlen(bye) &&
         strncmp(reinterpret_cast<char *>(buf_), bye, size) == 0) {
       break;
@@ -217,8 +216,6 @@ RemoteFlushJobPD::flushjob_package *RemoteFlushJobPD::receive_remote_flush_job(
 void RemoteFlushJobPD::send_remote_flush_job(flushjob_package *package,
                                              TCPNode *worker_node) {
   for (auto &it : package->package) {
-    LOG("remote flushjob worker send data:",
-        *reinterpret_cast<size_t *>(it.first), ' ', it.second);
     worker_node->send(it.first, it.second);
   }
   worker_node->send("byebyemessage", strlen("byebyemessage"));

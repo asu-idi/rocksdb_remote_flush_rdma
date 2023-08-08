@@ -32,8 +32,7 @@ class UserComparatorWrapper {
   static void* UnPackLocal(TransferService* node) {
     void* ucmp = ComparatorFactory::UnPackLocal(node);
     void* mem = malloc(sizeof(UserComparatorWrapper));
-    size_t size = sizeof(UserComparatorWrapper);
-    node->receive(&mem, &size);
+    node->receive(&mem, sizeof(UserComparatorWrapper));
     auto* ret = reinterpret_cast<UserComparatorWrapper*>(mem);
     ret->user_comparator_ = reinterpret_cast<Comparator*>(ucmp);
     return ret;

@@ -295,6 +295,7 @@ class ColumnFamilyData {
     std::vector<CompactionStats> compaction_stats;
     std::vector<CompactionJobStats> compaction_stats_by_pri;
   };
+  void free_remote();
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
   void PackLocal(TransferService* node) const;

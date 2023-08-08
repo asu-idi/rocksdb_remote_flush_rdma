@@ -1133,6 +1133,7 @@ class AtomicGroupReadBuffer {
 class VersionSet {
  public:
   void check();
+  void free_remote();
   void PackLocal(char*& buf) const;
   static void* UnPackLocal(char*& buf);
   void PackLocal(TransferService* node) const;

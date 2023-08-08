@@ -340,6 +340,7 @@ void* RemoteFlushJob::UnPackLocal(TransferService* node, DBImpl* remote_db) {
   LOG("local_handler copy FileMetaData");
   new (&local_handler->meta_)
       FileMetaData(*reinterpret_cast<FileMetaData*>(meta_ret));
+  free(meta_ret);
   for (auto& memtable : mems_temp) {
     LOG("worker copy data: ", memtable);
     local_handler->mems_.emplace_back(memtable);
@@ -351,8 +352,10 @@ void* RemoteFlushJob::UnPackLocal(TransferService* node, DBImpl* remote_db) {
          sizeof(SeqnoToTimeMapping*));
   memcpy(reinterpret_cast<void*>(const_cast<SeqnoToTimeMapping*>(
              &(local_handler->seqno_to_time_mapping_))),
-         reinterpret_cast<void*>(&seqno_to_time_mapping_ret),
-         sizeof(SeqnoToTimeMapping*));
+         reinterpret_cast<void*>(seqno_to_time_mapping_ret),
+         sizeof(SeqnoToTimeMapping));
+  free(seqno_to_time_mapping_ret);
+
   local_handler->cfd_ = reinterpret_cast<ColumnFamilyData*>(cfd_ret);
   local_handler->base_ = base_version_flag == 1
                              ? local_handler->cfd_->current()
@@ -369,6 +372,7 @@ void* RemoteFlushJob::UnPackLocal(TransferService* node, DBImpl* remote_db) {
       std::string(local_dbname);
   new (const_cast<FileOptions*>(&local_handler->file_options_))
       FileOptions(*reinterpret_cast<FileOptions*>(file_options_ret));
+  delete reinterpret_cast<FileOptions*>(file_options_ret);
   new (&local_handler->existing_snapshots_) std::vector<SequenceNumber>();
   for (auto& snapshot : existing_snapshots) {
     local_handler->existing_snapshots_.emplace_back(snapshot);
@@ -617,6 +621,27 @@ void RemoteFlushJob::PackRemote(TransferService* node) const {
   table_properties_.PackRemote(node);
   edit_->PackRemote(node);
   meta_.PackRemote(node);
+  edit_->free_remote();
+  mems_[0]->free_remote();
+  cfd_->free_remote();
+  table_properties_.~TableProperties();
+  versions_->free_remote();
+  delete db_mutex_;
+  const_cast<std::string*>(&db_id_)->~basic_string();
+  const_cast<std::string*>(&db_session_id_)->~basic_string();
+  const_cast<std::string*>(&dbname_)->~basic_string();
+  const_cast<std::vector<SequenceNumber>*>(&existing_snapshots_)->clear();
+  const_cast<std::string*>(&full_history_ts_low_)->~basic_string();
+  const_cast<FileOptions*>(&file_options_)->~FileOptions();
+  free(cfd_);
+  free(mems_[0]);
+  free(versions_);
+  free(job_context_);
+  free(edit_);
+  char* ptr = reinterpret_cast<char*>(
+      const_cast<SeqnoToTimeMapping*>(&seqno_to_time_mapping_));
+  ptr -= sizeof(SeqnoToTimeMapping*);
+  free(*reinterpret_cast<void**>(ptr));
   LOG("RemoteFlushJob::PackRemote done");
 }
 void RemoteFlushJob::UnPackRemote(TransferService* node) {
@@ -653,7 +678,7 @@ void RemoteFlushJob::UnPackRemote(TransferService* node) {
   meta_.file_checksum_func_name = remote_metadata->file_checksum_func_name;
   meta_.unique_id = remote_metadata->unique_id;
   meta_.oldest_ancester_time = remote_metadata->oldest_ancester_time;
-  delete remote_metadata;
+  free(remote_metadata);
 
   base_->Unref();
   LOG("RemoteFlushJob::UnPackRemote done");
@@ -906,7 +931,7 @@ Status RemoteFlushJob::RunRemote(
     db_mutex_->Unlock();
     // s = Status::OK();
     LOG("rebuild table cache");
-    cfd_->table_cache()->NewIterator(
+    std::unique_ptr<InternalIterator> it(cfd_->table_cache()->NewIterator(
         ReadOptions(), file_options_, cfd_->internal_comparator(), meta_,
         nullptr /* range_del_agg */, mutable_cf_options_.prefix_extractor,
         nullptr,
@@ -917,8 +942,7 @@ Status RemoteFlushJob::RunRemote(
         /*skip_filter=*/false, 0, MaxFileSizeForL0MetaPin(mutable_cf_options_),
         /*smallest_compaction_key=*/nullptr,
         /*largest_compaction_key*/ nullptr,
-        /*allow_unprepared_value*/ false);
-
+        /*allow_unprepared_value*/ false));
     // close connection with remote worker
     assert(QuitRemoteWorker() == Status::OK());
     db_mutex_->Lock();
@@ -1063,11 +1087,10 @@ Status RemoteFlushJob::MatchMemNode(
 Status RemoteFlushJob::QuitRemoteWorker() {
   const char* bye = "byebyemessage";
   void* mem = reinterpret_cast<void*>(malloc(strlen(bye)));
-  size_t mem_size = strlen(bye);
-  local_generator_node.receive(&mem, &mem_size);
-  LOG("server recv: ", reinterpret_cast<char*>(mem));
-  assert(strncmp(reinterpret_cast<char*>(mem), bye, mem_size) == 0);
+  local_generator_node.receive(&mem, strlen(bye));
+  assert(strncmp(reinterpret_cast<char*>(mem), bye, strlen(bye)) == 0);
   close(local_generator_node.connection_info_.client_sockfd);
+  free(mem);
   return Status::OK();
 }
 

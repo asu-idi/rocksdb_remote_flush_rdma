@@ -133,6 +133,7 @@ void* TableProperties::UnPackRemote(TransferService* node) {
     char* db_id = new char[db_id_len];
     node->receive(db_id, db_id_len);
     new (&ret_ptr->db_id) std::string(db_id, db_id_len);
+    delete[] db_id;
   } else {
     new (&ret_ptr->db_id) std::string();
   }
@@ -142,6 +143,7 @@ void* TableProperties::UnPackRemote(TransferService* node) {
     char* db_session_id = new char[db_session_id_len];
     node->receive(db_session_id, db_session_id_len);
     new (&ret_ptr->db_session_id) std::string(db_session_id, db_session_id_len);
+    delete[] db_session_id;
   } else {
     new (&ret_ptr->db_session_id) std::string();
   }
@@ -151,6 +153,7 @@ void* TableProperties::UnPackRemote(TransferService* node) {
     char* db_host_id = new char[db_host_id_len];
     node->receive(db_host_id, db_host_id_len);
     new (&ret_ptr->db_host_id) std::string(db_host_id, db_host_id_len);
+    delete[] db_host_id;
   } else {
     new (&ret_ptr->db_host_id) std::string();
   }
@@ -161,6 +164,7 @@ void* TableProperties::UnPackRemote(TransferService* node) {
     node->receive(column_family_name, column_family_name_len);
     new (&ret_ptr->column_family_name)
         std::string(column_family_name, column_family_name_len);
+    delete[] column_family_name;
   } else {
     new (&ret_ptr->column_family_name) std::string();
   }
@@ -171,6 +175,7 @@ void* TableProperties::UnPackRemote(TransferService* node) {
     node->receive(filter_policy_name, filter_policy_name_len);
     new (&ret_ptr->filter_policy_name)
         std::string(filter_policy_name, filter_policy_name_len);
+    delete[] filter_policy_name;
   } else {
     new (&ret_ptr->filter_policy_name) std::string();
   }
@@ -181,6 +186,7 @@ void* TableProperties::UnPackRemote(TransferService* node) {
     node->receive(comparator_name, comparator_name_len);
     new (&ret_ptr->comparator_name)
         std::string(comparator_name, comparator_name_len);
+    delete[] comparator_name;
   } else {
     new (&ret_ptr->comparator_name) std::string();
   }
@@ -191,6 +197,7 @@ void* TableProperties::UnPackRemote(TransferService* node) {
     node->receive(merge_operator_name, merge_operator_name_len);
     new (&ret_ptr->merge_operator_name)
         std::string(merge_operator_name, merge_operator_name_len);
+    delete[] merge_operator_name;
   } else {
     new (&ret_ptr->merge_operator_name) std::string();
   }
@@ -201,6 +208,7 @@ void* TableProperties::UnPackRemote(TransferService* node) {
     node->receive(prefix_extractor_name, prefix_extractor_name_len);
     new (&ret_ptr->prefix_extractor_name)
         std::string(prefix_extractor_name, prefix_extractor_name_len);
+    delete[] prefix_extractor_name;
   } else {
     new (&ret_ptr->prefix_extractor_name) std::string();
   }
@@ -211,6 +219,7 @@ void* TableProperties::UnPackRemote(TransferService* node) {
     node->receive(property_collectors_names, property_collectors_names_len);
     new (&ret_ptr->property_collectors_names)
         std::string(property_collectors_names, property_collectors_names_len);
+    delete[] property_collectors_names;
   } else {
     new (&ret_ptr->property_collectors_names) std::string();
   }
@@ -221,6 +230,7 @@ void* TableProperties::UnPackRemote(TransferService* node) {
     node->receive(compression_name, compression_name_len);
     new (&ret_ptr->compression_name)
         std::string(compression_name, compression_name_len);
+    delete[] compression_name;
   } else {
     new (&ret_ptr->compression_name) std::string();
   }
@@ -231,6 +241,7 @@ void* TableProperties::UnPackRemote(TransferService* node) {
     node->receive(compression_options, compression_options_len);
     new (&ret_ptr->compression_options)
         std::string(compression_options, compression_options_len);
+    delete[] compression_options;
   } else {
     new (&ret_ptr->compression_options) std::string();
   }
@@ -241,6 +252,7 @@ void* TableProperties::UnPackRemote(TransferService* node) {
     node->receive(seqno_to_time_mapping, seqno_to_time_mapping_len);
     new (&ret_ptr->seqno_to_time_mapping)
         std::string(seqno_to_time_mapping, seqno_to_time_mapping_len);
+    delete[] seqno_to_time_mapping;
   } else {
     new (&ret_ptr->seqno_to_time_mapping) std::string();
   }
@@ -257,12 +269,14 @@ void* TableProperties::UnPackRemote(TransferService* node) {
     node->receive(&key_len, sizeof(size_t));
     char* key_cp = new char[key_len];
     node->receive(key_cp, key_len);
-    key = key_cp;
+    key = std::string(key_cp, key_len);
+    delete[] key_cp;
     size_t value_len = 0;
     node->receive(&value_len, sizeof(size_t));
     char* value_cp = new char[value_len];
     node->receive(value_cp, value_len);
-    value = value_cp;
+    value = std::string(value_cp, value_len);
+    delete[] value_cp;
     ret_ptr->user_collected_properties[key] = value;
   }
   size_t readable_properties_len = 0;
@@ -274,12 +288,14 @@ void* TableProperties::UnPackRemote(TransferService* node) {
     node->receive(&key_len, sizeof(size_t));
     char* key_cp = new char[key_len];
     node->receive(key_cp, key_len);
-    key = key_cp;
+    key = std::string(key_cp, key_len);
+    delete[] key_cp;
     size_t value_len = 0;
     node->receive(&value_len, sizeof(size_t));
     char* value_cp = new char[value_len];
     node->receive(value_cp, value_len);
-    value = value_cp;
+    value = std::string(value_cp, value_len);
+    delete[] value_cp;
     ret_ptr->readable_properties[key] = value;
   }
   LOG("TableProperties::UnPackRemote");

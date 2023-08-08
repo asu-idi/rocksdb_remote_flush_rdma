@@ -265,8 +265,10 @@ class InternalKeyComparator
     void* ucmp = UserComparatorWrapper::UnPackLocal(node);
     auto ptr = new InternalKeyComparator();
     void* mem = reinterpret_cast<void*>(ptr);
+    ptr->user_comparator_.~UserComparatorWrapper();
     memcpy(reinterpret_cast<void*>(&ptr->user_comparator_), ucmp,
            sizeof(UserComparatorWrapper));
+    free(ucmp);
     return mem;
   }
   void PackLocal(char*& buf) const override { user_comparator_.PackLocal(buf); }

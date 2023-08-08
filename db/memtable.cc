@@ -176,8 +176,6 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
       reinterpret_cast<void*>(table_), std::dec);
 }
 
-void MemTable::check() {}
-
 void* MemTable::UnPackLocal(TransferService* node) {
   LOG("start MemTable::UnPackLocal");
   void* local_arena = BasicArenaFactory::UnPackLocal(node);
@@ -203,12 +201,14 @@ void* MemTable::UnPackLocal(TransferService* node) {
              const_cast<SliceTransform**>(&memtable->prefix_extractor_)),
          reinterpret_cast<void*>(&local_prefix_extractor),
          sizeof(SliceTransform*));
-  memcpy(reinterpret_cast<void*>(&memtable->comparator_),
-         reinterpret_cast<void*>(local_comparator), sizeof(KeyComparator));
+  new (&memtable->comparator_) KeyComparator(
+      reinterpret_cast<KeyComparator*>(local_comparator)->comparator);
+  delete reinterpret_cast<KeyComparator*>(local_comparator);
   memcpy(reinterpret_cast<void*>(
              const_cast<ImmutableMemTableOptions*>(&memtable->moptions_)),
          reinterpret_cast<void*>(local_moptions),
          sizeof(ImmutableMemTableOptions));
+  free(local_moptions);
   LOG("checkpoint:", std::hex, local_table, ' ', local_range_del_table,
       std::dec);
   memtable->table_ = local_table;
@@ -390,6 +390,7 @@ void MemTable::UnPackRemote(TransferService* node) {
   void* local_table_properties = TableProperties::UnPackRemote(node);
   flush_job_info->table_properties =
       *reinterpret_cast<TableProperties*>(local_table_properties);
+  delete reinterpret_cast<TableProperties*>(local_table_properties);
   node->receive(reinterpret_cast<void*>(&flush_job_info->flush_reason),
                 sizeof(FlushReason));
   node->receive(reinterpret_cast<void*>(&flush_job_info->blob_compression_type),
@@ -439,6 +440,9 @@ void MemTable::UnPack(shm_package::PackContext& ctx, int idx, size_t& offset) {
 
 MemTable::~MemTable() {
   mem_tracker_.FreeMem();
+  delete arena_;
+  delete table_;
+  delete range_del_table_;
   LOG("Memtable ", GetID(), "destructed");
   assert(refs_ == 0);
 }

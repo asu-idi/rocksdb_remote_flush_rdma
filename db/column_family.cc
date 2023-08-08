@@ -743,6 +743,17 @@ ColumnFamilyData::~ColumnFamilyData() {
   }
 }
 
+void ColumnFamilyData::free_remote() {
+  if (internal_stats_ != nullptr) {
+    internal_stats_.reset();
+  }
+  free(current_);
+  const_cast<ImmutableOptions*>(&ioptions_)->~ImmutableOptions();
+  const_cast<ColumnFamilyOptions*>(&initial_cf_options_)
+      ->~ColumnFamilyOptions();
+  const_cast<MutableCFOptions*>(&mutable_cf_options_)->~MutableCFOptions();
+}
+
 void ColumnFamilyData::PackRemote(TransferService* node) const {
   LOG("ColumnFamilyData::PackRemote");
   assert(internal_stats_ != nullptr);
@@ -751,7 +762,6 @@ void ColumnFamilyData::PackRemote(TransferService* node) const {
   LOG("ColumnFamilyData::PackRemote done.");
 }
 void ColumnFamilyData::UnPackRemote(TransferService* node) {
-  auto* install_info = new ColumnFamilyData::cfd_pack_remote_data;
   LOG("ColumnFamilyData::UnPackRemote");
   internal_stats_->UnPackRemote(node);
   ioptions_.UnPackRemote(node);
@@ -813,26 +823,24 @@ void* ColumnFamilyData::UnPackLocal(TransferService* node) {
 
   node->receive(reinterpret_cast<void*>(mem), sizeof(ColumnFamilyData));
   auto* worker_cfd_ = reinterpret_cast<ColumnFamilyData*>(mem);
-  memcpy(reinterpret_cast<void*>(const_cast<ColumnFamilyOptions*>(
-             &worker_cfd_->initial_cf_options_)),
-         reinterpret_cast<void*>(worker_initial_cf_options_),
-         sizeof(ColumnFamilyOptions));
-  memcpy(reinterpret_cast<void*>(
-             const_cast<ImmutableOptions*>(&worker_cfd_->ioptions_)),
-         reinterpret_cast<void*>(worker_ioptions_), sizeof(ImmutableOptions));
-  memcpy(reinterpret_cast<void*>(
-             const_cast<MutableCFOptions*>(&worker_cfd_->mutable_cf_options_)),
-         reinterpret_cast<void*>(worker_mutable_cf_options_),
-         sizeof(MutableCFOptions));
+  new (const_cast<ColumnFamilyOptions*>(&worker_cfd_->initial_cf_options_))
+      ColumnFamilyOptions(*worker_initial_cf_options_);
+  new (const_cast<ImmutableOptions*>(&worker_cfd_->ioptions_))
+      ImmutableOptions(*worker_ioptions_);
+  delete reinterpret_cast<ImmutableOptions*>(worker_ioptions_);
+  new (&worker_cfd_->mutable_cf_options_)
+      MutableCFOptions(*worker_mutable_cf_options_);
+  delete worker_mutable_cf_options_;
   LOG("retrieve Comparator:");
   auto worker_internal_comparator_ =
-      new InternalKeyComparator(worker_initial_cf_options_->comparator);
+      new InternalKeyComparator(worker_cfd_->initial_cf_options_.comparator);
   new (&worker_cfd_->name_) std::string(worker_name_);
   memcpy(const_cast<void*>(
              reinterpret_cast<const void*>(&worker_cfd_->internal_comparator_)),
          reinterpret_cast<void*>(worker_internal_comparator_),
          sizeof(InternalKeyComparator));
   delete worker_internal_comparator_;
+  delete reinterpret_cast<ColumnFamilyOptions*>(worker_initial_cf_options_);
   new (&worker_cfd_->int_tbl_prop_collector_factories_)
       std::vector<std::unique_ptr<IntTblPropCollectorPackFactory>>();
   worker_cfd_->int_tbl_prop_collector_factories_.resize(temp_factories.size());

@@ -98,6 +98,7 @@ class ReadOnlyInlineSkipList {
   explicit ReadOnlyInlineSkipList(const InlineSkipList<Comparator>&,
                                   const Comparator cmp,
                                   size_t protection_bytes_per_key);
+  ReadOnlyInlineSkipList() = default;
   ~ReadOnlyInlineSkipList() {
     if (data_ != nullptr) {
       LOG("destruct ReadOnlyInlineSkipList");
@@ -153,11 +154,9 @@ inline void* ReadOnlyInlineSkipList<Comparator>::UnPackLocal(
   node->receive(reinterpret_cast<void**>(&total_len), &size);
   void* data = malloc(*total_len);
   node->receive(&data, reinterpret_cast<size_t*>(total_len));
-  void* mem = malloc(sizeof(ReadOnlyInlineSkipList));
-  auto* local_readonly_skiplistrep =
-      reinterpret_cast<ReadOnlyInlineSkipList*>(mem);
-  size = sizeof(ReadOnlyInlineSkipList);
-  node->receive(&mem, &size);
+  auto* local_readonly_skiplistrep = new ReadOnlyInlineSkipList();
+  void* mem = reinterpret_cast<void*>(local_readonly_skiplistrep);
+  node->receive(mem, sizeof(ReadOnlyInlineSkipList));
   LOG("ReadOnlyInlineSkipList::UnPackLocal read mem len:",
       sizeof(ReadOnlyInlineSkipList));
   local_readonly_skiplistrep->data_ = data;

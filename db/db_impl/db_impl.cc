@@ -354,8 +354,9 @@ void DBImpl::BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri) {
   const char* bye = "byebyemessage";
   void* end_msg = malloc(strlen(bye));
   transfer_service.receive(&end_msg, strlen(bye));
-  LOG("worker received MsgEnd: ", reinterpret_cast<char*>(end_msg));
-
+  LOG("worker received MsgEnd: ",
+      std::string(reinterpret_cast<char*>(end_msg), strlen(bye)));
+  free(end_msg);
 #ifdef ROCKSDB_RDMA
   // TODO(rdma): close connection with memnode or do nothing
 #else
@@ -397,8 +398,9 @@ void DBImpl::BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri) {
   close(unpack_tcp_node.connection_info_.client_sockfd);
 
   delete worker_node;
-
+  free(local_handler);
   bg_flush_scheduled_--;
+  bg_cv_.SignalAll();
   TEST_SYNC_POINT("DBImpl::BackgroundCallRemoteFlush:Finish");
 }
 

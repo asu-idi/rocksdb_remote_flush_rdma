@@ -103,14 +103,12 @@ struct ImmutableOptions : public ImmutableDBOptions, public ImmutableCFOptions {
  public:
   void PackLocal(TransferService* node) const {
     this->ImmutableDBOptions::PackLocal(node);
-    LOG("CRASH POINT");
     if (stats == nullptr) {
       bool signal = false;
       node->send(reinterpret_cast<const void*>(&signal), sizeof(bool));
     } else {
       stats->PackLocal(node);
     }
-    LOG("CRASH POINT");
   }
   static void* UnPackLocal(TransferService* node,
                            const ColumnFamilyOptions& cf_options) {
@@ -118,6 +116,7 @@ struct ImmutableOptions : public ImmutableDBOptions, public ImmutableCFOptions {
     auto* db_options_ =
         reinterpret_cast<ImmutableDBOptions*>(immutabe_dboptions_);
     auto* ret = new ImmutableOptions(*db_options_, cf_options);
+    delete db_options_;
     void* ret_stats = Statistics::UnPackLocal(node);
     ret->stats =
         ret_stats == nullptr
@@ -133,6 +132,7 @@ struct ImmutableOptions : public ImmutableDBOptions, public ImmutableCFOptions {
     } else {
       stats->PackRemote(node);
     }
+    const_cast<std::vector<DbPath>*>(&cf_paths)->clear();
   }
   void UnPackRemote(TransferService* node) const {
     bool signal = false;

@@ -22,9 +22,9 @@
 #include <random>
 #include <sstream>
 
-#include "memory/remote_transfer_service.h"
 #include "logging/logging.h"
 #include "memory/remote_flush_service.h"
+#include "memory/remote_transfer_service.h"
 #include "monitoring/statistics.h"
 #include "options/db_options.h"
 #include "options/options_helper.h"
@@ -183,9 +183,8 @@ void* ColumnFamilyOptions::UnPackLocal(TransferService* node) {
   size_t recv_length = std::string("/tmp/ColumnFamilyOptions-").length() + 10;
   void* mem = malloc(recv_length);
   node->receive(mem, recv_length);
-  LOG("read file name:", static_cast<char*>(mem));
-  std::string file_name =
-      std::string(static_cast<char*>(mem)).substr(0, recv_length);
+  std::string file_name = std::string(static_cast<char*>(mem), recv_length);
+  free(mem);
   LOG("Unpackaging ColumnFamilyOptions from file:", file_name.c_str());
   DBOptions db_options = DBOptions();
   ConfigOptions config_options;
@@ -208,8 +207,8 @@ void* ColumnFamilyOptions::UnPackLocal(TransferService* node) {
     node->receive(&path_len, sizeof(path_len));
     void* path_mem = malloc(path_len);
     node->receive(path_mem, path_len);
-    std::string path =
-        std::string(static_cast<char*>(path_mem)).substr(0, path_len);
+    std::string path = std::string(static_cast<char*>(path_mem), path_len);
+    free(path_mem);
     options->cf_paths.emplace_back(path, target_size);
   }
   // assert(options->table_factory == nullptr);
@@ -260,8 +259,7 @@ void* ColumnFamilyOptions::UnPackLocal(char*& buf) {
   void* mem = malloc(recv_length);
   UNPACK_FROM_BUF(buf, mem, recv_length);
   LOG("read file name:", static_cast<char*>(mem));
-  std::string file_name =
-      std::string(static_cast<char*>(mem)).substr(0, recv_length);
+  std::string file_name = std::string(static_cast<char*>(mem), recv_length);
   LOG("Unpackaging ColumnFamilyOptions from file:", file_name.c_str());
   DBOptions db_options = DBOptions();
   ConfigOptions config_options;

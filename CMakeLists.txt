@@ -386,6 +386,13 @@ if(WITH_ASAN)
   endif()
 endif()
 
+option(WITH_SANITIZE_MEMORY "build with memory sanitizer" OFF)
+if(WITH_SANITIZE_MEMORY)
+  set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address")
+  set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address")
+endif()
+
 option(WITH_TSAN "build with TSAN" OFF)
 if(WITH_TSAN)
   set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=thread -Wl,-pie")

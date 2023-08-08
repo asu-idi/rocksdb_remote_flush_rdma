@@ -1569,6 +1569,7 @@ void* Version::UnPackLocal(TransferService* node, void* cfd_ptr) {
   node->receive(mem, sizeof(Version));
   memcpy(reinterpret_cast<void*>(&mem_ptr->storage_info_), worker_storage_info,
          sizeof(VersionStorageInfo));
+  free(worker_storage_info);
   mem_ptr->cfd_ = reinterpret_cast<ColumnFamilyData*>(cfd_ptr);
   return mem;
 }
@@ -4857,6 +4858,9 @@ void VersionSet::check() {
   LOG("VersionSet::check done.");
 }
 
+void VersionSet::free_remote() {
+  delete const_cast<ImmutableDBOptions*>(db_options_);
+}
 void VersionSet::PackLocal(TransferService* node) const {
   LOG("VersionSet::PackLocal dump ImmutablDBOptions file");
   db_options_->PackLocal(node);

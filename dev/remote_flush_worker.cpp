@@ -48,5 +48,6 @@ signed main(signed argc, char** argv) {
   Status ret = db->ListenAndScheduleFlushJob(local_listen_port);
   assert(ret.ok());
   db->Close();
+  delete db;
   return 0;
 }
