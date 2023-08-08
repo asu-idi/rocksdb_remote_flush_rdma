@@ -1715,6 +1715,9 @@ class DBImpl : public DB {
     DBImpl* db_;
     Env::Priority thread_pri_;
     int sockfd_;
+    RDMAClient* rdma_client_;
+    int qp_idx_;
+    std::pair<long long, long long> remote_seg_;
   };
 
   // Information for a manual compaction
@@ -2087,7 +2090,9 @@ class DBImpl : public DB {
   static void UnscheduleRemoteFlushCallback(void* arg);
   static void UnscheduleCompactionCallback(void* arg);
   static void UnscheduleFlushCallback(void* arg);
-  void BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri);
+  void BackgroundCallRemoteFlush(int sockfd,
+    RDMAClient* rdma_client, int qp_idx, std::pair<long long, long long> remote_seg,
+    Env::Priority thread_pri);
   void BackgroundCallCompaction(PrepickedCompaction* prepicked_compaction,
                                 Env::Priority thread_pri);
   void BackgroundCallFlush(Env::Priority thread_pri);

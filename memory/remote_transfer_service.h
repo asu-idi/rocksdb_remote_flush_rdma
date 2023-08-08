@@ -45,6 +45,14 @@ class RDMATransferService : public TransferService {
     assert(service_provider_ != nullptr);
     assert(service_provider->get_buf() != nullptr);
     current_ptr = service_provider_->get_buf();
+    offset_ = 0;
+  }
+  explicit RDMATransferService(RDMAClient *service_provider, size_t offset)
+      : service_provider_(service_provider) {
+    assert(service_provider_ != nullptr);
+    assert(service_provider->get_buf() != nullptr);
+    current_ptr = service_provider_->get_buf() + offset;
+    offset_ = offset;
   }
 
   bool send(const void *buf, size_t size) override {
@@ -86,10 +94,12 @@ class RDMATransferService : public TransferService {
     current_ptr += package_size;
     return true;
   }
+  size_t get_size() { return current_ptr - (service_provider_->get_buf() + offset_);}
 
  private:
   RDMAClient *service_provider_;
   char *current_ptr = nullptr;
+  size_t offset_ = 0;
 };
 
 }  // namespace ROCKSDB_NAMESPACE
