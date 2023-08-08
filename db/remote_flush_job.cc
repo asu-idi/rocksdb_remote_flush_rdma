@@ -188,6 +188,7 @@ void RemoteFlushJob::PackLocal(TransferService* node) const {
   meta_.PackLocal(node);
   file_options_.PackLocal(node);
 
+  db_mutex_->Lock();
   assert(base_ != nullptr && base_->cfd() == cfd_);
   if (base_ != cfd_->current()) {
     size_t msg = 0;
@@ -197,6 +198,8 @@ void RemoteFlushJob::PackLocal(TransferService* node) const {
     size_t msg = 1;
     node->send(&msg, sizeof(size_t));
   }
+  db_mutex_->Unlock();
+
   // mutable_cf_options_.PackLocal(server_socket_fd);
   size_t dbname_len = dbname_.size();
   node->send(&dbname_len, sizeof(size_t));
@@ -856,7 +859,7 @@ Status RemoteFlushJob::RunRemote(
     LOG(edit_->DebugString());
     LOG(meta_.DebugString());
     LOG(table_properties_.ToString());
-
+    db_mutex_->Unlock();
     // We create connection with one memnode and send package to it
     assert(MatchMemNode(memnodes_) == Status::OK());
     // TODO(rdma): create a rdma connection with memnode, choose from memnodes_
@@ -895,12 +898,14 @@ Status RemoteFlushJob::RunRemote(
     assert(MatchRemoteWorker(port) == Status::OK());
 
     TCPTransferService transfer_service2(&local_generator_node);
+    db_mutex_->Lock();
     UnPackRemote(&transfer_service2);
+    db_mutex_->Unlock();
     // s = Status::OK();
 
     // close connection with remote worker
     assert(QuitRemoteWorker() == Status::OK());
-
+    db_mutex_->Lock();
     LOG("Run job: write l0table done");
     LOG(edit_->DebugString());
     LOG(meta_.DebugString());
