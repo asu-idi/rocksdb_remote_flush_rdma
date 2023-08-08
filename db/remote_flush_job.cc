@@ -883,6 +883,12 @@ Status RemoteFlushJob::RunRemote(
     LOG("Get available port from port list: ", port);
     transfer_service.send(&port, sizeof(int));
     transfer_service.send(local_ip.c_str(), local_ip.size());
+#ifdef ROCKSDB_RDMA
+    auto remote_seg = local_generator_rdma_client.allocate_mem_request(0, transfer_service.get_size());
+    local_generator_rdma_client.rdma_write(0, transfer_service.get_size(), 0, remote_seg.first);
+    assert(local_generator_rdma_client.poll_completion(0) == 0);
+    assert(local_generator_rdma_client.modify_mem_request(0, remote_seg, 2));
+#endif
 
     // close connection with memnode
     assert(QuitMemNode().ok());
@@ -890,6 +896,7 @@ Status RemoteFlushJob::RunRemote(
     // s = WriteLevel0Table();
     // assert(s == Status::OK());
 
+#ifndef ROCKSDB_RDMA
     // We receive some metadata directly from remote worker
     // Or maybe we could receive from memnode
     assert(MatchRemoteWorker(port) == Status::OK());
@@ -900,6 +907,7 @@ Status RemoteFlushJob::RunRemote(
 
     // close connection with remote worker
     assert(QuitRemoteWorker() == Status::OK());
+#endif
 
     LOG("Run job: write l0table done");
     LOG(edit_->DebugString());
@@ -989,6 +997,7 @@ Status RemoteFlushJob::QuitMemNode() {
   } else {
     // TODO(rdma): close connection or do nothing, use
     // local_generator_rdma_client.
+    local_generator_rdma_client.disconnect_request(0);
     return Status::OK();
   }
 }
@@ -997,11 +1006,8 @@ Status RemoteFlushJob::MatchMemNode(
   int choosen = (int)(rand() % ip_port_list->size());
 #ifdef ROCKSDN_RDMA
   // TODO(rdma): create one RDMA connection.
-  local_generator_rdma_client.config.server_name =
-      (*ip_port_list)[choosen].first;
-  local_generator_rdma_client.port = (*ip_port_list)[choosen].second;
-  local_generator_rdma_client.resources_create(1ull << 27, 1);
-  local_generator_rdma_client.connect_qp(0);
+  local_generator_rdma_client.resources_create(1ull << 27);
+  local_generator_rdma_client.sock_connect((*ip_port_list)[choosen].first, (*ip_port_list)[choosen].first);
   local_generator_rdma_client.is_init_ = true;
 #else
 
