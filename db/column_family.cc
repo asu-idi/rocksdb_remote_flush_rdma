@@ -747,13 +747,14 @@ void ColumnFamilyData::PackRemote(TransferService* node) const {
   LOG("ColumnFamilyData::PackRemote");
   assert(internal_stats_ != nullptr);
   internal_stats_->PackRemote(node);
+  ioptions_.PackRemote(node);
   LOG("ColumnFamilyData::PackRemote done.");
 }
 void ColumnFamilyData::UnPackRemote(TransferService* node) {
   auto* install_info = new ColumnFamilyData::cfd_pack_remote_data;
   LOG("ColumnFamilyData::UnPackRemote");
   internal_stats_->UnPackRemote(node);
-
+  ioptions_.UnPackRemote(node);
   LOG("ColumnFamilyData::UnPackRemote done.");
 }
 

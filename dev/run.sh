@@ -12,12 +12,13 @@ if [[ "$1" == "1" ]]; then
     rm -rf .cmake
 fi
 cmake ..
-make rdma_server -j 18
-make remote_flush_worker -j 18
-make db_remote_flush_test -j 18
-make remote_flush_test_server -j 18
-make rdma_server -j 18
-make tcp_server -j 18
+make rdma_server -j $(nproc)
+make remote_flush_worker -j $(nproc)
+make db_remote_flush_test -j $(nproc)
+make remote_flush_test_server -j $(nproc)
+make rdma_server -j $(nproc)
+make tcp_server -j $(nproc)
+make db_bench -j $(nproc)
 
 cd $PROJECT_ROOT/dev
 
@@ -27,6 +28,7 @@ cp ../build/db_remote_flush_test ./
 cp ../build/remote_flush_worker ./
 cp ../build/rdma_server ./
 cp ../build/remote_flush_test_server ./
+cp ../build/db_bench ./
 
 rm Log-*
 rm -rf memtable_result/

@@ -570,7 +570,7 @@ Status RemoteBuildTable(
     CompactionIterator c_iter(
         iter, ucmp, &merge, kMaxSequenceNumber, &snapshots,
         earliest_write_conflict_snapshot, job_snapshot, snapshot_checker, env,
-        ShouldReportDetailedTime(env, ioptions.stats),
+        ShouldReportDetailedTime(env, ioptions.stats),  // prefetch
         true /* internal key corruption is not ok */, range_del_agg.get(),
         nullptr, ioptions.allow_data_in_errors,
         ioptions.enforce_single_del_contracts,

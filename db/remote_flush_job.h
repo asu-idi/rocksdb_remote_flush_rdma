@@ -45,6 +45,7 @@
 #include "rocksdb/env.h"
 #include "rocksdb/listener.h"
 #include "rocksdb/memtablerep.h"
+#include "rocksdb/statistics.h"
 #include "rocksdb/status.h"
 #include "rocksdb/transaction_log.h"
 #include "table/scoped_arena_iterator.h"
@@ -244,6 +245,7 @@ class RemoteFlushJob {
   const std::string full_history_ts_low_;
   // BlobFileCompletionCallback* blob_callback_;
 
+  Statistics* stats_;
   // reference to the seqno_time_mapping_ in db_impl.h, not safe to read without
   // db mutex
   const SeqnoToTimeMapping& db_impl_seqno_time_mapping_;

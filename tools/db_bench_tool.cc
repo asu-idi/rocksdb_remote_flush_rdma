@@ -1234,6 +1234,14 @@ DEFINE_uint64(
     "num_file_reads_for_auto_readahead indicates after how many sequential "
     "reads into that file internal auto prefetching should be start.");
 
+DEFINE_uint32(use_remote_flush,
+              ROCKSDB_NAMESPACE::Options().server_remote_flush,
+              "Use remote flush, 0 means disable, 1 means enable");
+
+DEFINE_string(memnode_ip, "", "memnode ip");
+DEFINE_uint32(memnode_port, 0, "memnode port");
+DEFINE_string(local_ip, "", "local ip");
+
 static enum ROCKSDB_NAMESPACE::CompressionType StringToCompressionType(
     const char* ctype) {
   assert(ctype);
@@ -4133,6 +4141,8 @@ class Benchmark {
         FLAGS_level_compaction_dynamic_level_bytes;
     options.max_bytes_for_level_multiplier =
         FLAGS_max_bytes_for_level_multiplier;
+    options.server_remote_flush = FLAGS_use_remote_flush;
+
     Status s =
         CreateMemTableRepFactory(config_options, &options.memtable_factory);
     if (!s.ok()) {
@@ -4688,6 +4698,14 @@ class Benchmark {
       }
       delete iter;
       FLAGS_num = keys_.size();
+    }
+
+    if (FLAGS_use_remote_flush) {
+      size_t port = FLAGS_memnode_port;
+      std::string ip = FLAGS_memnode_ip;
+      db_.db->register_memnode(ip, port);
+      std::string local_ip = FLAGS_local_ip;
+      db_.db->register_local_ip(local_ip);
     }
   }
 
@@ -8579,4 +8597,3 @@ int db_bench_tool(int argc, char** argv) {
   return 0;
 }
 }  // namespace ROCKSDB_NAMESPACE
-#endif
