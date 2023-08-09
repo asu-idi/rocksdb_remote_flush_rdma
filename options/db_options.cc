@@ -811,9 +811,11 @@ void* ImmutableDBOptions::UnPackLocal(TransferService* node) {
   DBOptions db_options = DBOptions();
   ConfigOptions config_options;
   std::vector<ColumnFamilyDescriptor> loaded_cf_descs;
-  Status ret = LoadOptionsFromFile(config_options, file_name, &db_options,
-                                   &loaded_cf_descs);
-  assert(ret.ok());
+  Status ret = Status::Busy();
+  while (!ret.ok()) {
+    ret = LoadOptionsFromFile(config_options, file_name, &db_options,
+                              &loaded_cf_descs);
+  }
   auto* immutable_dboptions = new ImmutableDBOptions();
   *immutable_dboptions = BuildImmutableDBOptions(db_options);
   LOG("UnPackaging ImmutableDBOptions");

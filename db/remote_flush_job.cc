@@ -988,6 +988,11 @@ Status RemoteFlushJob::RunRemote(
 
 Status RemoteFlushJob::MatchRemoteWorker(int port) {
   LOG_CERR("waiting to connect with remote flush worker on localhost:", port);
+#ifdef ROCKSDB_RDMA
+  local_generator_rdma_client.~RDMAClient();
+#else
+  local_generator_node.~TCPNode();
+#endif
   memset(reinterpret_cast<void*>(&local_generator_node), 0, sizeof(TCPNode));
   if ((local_generator_node.connection_info_.listen_sockfd =
            socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -1021,6 +1026,7 @@ Status RemoteFlushJob::MatchRemoteWorker(int port) {
     return Status::IOError("accept failed");
   }
   close(local_generator_node.connection_info_.listen_sockfd);
+  local_generator_node.connection_info_.listen_sockfd = 0;
   LOG("create connection with remote flush worker, ready to receive data");
   return Status::OK();
 }
@@ -1031,6 +1037,7 @@ Status RemoteFlushJob::QuitMemNode() {
     local_generator_node.send(bye, strlen(bye));
     LOG("server sent: ", strlen(bye), ' ', bye);
     close(local_generator_node.connection_info_.client_sockfd);
+    local_generator_node.connection_info_.client_sockfd = 0;
     return Status::OK();
   } else {
     // TODO(rdma): close connection or do nothing, use
@@ -1051,7 +1058,7 @@ Status RemoteFlushJob::MatchMemNode(
   local_generator_rdma_client.connect_qp(0);
   local_generator_rdma_client.is_init_ = true;
 #else
-
+  local_generator_node.~TCPNode();
   memset(reinterpret_cast<void*>(&local_generator_node), 0, sizeof(TCPNode));
   if ((local_generator_node.connection_info_.client_sockfd =
            socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -1090,6 +1097,7 @@ Status RemoteFlushJob::QuitRemoteWorker() {
   local_generator_node.receive(&mem, strlen(bye));
   assert(strncmp(reinterpret_cast<char*>(mem), bye, strlen(bye)) == 0);
   close(local_generator_node.connection_info_.client_sockfd);
+  local_generator_node.connection_info_.client_sockfd = 0;
   free(mem);
   return Status::OK();
 }
