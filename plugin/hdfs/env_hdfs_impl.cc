@@ -412,7 +412,7 @@ HdfsFileSystem::HdfsFileSystem(const std::shared_ptr<FileSystem>& base,
 HdfsFileSystem::~HdfsFileSystem() {
   if (fileSys_ != nullptr) {
     fprintf(stderr, "Destroying HdfsFileSystem(%s)\n", fsname_.c_str());
-    hdfsDisconnect(fileSys_);
+    // hdfsDisconnect(fileSys_);
   }
 }
 

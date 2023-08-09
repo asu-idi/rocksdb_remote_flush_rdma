@@ -379,7 +379,7 @@ class ColumnFamilyData {
 
   InternalStats* internal_stats() { return internal_stats_.get(); }
 
-  MemTableList* imm() { return imm_; }
+  MemTableList* imm() { return &imm_; }
   MemTable* mem() { return mem_; }
 
   bool IsEmpty() {
@@ -618,7 +618,7 @@ class ColumnFamilyData {
   WriteBufferManager* write_buffer_manager_;
 
   MemTable* mem_;
-  MemTableList* imm_;  // shared
+  MemTableList imm_;
   SuperVersion* super_version_;
 
   // An ordinal representing the current SuperVersion. Updated by
