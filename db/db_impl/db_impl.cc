@@ -515,7 +515,7 @@ Status DBImpl::ListenAndScheduleFlushJob(int port) {
     LOG("bind failed");
     return Status::IOError("bind failed");
   }
-  if (listen(server_fd, 3) < 0) {
+  if (listen(server_fd, 10) < 0) {
     LOG("listen failed");
     return Status::IOError("listen failed");
   }

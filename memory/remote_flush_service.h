@@ -13,6 +13,7 @@
 #include <linux/types.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 #include <atomic>
 #include <cassert>
@@ -85,7 +86,12 @@ class TCPNode {
  public:
   explicit TCPNode(sockaddr_in client_addr, int32_t client_sockfd)
       : connection_info_{client_addr, client_sockfd, 0} {}
-  ~TCPNode() = default;
+  ~TCPNode() {
+    if (connection_info_.listen_sockfd > 0)
+      close(connection_info_.listen_sockfd);
+    if (connection_info_.client_sockfd > 0)
+      close(connection_info_.client_sockfd);
+  }
   bool send(const void *buf, size_t size);
 
   // set address & length to avoid unnecessary copy
@@ -224,15 +230,17 @@ class RemoteFlushJobPD {
   bool closetcp();
   void register_flush_job_generator(int fd, const TCPNode *node) {
     std::lock_guard<std::mutex> lock(mtx_);
+    if (flush_job_generators_.find(fd) != flush_job_generators_.end())
+      assert(false);
     flush_job_generators_.insert(
         std::make_pair(fd, const_cast<TCPNode *>(node)));
   }
-  void unregister_flush_job_generator(int fd) {
+  TCPNode *unregister_flush_job_generator(int fd) {
     std::lock_guard<std::mutex> lock(mtx_);
     assert(flush_job_generators_.find(fd) != flush_job_generators_.end());
     TCPNode *node = flush_job_generators_.at(fd);
     flush_job_generators_.erase(fd);
-    delete node;
+    return node;
   }
   void register_flush_job_executor(const std::string &ip, int port) {
     std::lock_guard<std::mutex> lock(mtx_);
@@ -260,7 +268,7 @@ class RemoteFlushJobPD {
   struct flushjob_package {
     std::vector<std::pair<void *, size_t>> package;
   };
-  flushjob_package *receive_remote_flush_job(int client_sockfd);
+  flushjob_package *receive_remote_flush_job(TCPNode *generator_node);
   TCPNode *choose_flush_job_executor();
   void setfree_flush_job_executor(TCPNode *worker_node);
   void send_remote_flush_job(flushjob_package *package, TCPNode *worker_node);
