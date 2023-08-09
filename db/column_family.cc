@@ -573,9 +573,9 @@ ColumnFamilyData::ColumnFamilyData(
           cf_options.table_factory->IsDeleteRangeSupported()),
       write_buffer_manager_(write_buffer_manager),
       mem_(nullptr),
-      imm_(new MemTableList(ioptions_.min_write_buffer_number_to_merge,
-                            ioptions_.max_write_buffer_number_to_maintain,
-                            ioptions_.max_write_buffer_size_to_maintain)),
+      imm_(ioptions_.min_write_buffer_number_to_merge,
+           ioptions_.max_write_buffer_number_to_maintain,
+           ioptions_.max_write_buffer_size_to_maintain),
       super_version_(nullptr),
       super_version_number_(0),
       local_sv_(new ThreadLocalPtr(&SuperVersionUnrefHandle)),
@@ -723,12 +723,10 @@ ColumnFamilyData::~ColumnFamilyData() {
     delete mem_->Unref();
   }
   autovector<MemTable*> to_delete;
-  imm_->current()->Unref(&to_delete);
+  imm_.current()->Unref(&to_delete);
   for (MemTable* m : to_delete) {
     delete m;
   }
-  LOG("cfd delete MemtableList");
-  if (imm_ != nullptr) delete imm_;
 
   if (db_paths_registered_) {
     // TODO(cc): considering using ioptions_.fs, currently some tests rely on
@@ -1564,14 +1562,14 @@ void ColumnFamilyData::InstallSuperVersion(
     const MutableCFOptions& mutable_cf_options) {
   SuperVersion* new_superversion = sv_context->new_superversion.release();
   new_superversion->mutable_cf_options = mutable_cf_options;
-  new_superversion->Init(this, mem_, imm_->current(), current_);
+  new_superversion->Init(this, mem_, imm_.current(), current_);
   SuperVersion* old_superversion = super_version_;
   super_version_ = new_superversion;
   ++super_version_number_;
   super_version_->version_number = super_version_number_;
   if (old_superversion == nullptr || old_superversion->current != current() ||
       old_superversion->mem != mem_ ||
-      old_superversion->imm != imm_->current()) {
+      old_superversion->imm != imm_.current()) {
     // Should not recalculate slow down condition if nothing has changed,
     // since currently RecalculateWriteStallConditions() treats it as
     // further slowing down is needed.
