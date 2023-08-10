@@ -245,10 +245,11 @@ class RDMAServer : public RDMANode {
   struct executor_info{
     bool status;
     std::queue<std::pair<size_t, size_t>> flush_job_queue;
+    std::pair<size_t, size_t> current_job;
   };
  public:
   RDMAServer();
-  void service(int idx);
+  bool service(int idx);
 
  private:
   void allocate_mem_service(int idx);
@@ -261,7 +262,7 @@ class RDMAServer : public RDMANode {
   std::vector<std::thread*> threads;
   std::unordered_map<int, executor_info> executors_;
   void after_connect_qp(int idx) override {
-    auto ser = [this, idx] {while(true) this->service(idx);};
+    auto ser = [this, idx] {while(true) if(!this->service(idx)) break;};
     threads.push_back(new std::thread(ser));
     threads.back()->detach();
   }
