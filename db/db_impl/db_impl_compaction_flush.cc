@@ -24,15 +24,15 @@
 #include "db/version_edit.h"
 #include "file/sst_file_manager_impl.h"
 #include "logging/logging.h"
-#include "memory/remote_flush_service.h"
 #include "monitoring/iostats_context_imp.h"
 #include "monitoring/perf_context_imp.h"
 #include "monitoring/thread_status_updater.h"
 #include "monitoring/thread_status_util.h"
+#include "rocksdb/logger.hpp"
+#include "rocksdb/remote_flush_service.h"
 #include "test_util/sync_point.h"
 #include "util/cast_util.h"
 #include "util/concurrent_task_limiter_impl.h"
-#include "util/logger.hpp"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -270,11 +270,6 @@ Status DBImpl::FlushMemTableToOutputFile(
     TEST_SYNC_POINT_CALLBACK(
         "DBImpl::FlushMemTableToOutputFile:AfterPickMemtables", &flush_job);
     LOG("flush job pick all Memtable finish");
-    for (auto* memtable : flush_job->GetMemTables()) {
-      LOG("FlushJob pick memtable:", memtable->GetID(),
-          " size=", memtable->get_data_size(),
-          " file-number=", memtable->GetFileNumber());
-    }
     // may temporarily unlock and lock the mutex.
     NotifyOnFlushBegin(cfd, &file_meta, mutable_cf_options, job_context->job_id,
                        flush_reason);
@@ -441,12 +436,6 @@ Status DBImpl::FlushMemTableToOutputFile(
     }
     TEST_SYNC_POINT_CALLBACK(
         "DBImpl::FlushMemTableToOutputFile:AfterPickMemtables", &flush_job);
-    LOG("flush job pick all Memtable finish");
-    for (auto* memtable : flush_job.GetMemTables()) {
-      LOG("FlushJob pick memtable:", memtable->GetID(),
-          " size=", memtable->get_data_size(),
-          " file-number=", memtable->GetFileNumber());
-    }
     // may temporarily unlock and lock the mutex.
     NotifyOnFlushBegin(cfd, &file_meta, mutable_cf_options, job_context->job_id,
                        flush_reason);

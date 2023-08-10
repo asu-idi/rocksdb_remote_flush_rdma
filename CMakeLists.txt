@@ -33,10 +33,7 @@
 # 4. make -j
 
 cmake_minimum_required(VERSION 3.10)
-set(CMAKE_CXX_COMPILER g++)
-set(CMAKE_C_COMPILER gcc)
-message(STATUS "cxx_compiler: ${CMAKE_CXX_COMPILER}")
-message(STATUS "c_compiler: ${CMAKE_C_COMPILER}")
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake/modules/")
 include(ReadVersion)
 include(GoogleTest)
@@ -193,8 +190,8 @@ if(MSVC)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /Zi /nologo /EHsc /GS /Gd /GR /GF /fp:precise /Zc:wchar_t /Zc:forScope /errorReport:queue")
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /FC /d2Zi+ /W4 /wd4127 /wd4800 /wd4996 /wd4351 /wd4100 /wd4204 /wd4324")
 else()
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w -pthread")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-unused-parameter -Wno-unused-variable -Woverloaded-virtual -Wnon-virtual-dtor -Wno-missing-field-initializers -Wno-strict-aliasing -Wno-invalid-offsetof")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -W -Wextra -Wall -pthread")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wsign-compare -Wshadow -Wno-unused-parameter -Wno-unused-variable -Woverloaded-virtual -Wnon-virtual-dtor -Wno-missing-field-initializers -Wno-strict-aliasing -Wno-invalid-offsetof")
   if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
     set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wstrict-prototypes")
   endif()
@@ -367,10 +364,10 @@ if (NOT WITH_PERF_CONTEXT)
   add_definitions(-DNPERF_CONTEXT)
 endif()
 
-option(FAIL_ON_WARNINGS "Treat compile warnings as errors" OFF)
+option(FAIL_ON_WARNINGS "Treat compile warnings as errors" ON)
 if(FAIL_ON_WARNINGS)
   if(MSVC)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /WX")
   else() # assume GCC
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Werror")
   endif()
@@ -706,7 +703,6 @@ set(SOURCES
         db/compaction/sst_partitioner.cc
         db/compaction/subcompaction_state.cc
         db/convenience.cc
-        db/retrieve_info.cc
         db/db_filesnapshot.cc
         db/db_impl/compacted_db_impl.cc
         db/db_impl/db_impl.cc
@@ -793,7 +789,6 @@ set(SOURCES
         memory/jemalloc_nodump_allocator.cc
         memory/memkind_kmem_allocator.cc
         memory/memory_allocator.cc
-        memory/shared_package.cc
         memory/remote_flush_service.cc
         memtable/alloc_tracker.cc
         memtable/hash_linklist_rep.cc
@@ -914,7 +909,6 @@ set(SOURCES
         util/thread_local.cc
         util/threadpool_imp.cc
         util/xxhash.cc
-        dev/util/socket_api.cc
         utilities/agg_merge/agg_merge.cc
         utilities/backup/backup_engine.cc
         utilities/blob_db/blob_compaction_filter.cc
@@ -1098,7 +1092,7 @@ set(ROCKSDB_SHARED_LIB rocksdb-shared${ARTIFACT_SUFFIX})
 if(WIN32)
   set(SYSTEM_LIBS ${SYSTEM_LIBS} shlwapi.lib rpcrt4.lib)
 else()
-  set(SYSTEM_LIBS ${CMAKE_THREAD_LIBS_INIT})
+  set(SYSTEM_LIBS ${CMAKE_THREAD_LIBS_INIT} -lstdc++ -libverbs)
 endif()
 
 set(ROCKSDB_PLUGIN_EXTERNS "")
@@ -1162,12 +1156,12 @@ configure_file(util/build_version.cc.in ${BUILD_VERSION_CC} @ONLY)
 
 add_library(${ROCKSDB_STATIC_LIB} STATIC ${SOURCES} ${BUILD_VERSION_CC})
 target_link_libraries(${ROCKSDB_STATIC_LIB} PRIVATE
-  ${THIRDPARTY_LIBS} ${SYSTEM_LIBS} -lstdc++ -libverbs)
+  ${THIRDPARTY_LIBS} ${SYSTEM_LIBS})
 
 if(ROCKSDB_BUILD_SHARED)
   add_library(${ROCKSDB_SHARED_LIB} SHARED ${SOURCES} ${BUILD_VERSION_CC})
   target_link_libraries(${ROCKSDB_SHARED_LIB} PRIVATE
-    ${THIRDPARTY_LIBS} ${SYSTEM_LIBS} -lstdc++ -libverbs)
+    ${THIRDPARTY_LIBS} ${SYSTEM_LIBS})
 
   if(WIN32)
     set_target_properties(${ROCKSDB_SHARED_LIB} PROPERTIES
@@ -1299,7 +1293,7 @@ if(NOT WIN32 OR ROCKSDB_INSTALL_ON_WINDOWS)
 endif()
 
 option(WITH_ALL_TESTS "Build all test, rather than a small subset" ON)
-# set(WITH_TESTS false)
+
 if(WITH_TESTS OR WITH_BENCHMARK_TOOLS)
   add_subdirectory(third-party/gtest-1.8.1/fused-src/gtest)
   add_library(testharness STATIC
@@ -1354,7 +1348,6 @@ if(WITH_TESTS)
         db/db_dynamic_level_test.cc
         db/db_encryption_test.cc
         db/db_flush_test.cc
-        # db/db_remote_flush_test.cc
         db/db_inplace_update_test.cc
         db/db_io_failure_test.cc
         db/db_iter_test.cc
@@ -1391,8 +1384,7 @@ if(WITH_TESTS)
         db/fault_injection_test.cc
         db/file_indexer_test.cc
         db/filename_test.cc
-        # db/flush_job_test.cc
-        # db/remote_flush_job_test.cc
+        db/flush_job_test.cc
         db/import_column_family_test.cc
         db/listener_test.cc
         db/log_test.cc
@@ -1651,7 +1643,6 @@ endif()
 
 option(WITH_TRACE_TOOLS "build with trace tools" ON)
 if(WITH_TRACE_TOOLS)
-  message(STATUS "built with trace tools")
   add_executable(block_cache_trace_analyzer${ARTIFACT_SUFFIX}
     tools/block_cache_analyzer/block_cache_trace_analyzer_tool.cc)
   target_link_libraries(block_cache_trace_analyzer${ARTIFACT_SUFFIX}

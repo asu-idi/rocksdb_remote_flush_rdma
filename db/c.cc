@@ -15,8 +15,6 @@
 #include <unordered_set>
 #include <vector>
 
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
 #include "port/port.h"
 #include "rocksdb/advanced_cache.h"
 #include "rocksdb/compaction_filter.h"
@@ -32,6 +30,8 @@
 #include "rocksdb/options.h"
 #include "rocksdb/perf_context.h"
 #include "rocksdb/rate_limiter.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/slice_transform.h"
 #include "rocksdb/statistics.h"
 #include "rocksdb/status.h"
@@ -486,10 +486,6 @@ struct rocksdb_env_t {
 
 struct rocksdb_slicetransform_t : public SliceTransform {
  public:
-  void PackLocal(char*& buf) const override { assert(false); }
-  void PackLocal(rocksdb::TransferService* node) const override {
-    assert(false);
-  }
   void* state_;
   void (*destructor_)(void*);
   const char* (*name_)(void*);

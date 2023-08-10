@@ -23,7 +23,6 @@
 #include "util/hash.h"
 #include "util/random.h"
 #include "util/rate_limiter.h"
-#include "util/socket_api.hpp"
 #include "util/string_util.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -440,14 +439,6 @@ class MockWritableFile : public FSWritableFile {
 };
 
 class MockEnvDirectory : public FSDirectory {
- public:
-  void PackLocal(int sockfd) const override {
-    LOG("MockEnvDirectory::PackLocal");
-    size_t msg = 0x04;
-    write(sockfd, &msg, sizeof(msg));
-    read_data(sockfd, &msg, sizeof(msg));
-  }
-
  public:
   IOStatus Fsync(const IOOptions& /*options*/,
                  IODebugContext* /*dbg*/) override {

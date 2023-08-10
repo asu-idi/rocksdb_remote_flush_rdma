@@ -44,17 +44,6 @@
 #include <assert.h>
 #include <stdlib.h>
 
-#include <chrono>
-#include <cstdlib>
-#include <thread>
-
-#ifdef __linux__
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <unistd.h>
-#endif  //__linux__
-#include <cxxabi.h>
-
 #include <algorithm>
 #include <atomic>
 #include <cstddef>
@@ -65,18 +54,16 @@
 
 #include "db/memtable.h"
 #include "memory/allocator.h"
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
 #include "port/likely.h"
 #include "port/port.h"
 #include "rocksdb/comparator.h"
 #include "rocksdb/iterator.h"
+#include "rocksdb/logger.hpp"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/slice.h"
 #include "util/coding.h"
-#include "util/logger.hpp"
-#include "util/macro.hpp"
 #include "util/random.h"
-#include "util/socket_api.hpp"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -86,8 +73,6 @@ class InlineSkipList;
 template <class Comparator>
 class ReadOnlyInlineSkipList {
  public:
-  void PackLocal(char*& buf) const;
-  static void* UnPackLocal(char*& buf);
   void PackLocal(TransferService* node) const;
   static void* UnPackLocal(TransferService* node);
   void check_data() const;
@@ -182,50 +167,6 @@ inline void ReadOnlyInlineSkipList<Comparator>::PackLocal(
 }
 
 template <class Comparator>
-inline void* ReadOnlyInlineSkipList<Comparator>::UnPackLocal(char*& buf) {
-  LOG("unpack ReadOnlyInlineSkipList");
-  // void* local_cmp_ = MemTable::KeyComparator::UnPackLocal(sockfd);
-  int64_t total_len = 0;
-  UNPACK_FROM_BUF(buf, &total_len, sizeof(total_len));
-  void* data = malloc(total_len);
-  UNPACK_FROM_BUF(buf, data, total_len);
-  void* mem = malloc(sizeof(ReadOnlyInlineSkipList));
-  auto* local_readonly_skiplistrep =
-      reinterpret_cast<ReadOnlyInlineSkipList*>(mem);
-  UNPACK_FROM_BUF(buf, mem, sizeof(ReadOnlyInlineSkipList));
-  // local_readonly_skiplistrep->compare_ =
-  //     *reinterpret_cast<Comparator>(local_cmp_);
-  // char* hack_ptr =
-  // reinterpret_cast<char*>(local_readonly_skiplistrep->data_); hack_ptr -=
-  // sizeof(int*); memcpy(hack_ptr, &local_cmp_,
-  // sizeof(MemTable::KeyComparator*));
-
-  // memcpy(const_cast<void*>(reinterpret_cast<const void*>(
-  //            &const_cast<Comparator>(local_readonly_skiplistrep->compare_))),
-  //        local_cmp_, sizeof(MemTable::KeyComparator));
-  LOG("checkpoint1");
-  // memcpy(reinterpret_cast<void*>(const_cast<NONE>(
-  //            const_cast<Comparator>(local_readonly_skiplistrep->compare_))),
-  //        reinterpret_cast<void*>(const_cast<Comparator>(local_cmp_)),
-  //        sizeof(Comparator));
-  local_readonly_skiplistrep->data_ = data;
-  local_readonly_skiplistrep->total_len_ = total_len;
-  LOG("unpack ReadOnlyInlineSkipList done");
-  return mem;
-}
-
-template <class Comparator>
-inline void ReadOnlyInlineSkipList<Comparator>::PackLocal(char*& buf) const {
-  LOG("pack ReadOnlyInlineSkipList");
-  // compare_.PackLocal(sockfd);
-  PACK_TO_BUF(&total_len_, buf, sizeof(total_len_));
-  PACK_TO_BUF(data_, buf, total_len_);
-  PACK_TO_BUF(reinterpret_cast<const void*>(this), buf,
-              sizeof(ReadOnlyInlineSkipList<Comparator>));
-  LOG("pack ReadOnlyInlineSkipList::Comparator done");
-}
-
-template <class Comparator>
 inline ReadOnlyInlineSkipList<Comparator>::Iterator::Iterator(
     const ReadOnlyInlineSkipList* list) {
   SetList(list);
@@ -314,8 +255,6 @@ ReadOnlyInlineSkipList<Comparator>::ReadOnlyInlineSkipList(
   }
   data_ = malloc(total_len + 2 * sizeof(size_t));
   total_len_ = sizeof(size_t) * 2 + total_len;
-  std::chrono::steady_clock::time_point start_clone =
-      std::chrono::steady_clock::now();
   char* data_ptr = reinterpret_cast<char*>(data_);
   memcpy(data_ptr, &magic, sizeof(size_t));
   data_ptr += sizeof(size_t);
@@ -332,11 +271,6 @@ ReadOnlyInlineSkipList<Comparator>::ReadOnlyInlineSkipList(
     iter.Next();
   }
   memcpy(data_ptr, &magic, sizeof(size_t));
-  std::chrono::steady_clock::time_point end_clone =
-      std::chrono::steady_clock::now();
-  LOG("clone time: ", std::chrono::duration_cast<std::chrono::milliseconds>(
-                          end_clone - start_clone)
-                          .count());
   LOG("construct ReadOnlyInlineSkipList done");
 }
 
@@ -366,8 +300,8 @@ class InlineSkipList {
   // in the allocator must remain allocated for the lifetime of the
   // skiplist object.
   explicit InlineSkipList(Comparator cmp, Allocator* allocator,
-                          int32_t max_height = 12, int32_t branching_factor = 4,
-                          bool is_shared = false);
+                          int32_t max_height = 12,
+                          int32_t branching_factor = 4);
   // No copying allowed
   InlineSkipList(const InlineSkipList&) = delete;
   InlineSkipList& operator=(const InlineSkipList&) = delete;
@@ -938,8 +872,7 @@ template <class Comparator>
 InlineSkipList<Comparator>::InlineSkipList(const Comparator cmp,
                                            Allocator* allocator,
                                            int32_t max_height,
-                                           int32_t branching_factor,
-                                           bool is_shared)
+                                           int32_t branching_factor)
     : kMaxHeight_(static_cast<uint16_t>(max_height)),
       kBranching_(static_cast<uint16_t>(branching_factor)),
       kScaledInverseBranching_((Random::kMaxNext + 1) / kBranching_),

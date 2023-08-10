@@ -13,8 +13,8 @@
 #include <string>
 #include <vector>
 
-#include "memory/remote_transfer_service.h"
 #include "rocksdb/customizable.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/status.h"
 
 namespace ROCKSDB_NAMESPACE {

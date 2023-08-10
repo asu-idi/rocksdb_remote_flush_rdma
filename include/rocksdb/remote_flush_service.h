@@ -32,7 +32,7 @@
 #include <utility>
 #include <vector>
 
-#include "util/thread_local.h"
+#include "rocksdb/status.h"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -68,15 +68,13 @@ class RegularMemNode {
   }
   void free(char *addr) {
     std::lock_guard<std::mutex> lock(mtx_);
-    auto it = std::find_if(mempool_.begin(), mempool_.end(),
-                           [addr](const std::pair<void *, size_t> &p) {
-                             return p.first == reinterpret_cast<void *>(addr);
-                           });
-    if (it != mempool_.end())
-      ::free(addr);
-    else
-      assert(false);
-    mempool_.erase(it);
+    for (auto it = mempool_.begin(); it != mempool_.end(); ++it) {
+      if (it->first == addr) {
+        ::free(addr);
+        mempool_.erase(it);
+        break;
+      }
+    }
   }
 };
 
@@ -242,7 +240,8 @@ class RemoteFlushJobPD {
     flush_job_generators_.erase(fd);
     return node;
   }
-  void register_flush_job_executor(const std::string &ip, int port) {
+  void register_flush_job_executor([[maybe_unused]] const std::string &ip,
+                                   int port) {
     std::lock_guard<std::mutex> lock(mtx_);
 
     struct sockaddr_in serv_addr;

@@ -34,12 +34,15 @@ class Singleton : public Noncopyable::Noncopyable {
   }
 };
 }  // namespace Singleton
-#define LOG(...)                                                     \
+#define LOG(...)
+/*                                                     \
   Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output( \
       std::this_thread::get_id(), __FILE__, __LINE__, __FUNCTION__,  \
       __VA_ARGS__);
-
-#define LOG_CERR(...)                                                     \
+*/
+#define LOG_CERR(...)
+/*                                                     \
   Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output2cerr( \
       std::this_thread::get_id(), __FILE__, __LINE__, __FUNCTION__,       \
       __VA_ARGS__);
+*/

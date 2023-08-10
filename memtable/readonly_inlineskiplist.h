@@ -11,26 +11,25 @@
 #include "db/memtable.h"
 #include "memory/allocator.h"
 #include "memory/arena.h"
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
 #include "memtable/inlineskiplist.h"
 #include "rocksdb/iterator.h"
+#include "rocksdb/logger.hpp"
 #include "rocksdb/memtablerep.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/slice_transform.h"
 #include "rocksdb/utilities/object_registry.h"
 #include "rocksdb/utilities/options_type.h"
-#include "util/logger.hpp"
-#include "util/socket_api.hpp"
 #include "util/string_util.h"
 
 namespace ROCKSDB_NAMESPACE {
 class ReadOnlySkipListRep : public MemTableRep {
  public:
+  using MemTableRep::PackLocal;
   static void PackLocal(
       TransferService* node,
       const ReadOnlyInlineSkipList<const MemTableRep::KeyComparator&>*
           readonly_skiplistrep) {
-    int64_t msg = 0;
     readonly_skiplistrep->PackLocal(node);
     auto readonly_skiplistrep_ = new ReadOnlySkipListRep(readonly_skiplistrep);
     node->send(reinterpret_cast<void*>(readonly_skiplistrep_),
@@ -39,7 +38,6 @@ class ReadOnlySkipListRep : public MemTableRep {
   }
 
   static void* UnPackLocal(TransferService* node) {
-    int64_t msg = 0;
     void* readonly_inline_skiplistrep =
         ReadOnlyInlineSkipList<const MemTableRep::KeyComparator&>::UnPackLocal(
             node);
@@ -61,34 +59,6 @@ class ReadOnlySkipListRep : public MemTableRep {
     return mem;
   }
 
-  static void PackLocal(
-      char*& buf,
-      const ReadOnlyInlineSkipList<const MemTableRep::KeyComparator&>*
-          readonly_skiplistrep) {
-    int64_t msg = 0;
-    readonly_skiplistrep->PackLocal(buf);
-    auto readonly_skiplistrep_ = new ReadOnlySkipListRep(readonly_skiplistrep);
-    PACK_TO_BUF(reinterpret_cast<void*>(readonly_skiplistrep_), buf,
-                sizeof(ReadOnlySkipListRep));
-  }
-
-  static void* UnPackLocal(char*& buf) {
-    int64_t msg = 0;
-    void* readonly_inline_skiplistrep =
-        ReadOnlyInlineSkipList<const MemTableRep::KeyComparator&>::UnPackLocal(
-            buf);
-    auto* local_readonly_skiplistrep = new ReadOnlySkipListRep(nullptr);
-    void* mem = reinterpret_cast<void*>(local_readonly_skiplistrep);
-    void* mem2 = malloc(sizeof(ReadOnlySkipListRep));
-    UNPACK_FROM_BUF(buf, mem2, sizeof(ReadOnlySkipListRep));
-
-    local_readonly_skiplistrep->read_only_skip_list_ = reinterpret_cast<
-        const ReadOnlyInlineSkipList<const MemTableRep::KeyComparator&>*>(
-        readonly_inline_skiplistrep);
-    free(mem2);
-    return mem;
-  }
-
  private:
   const ReadOnlyInlineSkipList<const MemTableRep::KeyComparator&>*
       read_only_skip_list_;
@@ -101,20 +71,33 @@ class ReadOnlySkipListRep : public MemTableRep {
           readonly_skiplistrep)
       : MemTableRep(nullptr), read_only_skip_list_(readonly_skiplistrep) {}
 
-  KeyHandle Allocate(const size_t len, char** buf) override { assert(false); }
-
-  void Insert(KeyHandle handle) override { assert(false); }
-  bool InsertKey(KeyHandle) override { assert(false); }
-  void InsertWithHint(KeyHandle, void**) override { assert(false); }
-  void InsertWithHintConcurrently(KeyHandle handle, void** hint) override {
+  KeyHandle Allocate(const size_t, char**) override {
     assert(false);
+    return KeyHandle{};
   }
-  void InsertConcurrently(KeyHandle handle) override { assert(false); }
-  bool InsertKeyConcurrently(KeyHandle handle) override { assert(false); }
-  bool Contains(const char* key) const override { assert(false); }
-  size_t ApproximateMemoryUsage() override { assert(false); }
-  void Get(const LookupKey& k, void* callback_args,
-           bool (*callback_func)(void* arg, const char* entry)) override {
+
+  void Insert(KeyHandle) override { assert(false); }
+  bool InsertKey(KeyHandle) override {
+    assert(false);
+    return false;
+  }
+  void InsertWithHint(KeyHandle, void**) override { assert(false); }
+  void InsertWithHintConcurrently(KeyHandle, void**) override { assert(false); }
+  void InsertConcurrently(KeyHandle) override { assert(false); }
+  bool InsertKeyConcurrently(KeyHandle) override {
+    assert(false);
+    return false;
+  }
+  bool Contains(const char*) const override {
+    assert(false);
+    return false;
+  }
+  size_t ApproximateMemoryUsage() override {
+    assert(false);
+    return 0;
+  }
+  void Get(const LookupKey&, void*,
+           bool (*)(void* arg, const char* entry)) override {
     assert(false);
   }
   ~ReadOnlySkipListRep() override { delete read_only_skip_list_; }
@@ -131,19 +114,15 @@ class ReadOnlySkipListRep : public MemTableRep {
     const char* key() const override { return iter_.key(); }
     void Next() override { iter_.Next(); }
     void Prev() override { iter_.Prev(); }
-    void Seek(const Slice& user_key, const char* memtable_key) override {
-      assert(false);
-    }
+    void Seek(const Slice&, const char*) override { assert(false); }
 
-    void SeekForPrev(const Slice& user_key, const char* memtable_key) override {
-      assert(false);
-    }
+    void SeekForPrev(const Slice&, const char*) override { assert(false); }
     void RandomSeek() override { assert(false); }
     void SeekToFirst() override { iter_.SeekToFirst(); }
     void SeekToLast() override { assert(false); }
   };
 
-  MemTableRep::Iterator* GetIterator(Arena* arena = nullptr) override {
+  MemTableRep::Iterator* GetIterator(Arena* = nullptr) override {
     void* mem = new ReadOnlySkipListRep::Iterator(read_only_skip_list_);
     return new (mem) ReadOnlySkipListRep::Iterator(read_only_skip_list_);
   }

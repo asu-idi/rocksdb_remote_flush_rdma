@@ -1,4 +1,4 @@
-#include "memory/remote_flush_service.h"
+#include "rocksdb/remote_flush_service.h"
 
 #include <arpa/inet.h>
 #include <byteswap.h>
@@ -25,7 +25,7 @@
 #include <thread>
 #include <utility>
 
-#include "util/logger.hpp"
+#include "rocksdb/logger.hpp"
 
 #define MAX_POLL_CQ_TIMEOUT 2000
 #if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -82,7 +82,7 @@ bool TCPNode::receive(void **buf, size_t *size) {
   char *buf_ = reinterpret_cast<char *>(*buf);
   void *header_ = malloc(sizeof(size_t) + 6);
   ssize_t total = 0;
-  while (total < sizeof(size_t) + 6) {
+  while (total < ssize_t(sizeof(size_t) + 6)) {
     ssize_t n = read(connection_info_.client_sockfd,
                      reinterpret_cast<char *>(header_) + total,
                      sizeof(size_t) + 6 - total);
@@ -114,7 +114,7 @@ bool TCPNode::receive(void **buf, size_t *size) {
   }
   LOG("TCPNode::receive: package size:", package_size);
   total = 0;
-  while (total < package_size) {
+  while (total < ssize_t(package_size)) {
     ssize_t n = read(connection_info_.client_sockfd, buf_ + total,
                      package_size - total);
     if (n == -1) {
@@ -126,7 +126,7 @@ bool TCPNode::receive(void **buf, size_t *size) {
     }
     total += n;
   }
-  assert(total == package_size);
+  assert(total == ssize_t(package_size));
   return true;
 }
 

@@ -13,20 +13,19 @@
 
 #pragma once
 
+#include <cassert>
 #include <cstddef>
 #include <deque>
 
 #include "memory/allocator.h"
-#include "memory/remote_flush_service.h"
 #include "port/mmap.h"
 #include "rocksdb/env.h"
+#include "rocksdb/remote_flush_service.h"
 
 namespace ROCKSDB_NAMESPACE {
 
 class Arena : public BasicArena {
  public:
-  void PackLocal(char*& buf) const override;
-  static void* UnPackLocal(char*& buf);
   void PackLocal(TransferService* node) const override;
   static void* UnPackLocal(TransferService* node);
 

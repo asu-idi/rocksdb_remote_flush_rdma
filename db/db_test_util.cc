@@ -21,7 +21,6 @@
 #include "rocksdb/unique_id.h"
 #include "rocksdb/utilities/object_registry.h"
 #include "table/format.h"
-#include "util/macro.hpp"
 #include "util/random.h"
 
 namespace ROCKSDB_NAMESPACE {

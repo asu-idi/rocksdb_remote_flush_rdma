@@ -15,15 +15,13 @@
 #include <string>
 #include <utility>
 
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
-#include "memory/shared_package.h"
 #include "rocksdb/comparator.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/slice_transform.h"
 #include "rocksdb/types.h"
 #include "util/coding.h"
-#include "util/socket_api.hpp"
 #include "util/user_comparator_wrapper.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -271,15 +269,6 @@ class InternalKeyComparator
     free(ucmp);
     return mem;
   }
-  void PackLocal(char*& buf) const override { user_comparator_.PackLocal(buf); }
-  static void* UnPackLocal(char*& buf) {
-    void* ucmp = UserComparatorWrapper::UnPackLocal(buf);
-    auto ptr = new InternalKeyComparator();
-    void* mem = reinterpret_cast<void*>(ptr);
-    memcpy(reinterpret_cast<void*>(&ptr->user_comparator_), ucmp,
-           sizeof(UserComparatorWrapper));
-    return mem;
-  }
 
  private:
   UserComparatorWrapper user_comparator_;
@@ -295,9 +284,6 @@ class InternalKeyComparator
   //    overhead, set `named` to false. In that case, `Name()` will return a
   //    generic name that is non-specific to the underlying comparator.
   explicit InternalKeyComparator(const Comparator* c) : user_comparator_(c) {}
-
-  int Pack(shm_package::PackContext& ctx, int idx = -1) const;
-  void UnPack(shm_package::PackContext& ctx, int idx, size_t& offset) const;
 
   virtual ~InternalKeyComparator() {}
 
@@ -710,14 +696,6 @@ class InternalKeySliceTransform : public SliceTransform {
     transform_->PackLocal(node);
   }
   static void* UnPackLocal(void* transform);
-  void PackLocal(char*& buf) const override {
-    LOG("InternalKeySliceTransform::PackLocal");
-    int64_t info = 0;
-    info += (0x00);
-    PACK_TO_BUF(&info, buf, sizeof(info));
-    transform_->PackLocal(buf);
-  }
-  static void* UnPackLocal(void* transform, char*& buf);
 
  public:
   explicit InternalKeySliceTransform(const SliceTransform* transform)
@@ -752,12 +730,7 @@ inline void* InternalKeySliceTransform::UnPackLocal(void* transform) {
       reinterpret_cast<SliceTransform*>(transform)));
   return mem;
 }
-inline void* InternalKeySliceTransform::UnPackLocal(void* transform,
-                                                    char*& buf) {
-  void* mem = reinterpret_cast<void*>(new InternalKeySliceTransform(
-      reinterpret_cast<SliceTransform*>(transform)));
-  return mem;
-}
+
 // Read the key of a record from a write batch.
 // if this record represent the default column family then cf_record
 // must be passed as false, otherwise it must be passed as true.

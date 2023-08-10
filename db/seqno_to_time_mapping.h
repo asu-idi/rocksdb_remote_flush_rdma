@@ -13,8 +13,8 @@
 #include <iterator>
 #include <string>
 
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/status.h"
 #include "rocksdb/types.h"
 
@@ -36,8 +36,6 @@ constexpr uint64_t kUnknownSeqnoTime = 0;
 //  synchronized by caller.
 class SeqnoToTimeMapping {
  public:
-  void PackLocal(char*& buf) const;
-  static void* UnPackLocal(char*& buf);
   void PackLocal(TransferService* node) const;
   static void* UnPackLocal(TransferService* node);
 
