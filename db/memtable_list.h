@@ -42,12 +42,10 @@ struct FlushJobInfo;
 class MemTableListVersion {
  public:
   explicit MemTableListVersion(size_t* parent_memtable_list_memory_usage,
-                               const MemTableListVersion& old,
-                               bool shared = false);
+                               const MemTableListVersion& old);
   explicit MemTableListVersion(size_t* parent_memtable_list_memory_usage,
                                int max_write_buffer_number_to_maintain,
-                               int64_t max_write_buffer_size_to_maintain,
-                               bool shared = false);
+                               int64_t max_write_buffer_size_to_maintain);
 
   void Ref();
   void Unref(autovector<MemTable*>* to_delete = nullptr);
@@ -220,8 +218,7 @@ class MemTableList {
   // A list of memtables.
   explicit MemTableList(int min_write_buffer_number_to_merge,
                         int max_write_buffer_number_to_maintain,
-                        int64_t max_write_buffer_size_to_maintain,
-                        bool is_shared = false)
+                        int64_t max_write_buffer_size_to_maintain)
       : imm_flush_needed(false),
         imm_trim_needed(false),
         min_write_buffer_number_to_merge_(min_write_buffer_number_to_merge),

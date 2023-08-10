@@ -268,12 +268,6 @@ class CompositeRandomRWFileWrapper : public RandomRWFile {
 
 class CompositeDirectoryWrapper : public Directory {
  public:
-  void PackLocal(int sockfd) const override {
-    LOG("CompositeDirectoryWrapper::PackLocal");
-    target_->PackLocal(sockfd);
-  }
-
- public:
   explicit CompositeDirectoryWrapper(std::unique_ptr<FSDirectory>& target)
       : target_(std::move(target)) {}
 

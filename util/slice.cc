@@ -14,9 +14,9 @@
 #include <algorithm>
 #include <cstdint>
 
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
 #include "rocksdb/convenience.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/slice_transform.h"
 #include "rocksdb/utilities/object_registry.h"
 #include "rocksdb/utilities/options_type.h"
@@ -34,13 +34,6 @@ class FixedPrefixTransform : public SliceTransform {
     msg += (0x01);
     msg += (((int64_t)prefix_len_) << 8);
     node->send(&msg, sizeof(msg));
-  }
-  void PackLocal(char*& buf) const override {
-    LOG("FixedPrefixTransform::PackLocal: rdma");
-    int64_t msg = 0;
-    msg += (0x01);
-    msg += (((int64_t)prefix_len_) << 8);
-    PACK_TO_BUF(&msg, buf, sizeof(msg));
   }
 
  private:
@@ -104,13 +97,6 @@ class CappedPrefixTransform : public SliceTransform {
     msg += (((int64_t)cap_len_) << 8);
     node->send(&msg, sizeof(msg));
   }
-  void PackLocal(char*& buf) const override {
-    LOG("CappedPrefixTransform::PackLocal");
-    int64_t msg = 0;
-    msg += (0x02);
-    msg += (((int64_t)cap_len_) << 8);
-    PACK_TO_BUF(&msg, buf, sizeof(msg));
-  }
 
  private:
   size_t cap_len_;
@@ -168,12 +154,6 @@ class NoopTransform : public SliceTransform {
     int64_t msg = 0;
     msg += (0x03);
     node->send(&msg, sizeof(msg));
-  }
-  void PackLocal(char*& buf) const override {
-    LOG("NoopTransform::PackLocal");
-    int64_t msg = 0;
-    msg += (0x03);
-    PACK_TO_BUF(&msg, buf, sizeof(msg));
   }
 
  public:

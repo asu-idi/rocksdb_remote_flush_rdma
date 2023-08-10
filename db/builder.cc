@@ -32,6 +32,7 @@
 #include "rocksdb/db.h"
 #include "rocksdb/env.h"
 #include "rocksdb/iterator.h"
+#include "rocksdb/logger.hpp"
 #include "rocksdb/options.h"
 #include "rocksdb/table.h"
 #include "table/block_based/block_based_table_builder.h"
@@ -39,7 +40,6 @@
 #include "table/internal_iterator.h"
 #include "table/unique_id_impl.h"
 #include "test_util/sync_point.h"
-#include "util/logger.hpp"
 #include "util/stop_watch.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -453,7 +453,7 @@ Status RemoteBuildTable(
     FileMetaData* meta, std::vector<SequenceNumber> snapshots,
     SequenceNumber earliest_write_conflict_snapshot,
     SequenceNumber job_snapshot, SnapshotChecker* snapshot_checker,
-    bool paranoid_file_checks, InternalStats* internal_stats,
+    bool paranoid_file_checks, [[maybe_unused]] InternalStats* internal_stats,
     IOStatus* io_status, const SeqnoToTimeMapping& seqno_to_time_mapping,
     int job_id, const Env::IOPriority io_priority,
     TableProperties* table_properties, Env::WriteLifeTimeHint write_hint,

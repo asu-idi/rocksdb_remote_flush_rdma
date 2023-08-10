@@ -527,10 +527,6 @@ Status DBImpl::Recover(
   LOG("Versions recover");
   if (!immutable_db_options_.best_efforts_recovery) {
     LOG("recover not best effort");
-    for (auto& cf : column_families) {
-      LOG("user_remote_flush: ",
-          cf.options.server_use_remote_flush ? "true" : "false");
-    }
     s = versions_->Recover(column_families, read_only, &db_id_);
   } else {
     LOG("recover best effort");
@@ -1944,12 +1940,6 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
 
   // Handles create_if_missing, error_if_exists
   uint64_t recovered_seq(kMaxSequenceNumber);
-  LOG("Call recover,check impl->column_families:");
-  for (auto& cf : column_families) {
-    LOG("cf options:=", cf.options.server_use_remote_flush
-                            ? "server remote_flush"
-                            : "server remote flush not used");
-  }
   LOG("CHECK FINISH");
   s = impl->Recover(column_families, false /* read_only */,
                     false /* error_if_wal_file_exists */,

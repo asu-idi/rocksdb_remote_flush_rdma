@@ -22,11 +22,10 @@
 #include "db/dbformat.h"
 #include "db/wal_edit.h"
 #include "memory/arena.h"
-#include "memory/remote_flush_service.h"
-#include "memory/shared_package.h"
 #include "port/malloc.h"
 #include "rocksdb/advanced_cache.h"
 #include "rocksdb/advanced_options.h"
+#include "rocksdb/remote_flush_service.h"
 #include "table/table_reader.h"
 #include "table/unique_id_impl.h"
 #include "util/autovector.h"
@@ -132,18 +131,7 @@ struct FileDescriptor {
   static void* UnPackLocal(TransferService* node) {
     void* mem = malloc(sizeof(FileDescriptor));
     node->receive(mem, sizeof(FileDescriptor));
-    auto* ptr = reinterpret_cast<FileDescriptor*>(mem);
-    assert(ptr->table_reader == nullptr);
-    return mem;
-  }
-  void PackLocal(char*& buf) const {
-    PACK_TO_BUF(reinterpret_cast<const void*>(this), buf,
-                sizeof(FileDescriptor));
-  }
-  static void* UnPackLocal(char*& buf) {
-    void* mem = malloc(sizeof(FileDescriptor));
-    UNPACK_FROM_BUF(buf, mem, sizeof(FileDescriptor));
-    auto* ptr = reinterpret_cast<FileDescriptor*>(mem);
+    [[maybe_unused]] auto* ptr = reinterpret_cast<FileDescriptor*>(mem);
     assert(ptr->table_reader == nullptr);
     return mem;
   }
@@ -204,8 +192,6 @@ struct FileSampledStats {
 
 struct FileMetaData {
  public:
-  void PackLocal(char*& buf) const;
-  static void* UnPackLocal(char*& buf);
   void PackLocal(TransferService* node) const;
   static void* UnPackLocal(TransferService* node);
   void PackRemote(TransferService* node) const;
@@ -279,9 +265,6 @@ struct FileMetaData {
 
   // SST unique id
   UniqueId64x2 unique_id{};
-
-  int Pack(shm_package::PackContext& ctx, int idx = -1);
-  void UnPack(shm_package::PackContext& ctx, int idx, size_t& offset);
 
   FileMetaData() = default;
 
@@ -412,8 +395,6 @@ struct LevelFilesBrief {
 class VersionEdit {
  public:
   void free_remote();
-  void PackLocal(char*& buf) const;
-  static void* UnPackLocal(char*& buf);
   void PackRemote(TransferService* node) const;
   void UnPackRemote(TransferService* node);
   void PackLocal(TransferService* node) const;
@@ -743,10 +724,6 @@ class VersionEdit {
   uint32_t remaining_entries_ = 0;
 
   std::string full_history_ts_low_;
-
- public:
-  int Pack(shm_package::PackContext& ctx, int idx = -1);
-  void UnPack(shm_package::PackContext& ctx, int idx, size_t& offset);
 };
 
 }  // namespace ROCKSDB_NAMESPACE

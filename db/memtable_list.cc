@@ -26,7 +26,6 @@
 #include "table/merging_iterator.h"
 #include "test_util/sync_point.h"
 #include "util/coding.h"
-#include "util/macro.hpp"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -49,8 +48,7 @@ void MemTableListVersion::UnrefMemTable(autovector<MemTable*>* to_delete,
 }
 
 MemTableListVersion::MemTableListVersion(
-    size_t* parent_memtable_list_memory_usage, const MemTableListVersion& old,
-    bool shared)
+    size_t* parent_memtable_list_memory_usage, const MemTableListVersion& old)
     : max_write_buffer_number_to_maintain_(
           old.max_write_buffer_number_to_maintain_),
       max_write_buffer_size_to_maintain_(
@@ -70,7 +68,7 @@ MemTableListVersion::MemTableListVersion(
 MemTableListVersion::MemTableListVersion(
     size_t* parent_memtable_list_memory_usage,
     int max_write_buffer_number_to_maintain,
-    int64_t max_write_buffer_size_to_maintain, bool shared)
+    int64_t max_write_buffer_size_to_maintain)
     : max_write_buffer_number_to_maintain_(max_write_buffer_number_to_maintain),
       max_write_buffer_size_to_maintain_(max_write_buffer_size_to_maintain),
       parent_memtable_list_memory_usage_(parent_memtable_list_memory_usage) {}

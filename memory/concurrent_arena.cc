@@ -13,8 +13,8 @@
 
 #include <thread>
 
-#include "memory/remote_flush_service.h"
 #include "port/port.h"
+#include "rocksdb/remote_flush_service.h"
 #include "util/random.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -50,16 +50,8 @@ void ConcurrentArena::PackLocal(TransferService* node) const {
   name.resize(15);
   node->send(name.data(), 15);
 }
-void* ConcurrentArena::UnPackLocal(TransferService* node) {
-  void* arena = reinterpret_cast<void*>(new ConcurrentArena());
-  return arena;
-}
-void ConcurrentArena::PackLocal(char*& buf) const {
-  std::string name = "ConcurrentArena";
-  name.resize(15);
-  PACK_TO_BUF(name.data(), buf, name.size());
-}
-void* ConcurrentArena::UnPackLocal(char*& buf) {
+
+void* ConcurrentArena::UnPackLocal(TransferService*) {
   void* arena = reinterpret_cast<void*>(new ConcurrentArena());
   return arena;
 }

@@ -12,11 +12,11 @@
 #include "db/memtable.h"
 #include "rocksdb/db.h"
 #include "rocksdb/listener.h"
+#include "rocksdb/logger.hpp"
 #include "rocksdb/options.h"
 #include "rocksdb/slice_transform.h"
 #include "rocksdb/status.h"
 #include "rocksdb/utilities/options_type.h"
-#include "util/logger.hpp"
 #include "utilities/merge_operators.h"
 #define ROOT_DIR "/root/code/rocksdb_remote_flush/"
 using namespace std;
@@ -40,7 +40,8 @@ signed main(signed argc, char** argv) {
   opt.prefix_extractor.reset(NewFixedPrefixTransform(3));
   opt.create_if_missing = true;
   opt.merge_operator = MergeOperators::CreateStringAppendOperator();
-  opt.max_background_flushes = 32;
+  opt.max_background_flushes = 1000;
+  opt.max_background_jobs = 1000;
   DB::Open(opt, db_name, &db);
   assert(db != nullptr);
 

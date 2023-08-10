@@ -23,14 +23,12 @@
 #include <string>
 #include <unordered_map>
 
-#include "memory/remote_flush_service.h"
 #include "rocksdb/cache.h"
 #include "rocksdb/customizable.h"
 #include "rocksdb/env.h"
 #include "rocksdb/options.h"
+#include "rocksdb/remote_flush_service.h"
 #include "rocksdb/status.h"
-#include "util/socket_api.hpp"
-
 namespace ROCKSDB_NAMESPACE {
 
 // -- Block-based Table
@@ -834,11 +832,7 @@ class RandomAccessFileReader;
 // A base class for table factories.
 class TableFactory : public Customizable {
  public:
-  virtual void PackLocal(TransferService* node) const {
-    LOG("TableFactory::PackLocal not implemented");
-    assert(false);
-  }
-  virtual void PackLocal(char*& buf) const {
+  virtual void PackLocal(TransferService*) const {
     LOG("TableFactory::PackLocal not implemented");
     assert(false);
   }
@@ -936,7 +930,6 @@ extern TableFactory* NewAdaptiveTableFactory(
 
 class TablePackFactory {
  public:
-  static void* UnPackLocal(char*& buf);
   static void* UnPackLocal(TransferService* node);
 
  public:
@@ -966,24 +959,7 @@ inline void* TablePackFactory::UnPackLocal(TransferService* node) {
     LOG("TablePackFactory::UnPackLocal: msg: ", msg);
     assert(false);
   }
-}
-inline void* TablePackFactory::UnPackLocal(char*& buf) {
-  size_t msg = 0;
-  UNPACK_FROM_BUF(buf, &msg, sizeof(msg));
-  if (msg == 0) {
-    LOG("TablePackFactory::UnPackLocal: msg == 0 : nullptr");
-    return nullptr;
-  }
-  if (msg == 0x01) {
-    return NewBlockBasedTableFactory();
-  } else if (msg == 0x02) {
-    return NewCuckooTableFactory();
-  } else if (msg == 0x03) {
-    return NewPlainTableFactory();
-  } else {
-    LOG("TablePackFactory::UnPackLocal: msg: ", msg);
-    assert(false);
-  }
+  return nullptr;
 }
 
 }  // namespace ROCKSDB_NAMESPACE

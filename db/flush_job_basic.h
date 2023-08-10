@@ -27,6 +27,7 @@
 #include "port/port.h"
 #include "rocksdb/db.h"
 #include "rocksdb/env.h"
+#include "rocksdb/logger.hpp"
 #include "rocksdb/statistics.h"
 #include "rocksdb/status.h"
 #include "rocksdb/table.h"
@@ -35,7 +36,6 @@
 #include "table/two_level_iterator.h"
 #include "test_util/sync_point.h"
 #include "util/coding.h"
-#include "util/logger.hpp"
 #include "util/mutexlock.h"
 #include "util/stop_watch.h"
 namespace ROCKSDB_NAMESPACE {

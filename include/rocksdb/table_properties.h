@@ -12,13 +12,12 @@
 #include <memory>
 #include <string>
 
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
-#include "memory/shared_package.h"
 #include "rocksdb/customizable.h"
+#include "rocksdb/logger.hpp"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/status.h"
 #include "rocksdb/types.h"
-#include "util/logger.hpp"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -149,12 +148,7 @@ class TablePropertiesCollector {
 // including data loss, unreported corruption, deadlocks, and more.
 class TablePropertiesCollectorFactory : public Customizable {
  public:
-  virtual void PackLocal(TransferService* node) const {
-    LOG("TablePropertiesCollectorFactory::PackLocal not implemented. Name: ",
-        Name());
-    assert(false);
-  }
-  virtual void PackLocal(char*& buf) const {
+  virtual void PackLocal([[maybe_unused]] TransferService* node) const {
     LOG("TablePropertiesCollectorFactory::PackLocal not implemented. Name: ",
         Name());
     assert(false);
@@ -332,9 +326,6 @@ struct TableProperties {
   // Return the approximated memory usage of this TableProperties object,
   // including memory used by the string properties and UserCollectedProperties
   std::size_t ApproximateMemoryUsage() const;
-
-  int Pack(shm_package::PackContext& ctx, int idx = -1);
-  void UnPack(shm_package::PackContext& ctx, int idx, size_t& offset);
 };
 
 // Extra properties

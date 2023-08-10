@@ -17,7 +17,6 @@
 #include "table/table_properties_internal.h"
 #include "table/unique_id_impl.h"
 #include "util/random.h"
-#include "util/socket_api.hpp"
 #include "util/string_util.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -122,7 +121,6 @@ void TableProperties::PackRemote(TransferService* node) const {
 }
 
 void* TableProperties::UnPackRemote(TransferService* node) {
-  size_t ret_num = 0;
   auto* ret_ptr = new TableProperties();
   void* mem = reinterpret_cast<void*>(ret_ptr);
 
@@ -609,113 +607,5 @@ void TEST_SetRandomTableProperties(TableProperties* props) {
   }
 }
 #endif
-
-int TableProperties::Pack(shm_package::PackContext& ctx, int idx) {
-  if (idx == -1) idx = ctx.add_package((void*)this, "TableProperties");
-  ctx.append_uint64(idx, orig_file_number);
-  ctx.append_uint64(idx, data_size);
-  ctx.append_uint64(idx, index_size);
-  ctx.append_uint64(idx, index_partitions);
-  ctx.append_uint64(idx, top_level_index_size);
-  ctx.append_uint64(idx, index_key_is_user_key);
-  ctx.append_uint64(idx, index_value_is_delta_encoded);
-  ctx.append_uint64(idx, filter_size);
-  ctx.append_uint64(idx, raw_key_size);
-  ctx.append_uint64(idx, raw_value_size);
-  ctx.append_uint64(idx, num_data_blocks);
-  ctx.append_uint64(idx, num_entries);
-  ctx.append_uint64(idx, num_filter_entries);
-  ctx.append_uint64(idx, num_deletions);
-  ctx.append_uint64(idx, num_merge_operands);
-  ctx.append_uint64(idx, num_range_deletions);
-  ctx.append_uint64(idx, format_version);
-  ctx.append_uint64(idx, fixed_key_len);
-  ctx.append_uint64(idx, column_family_id);
-  ctx.append_uint64(idx, creation_time);
-  ctx.append_uint64(idx, oldest_key_time);
-  ctx.append_uint64(idx, file_creation_time);
-  ctx.append_uint64(idx, slow_compression_estimated_data_size);
-  ctx.append_uint64(idx, fast_compression_estimated_data_size);
-  ctx.append_uint64(idx, external_sst_file_global_seqno_offset);
-  ctx.append_str(idx, db_id);
-  ctx.append_str(idx, db_session_id);
-  ctx.append_str(idx, db_host_id);
-  ctx.append_str(idx, column_family_name);
-  ctx.append_str(idx, filter_policy_name);
-  ctx.append_str(idx, comparator_name);
-  ctx.append_str(idx, merge_operator_name);
-  ctx.append_str(idx, prefix_extractor_name);
-  ctx.append_str(idx, property_collectors_names);
-  ctx.append_str(idx, compression_name);
-  ctx.append_str(idx, compression_options);
-  ctx.append_str(idx, seqno_to_time_mapping);
-
-  //    user_collected_properties_package_
-  ctx.append_uint64(idx, user_collected_properties.size());
-  for (auto& iter : user_collected_properties) {
-    ctx.append_str(idx, iter.first);
-    ctx.append_str(idx, iter.second);
-  }
-  //   readable_properties_package_
-  ctx.append_uint64(idx, readable_properties.size());
-  for (auto& iter : readable_properties) {
-    ctx.append_str(idx, iter.first);
-    ctx.append_str(idx, iter.second);
-  }
-  return idx;
-}
-void TableProperties::UnPack(shm_package::PackContext& ctx, int idx,
-                             size_t& offset) {
-  orig_file_number = ctx.get_uint64(idx, offset);
-  data_size = ctx.get_uint64(idx, offset);
-  index_size = ctx.get_uint64(idx, offset);
-  index_partitions = ctx.get_uint64(idx, offset);
-  top_level_index_size = ctx.get_uint64(idx, offset);
-  index_key_is_user_key = ctx.get_uint64(idx, offset);
-  index_value_is_delta_encoded = ctx.get_uint64(idx, offset);
-  filter_size = ctx.get_uint64(idx, offset);
-  raw_key_size = ctx.get_uint64(idx, offset);
-  raw_value_size = ctx.get_uint64(idx, offset);
-  num_data_blocks = ctx.get_uint64(idx, offset);
-  num_entries = ctx.get_uint64(idx, offset);
-  num_filter_entries = ctx.get_uint64(idx, offset);
-  num_deletions = ctx.get_uint64(idx, offset);
-  num_merge_operands = ctx.get_uint64(idx, offset);
-  num_range_deletions = ctx.get_uint64(idx, offset);
-  format_version = ctx.get_uint64(idx, offset);
-  fixed_key_len = ctx.get_uint64(idx, offset);
-  column_family_id = ctx.get_uint64(idx, offset);
-  creation_time = ctx.get_uint64(idx, offset);
-  oldest_key_time = ctx.get_uint64(idx, offset);
-  file_creation_time = ctx.get_uint64(idx, offset);
-  slow_compression_estimated_data_size = ctx.get_uint64(idx, offset);
-  fast_compression_estimated_data_size = ctx.get_uint64(idx, offset);
-  external_sst_file_global_seqno_offset = ctx.get_uint64(idx, offset);
-  db_id = ctx.get_str(idx, offset);
-  db_session_id = ctx.get_str(idx, offset);
-  db_host_id = ctx.get_str(idx, offset);
-  column_family_name = ctx.get_str(idx, offset);
-  filter_policy_name = ctx.get_str(idx, offset);
-  comparator_name = ctx.get_str(idx, offset);
-  merge_operator_name = ctx.get_str(idx, offset);
-  prefix_extractor_name = ctx.get_str(idx, offset);
-  property_collectors_names = ctx.get_str(idx, offset);
-  compression_name = ctx.get_str(idx, offset);
-  compression_options = ctx.get_str(idx, offset);
-  seqno_to_time_mapping = ctx.get_str(idx, offset);
-
-  user_collected_properties.clear();  // assert
-  for (size_t i = 0, tot = ctx.get_uint64(idx, offset); i < tot; i++) {
-    std::string first = ctx.get_str(idx, offset);
-    std::string second = ctx.get_str(idx, offset);
-    user_collected_properties.insert(std::make_pair(first, second));
-  }
-  readable_properties.clear();  // assert
-  for (size_t i = 0, tot = ctx.get_uint64(idx, offset); i < tot; i++) {
-    std::string first = ctx.get_str(idx, offset);
-    std::string second = ctx.get_str(idx, offset);
-    readable_properties.insert(std::make_pair(first, second));
-  }
-}
 
 }  // namespace ROCKSDB_NAMESPACE

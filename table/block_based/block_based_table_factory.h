@@ -15,10 +15,10 @@
 #include <string>
 
 #include "cache/cache_reservation_manager.h"
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
 #include "port/port.h"
 #include "rocksdb/flush_block_policy.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/table.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -52,10 +52,6 @@ class BlockBasedTableFactory : public TableFactory {
   void PackLocal(TransferService* node) const override {
     size_t msg = 1;
     node->send(&msg, sizeof(msg));
-  }
-  void PackLocal(char*& buf) const override {
-    size_t msg = 1;
-    PACK_TO_BUF(&msg, buf, sizeof(msg));
   }
 
  public:

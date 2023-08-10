@@ -20,8 +20,8 @@
 #include "db/column_family.h"
 #include "db/log_writer.h"
 #include "db/version_set.h"
-#include "memory/remote_transfer_service.h"
-#include "memory/remote_flush_service.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/types.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -115,8 +115,6 @@ struct SuperVersionContext {
 
 struct JobContext {
  public:
-  void PackLocal(char*& buf) const;
-  static void* UnPackLocal(char*& buf);
   void PackLocal(TransferService* node) const;
   static void* UnPackLocal(TransferService* node);
 
@@ -268,25 +266,6 @@ inline void* JobContext::UnPackLocal(TransferService* node) {
   LOG("JobContext::UnPackLocal");
   void* mem = malloc(sizeof(JobContext));
   node->receive(mem, sizeof(JobContext));
-  return mem;
-}
-
-inline void JobContext::PackLocal(char*& buf) const {
-  LOG("JobContext::PackLocal");
-  PACK_TO_BUF(reinterpret_cast<const void*>(this), buf, sizeof(JobContext));
-  assert(job_snapshot == nullptr);
-}
-
-inline void* JobContext::UnPackLocal(char*& buf) {
-  size_t empty = 0;
-  UNPACK_FROM_BUF(buf, &empty, sizeof(size_t));
-  if (empty == 0) {
-    LOG("JobContext::UnPackLocal empty");
-    return nullptr;
-  }
-  LOG("JobContext::UnPackLocal");
-  void* mem = malloc(sizeof(JobContext));
-  UNPACK_FROM_BUF(buf, mem, sizeof(JobContext));
   return mem;
 }
 

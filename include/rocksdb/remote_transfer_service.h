@@ -2,6 +2,7 @@
 
 #include "rocksdb/logger.hpp"
 #include "rocksdb/remote_flush_service.h"
+#include "rocksdb/status.h"
 
 namespace ROCKSDB_NAMESPACE {
 

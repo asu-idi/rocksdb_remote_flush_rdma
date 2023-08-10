@@ -37,8 +37,6 @@
 #include "memory/arena_factory.h"
 #include "memory/concurrent_arena.h"
 #include "memory/memory_usage.h"
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
 #include "monitoring/perf_context_imp.h"
 #include "monitoring/statistics.h"
 #include "port/lang.h"
@@ -49,12 +47,14 @@
 #include "rocksdb/env.h"
 #include "rocksdb/iterator.h"
 #include "rocksdb/listener.h"
+#include "rocksdb/logger.hpp"
 #include "rocksdb/memtablerep.h"
 #include "rocksdb/memtablerep_pack_factory.h"
 #include "rocksdb/merge_operator.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/slice_transform.h"
-#include "rocksdb/slice_transform_factory.h"
 #include "rocksdb/system_clock.h"
 #include "rocksdb/table_properties.h"
 #include "rocksdb/types.h"
@@ -66,9 +66,7 @@
 #include "util/cast_util.h"
 #include "util/coding.h"
 #include "util/dynamic_bloom.h"
-#include "util/logger.hpp"
 #include "util/mutexlock.h"
-#include "util/socket_api.hpp"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -99,8 +97,7 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
                    const ImmutableOptions& ioptions,
                    const MutableCFOptions& mutable_cf_options,
                    WriteBufferManager* write_buffer_manager,
-                   SequenceNumber latest_seq, uint32_t column_family_id,
-                   bool is_shared)
+                   SequenceNumber latest_seq, uint32_t column_family_id)
     : comparator_(cmp),
       moptions_(ioptions, mutable_cf_options),
       refs_(0),
@@ -242,79 +239,10 @@ void MemTable::PackLocal(TransferService* node) const {
   LOG("write MemTable", reinterpret_cast<const void*>(this));
 }
 
-void* MemTable::UnPackLocal(char*& buf) {
-  LOG("start MemTable::UnPackLocal");
-  void* local_arena = BasicArenaFactory::UnPackLocal(buf);
-  LOG("BasicArenaFactory::UnPackLocal(sock_fd) done");
-  void* local_prefix_extractor = SliceTransformFactory::UnPackLocal(buf);
-  LOG("SliceTransformFactory::UnPackLocal(sock_fd) done");
-  void* local_comparator = KeyComparator::UnPackLocal(buf);
-  LOG("KeyComparator::UnPackLocal(sock_fd) done");
-  void* local_moptions = ImmutableMemTableOptions::UnPackLocal(buf);
-  LOG("ImmutableMemTableOptions::UnPackLocal(sock_fd) done");
-  // DynamicBloom* local_bloom_filter =
-  //     DynamicBloom::UnPackLocal(sock_fd, local_arena);
-  auto* local_table =
-      reinterpret_cast<MemTableRep*>(MemTableRepPackFactory::UnPackLocal(buf));
-  LOG("local_table MemTableRepPackFactory::UnPackLocal(sock_fd) done");
-  auto* local_range_del_table =
-      reinterpret_cast<MemTableRep*>(MemTableRepPackFactory::UnPackLocal(buf));
-  LOG("local_range_del_table MemTableRepPackFactory::UnPackLocal(sock_fd) "
-      "done");
-  void* mem = malloc(sizeof(MemTable));
-  auto* memtable = reinterpret_cast<MemTable*>(mem);
-  UNPACK_FROM_BUF(buf, mem, sizeof(MemTable));
-  LOG("recv MemTable", mem);
-
-  memtable->arena_ = reinterpret_cast<BasicArena*>(local_arena);
-  memcpy(reinterpret_cast<void*>(
-             const_cast<SliceTransform**>(&memtable->prefix_extractor_)),
-         reinterpret_cast<void*>(&local_prefix_extractor),
-         sizeof(SliceTransform*));
-  memcpy(reinterpret_cast<void*>(&memtable->comparator_),
-         reinterpret_cast<void*>(local_comparator), sizeof(KeyComparator));
-  memcpy(reinterpret_cast<void*>(
-             const_cast<ImmutableMemTableOptions*>(&memtable->moptions_)),
-         reinterpret_cast<void*>(local_moptions),
-         sizeof(ImmutableMemTableOptions));
-  LOG("checkpoint:", std::hex, local_table, ' ', local_range_del_table,
-      std::dec);
-  memtable->table_ = local_table;
-  memtable->range_del_table_ = local_range_del_table;
-
-  return mem;
-}
-
-void MemTable::PackLocal(char*& buf) const {
-  LOG("start MemTable::PackLocal");
-  arena_->PackLocal(buf);
-  LOG("arena_->PackLocal(sock_fd) done");
-  if (prefix_extractor_ != nullptr)
-    prefix_extractor_->PackLocal(buf);
-  else {
-    int64_t msg = 0xff;
-    PACK_TO_BUF(&msg, buf, sizeof(msg));
-  }
-  LOG("prefix_extractor_->PackLocal(sock_fd) done");
-  comparator_.PackLocal(buf);
-  LOG("comparator_.PackLocal(sock_fd) done");
-  moptions_.PackLocal(buf);
-  LOG("moptions_.PackLocal(sock_fd) done");
-  // bloom_filter_->PackLocal(sock_fd);
-  table_->PackLocal(buf);
-  LOG("table_->PackLocal(sock_fd) done");
-  range_del_table_->PackLocal(buf);
-  LOG("range_del_table_->PackLocal(sock_fd) done");
-
-  PACK_TO_BUF(reinterpret_cast<const void*>(this), buf, sizeof(MemTable));
-  LOG("send MemTable", reinterpret_cast<const void*>(this));
-}
-
 void MemTable::PackRemote(TransferService* node) const {
   assert(flush_job_info_ != nullptr);
   LOG("MemTable::PackRemote");
   // note: only pack flush_job_info
-  size_t ret_num = 0;
   LOG("MemTable::PackRemote start waiting write ");
   node->send(reinterpret_cast<const void*>(&flush_job_info_->cf_id),
              sizeof(uint32_t));
@@ -355,8 +283,6 @@ void MemTable::PackRemote(TransferService* node) const {
 
 void MemTable::UnPackRemote(TransferService* node) {
   auto flush_job_info = new FlushJobInfo();
-  void* mem = reinterpret_cast<void*>(flush_job_info);
-  size_t ret_num = 0;
   LOG("MemTable::UnPackRemote start waiting read");
   node->receive(reinterpret_cast<void*>(&flush_job_info->cf_id),
                 sizeof(uint32_t));
@@ -413,29 +339,6 @@ void MemTable::UnPackRemote(TransferService* node) {
       flush_job_info->blob_compression_type;
   delete flush_job_info;
   LOG("MemTable::UnPackRemote done");
-}
-
-int MemTable::Pack(shm_package::PackContext& ctx, int idx) {
-  if (idx == -1) idx = ctx.add_package((void*)this, "MemTable");
-  // table_.Pack(ctx, idx);
-  // range_del_table_.Pack(ctx, idx);
-  edit_.Pack(ctx, idx);
-  if (flush_job_info_ != nullptr) {
-    ctx.append_byte(idx, 1);
-    flush_job_info_->Pack(ctx, idx);
-  } else
-    ctx.append_byte(idx, 0);
-  return idx;
-}
-void MemTable::UnPack(shm_package::PackContext& ctx, int idx, size_t& offset) {
-  // table_.Unpack(package, ptrs, offset);
-  // range_del_table_.Unpack(package, ptrs, offset);
-  edit_.UnPack(ctx, idx, offset);
-  if (ctx.get_byte(idx, offset) != 0) {
-    flush_job_info_ = std::make_unique<rocksdb::FlushJobInfo>();
-    flush_job_info_->UnPack(ctx, idx, offset);
-  } else
-    flush_job_info_ = nullptr;
 }
 
 MemTable::~MemTable() {

@@ -14,11 +14,11 @@
 
 #include "memory/allocator.h"
 #include "memory/arena.h"
-#include "memory/remote_flush_service.h"
 #include "port/lang.h"
 #include "port/likely.h"
+#include "rocksdb/logger.hpp"
+#include "rocksdb/remote_flush_service.h"
 #include "util/core_local.h"
-#include "util/logger.hpp"
 #include "util/mutexlock.h"
 #include "util/thread_local.h"
 
@@ -43,8 +43,6 @@ class Logger;
 // shard blocks are allocated from the underlying main arena.
 class ConcurrentArena : public BasicArena {
  public:
-  void PackLocal(char*& buf) const override;
-  static void* UnPackLocal(char*& buf);
   void PackLocal(TransferService* node) const override;
   static void* UnPackLocal(TransferService* node);
 
@@ -99,6 +97,7 @@ class ConcurrentArena : public BasicArena {
   bool IsInInlineBlock() const override {
     LOG("should not use this function");
     assert(false);
+    return false;
   }
 
  private:
