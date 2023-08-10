@@ -1100,6 +1100,7 @@ void RDMAServer::wait_for_job_service(int idx) {
     if(!executors_[idx].flush_job_queue.empty()){
       ret[0] = executors_[idx].flush_job_queue.front().first;
       ret[1] = executors_[idx].flush_job_queue.front().second;
+      executors_[idx].current_job = executors_[idx].flush_job_queue.front();
       executors_[idx].flush_job_queue.pop();
       break;
     }
