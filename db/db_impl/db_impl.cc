@@ -491,17 +491,21 @@ Status DBImpl::ListenAndScheduleFlushJob(int port) {
   mutex_.Unlock();
 
 #ifdef ROCKSDB_RDMA
-  RDMAClient* worker_node = new RDMAClient();
+  RDMAClient* worker_node = new RDMAClient(), *listen_node = new RDMAClient();
   worker_node->resources_create(1ull << 27);
   worker_node->rdma_mem_.init(worker_node->get_buf(), worker_node->buf_size);
   worker_node->is_init_ = true;
+  listen_node->resources_create(1ull << 20);
+  listen_node->rdma_mem_.init(listen_node->get_buf(), listen_node->buf_size);
+  listen_node->is_init_ = true;
   std::vector<std::thread*> threads;
   for(int i = 0; i < memnodes_ip_port_.size(); i++) {
     worker_node->sock_connect(memnodes_ip_port_[i].first, memnodes_ip_port_[i].second);
-    worker_node->register_executor_request(i);
-    auto wait_for_jobs = [&]{
+    listen_node->sock_connect(memnodes_ip_port_[i].first, memnodes_ip_port_[i].second);
+    listen_node->register_executor_request(i);
+    auto wait_for_jobs = [this, worker_node, listen_node, i]{
       while(true){
-        auto remote_seg = worker_node->wait_for_job_request(i);
+        auto remote_seg = listen_node->wait_for_job_request(i);
 #else
   int server_fd, new_socket;
   struct sockaddr_in address;

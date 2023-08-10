@@ -612,7 +612,7 @@ int RDMANode::connect_qp(){
 	qp_init_attr.cap.max_recv_wr = config.max_recv_wr;
 	qp_init_attr.cap.max_send_sge = 1;
 	qp_init_attr.cap.max_recv_sge = 1;
-	res->qp.push_back(ibv_create_qp(res->pd, &qp_init_attr));
+	res->qp.back() = ibv_create_qp(res->pd, &qp_init_attr);
 	if (!res->qp.back()) {
 		fprintf(stderr, "failed to create QP\n");
 		rc = 1;
@@ -949,13 +949,19 @@ void RDMAServer::modify_mem_service(int idx) {
       ret = false;
       fprintf(stderr, "Memory node cannot find memory segment\n");
     } else if (input[2] == 0 && iter->second == 2) {
-      ret = true;
-      mem_seg.erase(iter);
+      for (auto &it : executors_) {
+        if (!it.second.status && it.second.current_job == iter->first) {
+          ret = true;
+          mem_seg.erase(iter);
+          it.second.status = true;
+          break;
+        }
+      }
     } else if ((input[2] == 2 && iter->second == 1)) {
       for (auto &it : executors_) {
         if (it.second.status) {
           ret = true;
-          it.second.status = input[2];
+          iter->second = input[2];
           it.second.status = false;
           it.second.flush_job_queue.push(iter->first);
           break;
@@ -1071,7 +1077,7 @@ std::pair<long long, long long> RDMAClient::wait_for_job_request(int idx) {
   int total_read_bytes = 0;
   rc = write(res->sock[idx], reinterpret_cast<void *>(&req_type), sizeof(char));
   if (rc < (int)sizeof(char))
-    fprintf(stderr, "Failed writing data during register_executor_request\n");
+    fprintf(stderr, "Failed writing data during wait_for_job_request\n");
   else
     rc = 0;
   while (!rc && total_read_bytes < remote_size) {
@@ -1100,11 +1106,11 @@ void RDMAServer::wait_for_job_service(int idx) {
   }
   rc = write(res->sock[idx], reinterpret_cast<void *>(&ret), local_size);
   if (rc < local_size)
-    fprintf(stderr, "Failed writing data during register_executor_service\n");
+    fprintf(stderr, "Failed writing data during wait_for_job_service\n");
   else
     rc = 0;
 }
-void RDMAServer::service(int idx) {
+bool RDMAServer::service(int idx) {
   char req_type;
   int remote_size = sizeof(char);
   int rc = 0;
@@ -1122,7 +1128,7 @@ void RDMAServer::service(int idx) {
   switch (req_type) {
     case 0:
       disconnect_service(idx);
-      break;
+      return false;
     case 1:
       allocate_mem_service(idx);
       break;
@@ -1139,6 +1145,7 @@ void RDMAServer::service(int idx) {
       fprintf(stderr, "Unknown request type from %d-th client: %d\n", idx,
               req_type);
   }
+  return true;
 }
 
 }  // namespace ROCKSDB_NAMESPACE

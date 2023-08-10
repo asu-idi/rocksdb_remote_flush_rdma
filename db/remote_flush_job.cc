@@ -1004,10 +1004,10 @@ Status RemoteFlushJob::QuitMemNode() {
 Status RemoteFlushJob::MatchMemNode(
     std::vector<std::pair<std::string, size_t>>* ip_port_list) {
   int choosen = (int)(rand() % ip_port_list->size());
-#ifdef ROCKSDN_RDMA
+#ifdef ROCKSDB_RDMA
   // TODO(rdma): create one RDMA connection.
   local_generator_rdma_client.resources_create(1ull << 27);
-  local_generator_rdma_client.sock_connect((*ip_port_list)[choosen].first, (*ip_port_list)[choosen].first);
+  local_generator_rdma_client.sock_connect((*ip_port_list)[choosen].first, (*ip_port_list)[choosen].second);
   local_generator_rdma_client.is_init_ = true;
 #else
 
