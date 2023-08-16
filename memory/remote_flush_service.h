@@ -84,7 +84,6 @@ class RegularMemNode {
 class RDMAMemNode {
   std::set<std::pair<size_t, size_t>> mempool_;
   std::mutex mtx_;
-  char* buf_;
   size_t buf_size_;
 
  public:
@@ -92,8 +91,7 @@ class RDMAMemNode {
   ~RDMAMemNode() {
     mempool_.clear();
   }
-  void init(char* buf, size_t buf_size){
-    buf_ = buf;
+  void init(size_t buf_size){
     buf_size_ = buf_size;
   }
   size_t allocate(size_t size) {
@@ -170,6 +168,10 @@ class TCPNode {
 };
 
 class RDMANode {
+  friend class RDMAServer;
+  friend class RDMAClient;
+  friend class RemoteFlushJob;
+  friend class DBImpl;
   // structure of test parameters
   struct config_t {
     std::string dev_name;     // IB device name
@@ -185,6 +187,11 @@ class RDMANode {
     uint16_t lid;     // LID of the IB port
     uint8_t gid[16];  // gid
   } __attribute__((packed));
+  struct rdma_connection {
+    struct ibv_cq *cq;                 // CQ handle
+    struct ibv_qp *qp;                 // QP handle
+    int sock;                          // TCP socket file descriptor
+  };
   // structure of system resources
   struct resources {
     struct ibv_device_attr device_attr;  // Device attributes
@@ -192,49 +199,48 @@ class RDMANode {
     struct cm_con_data_t remote_props;   // values to connect to remote side
     struct ibv_context *ib_ctx;          // device handle
     struct ibv_pd *pd;                   // PD handle
-    std::vector<struct ibv_cq *> cq;     // CQ handle
-    std::vector<struct ibv_qp *> qp;     // QP handle
+    std::vector<struct rdma_connection*> conns;
     struct ibv_mr *mr;                   // MR handle for buf
     char *buf;              // memory buffer pointer, used for RDMA and send ops
-    std::vector<int> sock;  // TCP socket file descriptor
   };
 
  private:
-	int connect_qp();
+	struct rdma_connection* connect_qp(int sock);
   int sock_sync_data(int sock, int xfer_size, const char *local_data,
                      char *remote_data);
-  int post_send(int idx, size_t msg_size, ibv_wr_opcode opcode,
+  int post_send(struct rdma_connection* idx, size_t msg_size, ibv_wr_opcode opcode,
                 long long local_offset, long long remote_offset);
-  int post_receive(int idx, size_t msg_size, long long local_offset);
+  int post_receive(struct rdma_connection* idx, size_t msg_size, long long local_offset);
   int modify_qp_to_init(struct ibv_qp *qp);
   int modify_qp_to_rtr(struct ibv_qp *qp, uint32_t remote_qpn, uint16_t dlid,
                        uint8_t *dgid);
   int modify_qp_to_rts(struct ibv_qp *qp);
   int resources_destroy();
-  virtual void after_connect_qp(int idx) = 0;
+  virtual void after_connect_qp(struct rdma_connection* idx) = 0;
+  std::unique_ptr<std::mutex> mtx;
 
  public:
   RDMANode();
   ~RDMANode();
 	int resources_create(size_t size);
-	bool sock_connect(const std::string& server_name = "", u_int32_t tcp_port = 9091);
-  int send(int idx, size_t msg_size, long long local_offset) {
+	std::vector<struct rdma_connection*> sock_connect(const std::string& server_name = "", u_int32_t tcp_port = 9091);
+  int send(struct rdma_connection* idx, size_t msg_size, long long local_offset) {
     return post_send(idx, msg_size, IBV_WR_SEND, local_offset, 0);
   }
-  int receive(int idx, size_t msg_size, long long local_offset) {
+  int receive(struct rdma_connection* idx, size_t msg_size, long long local_offset) {
     return post_receive(idx, msg_size, local_offset);
   }
-  int rdma_read(int idx, size_t msg_size, long long local_offset,
+  int rdma_read(struct rdma_connection* idx, size_t msg_size, long long local_offset,
                 long long remote_offset) {
     return post_send(idx, msg_size, IBV_WR_RDMA_READ, local_offset,
                      remote_offset);
   }
-  int rdma_write(int idx, size_t msg_size, long long local_offset,
+  int rdma_write(struct rdma_connection* idx, size_t msg_size, long long local_offset,
                  long long remote_offset) {
     return post_send(idx, msg_size, IBV_WR_RDMA_WRITE, local_offset,
                      remote_offset);
   }
-  int poll_completion(int idx);
+  int poll_completion(struct rdma_connection* idx);
   char *get_buf() { return res->buf; }
   struct resources *res;
   size_t buf_size;
@@ -249,19 +255,18 @@ class RDMAServer : public RDMANode {
   };
  public:
   RDMAServer();
-  bool service(int idx);
+  bool service(struct rdma_connection* idx);
 
  private:
-  void allocate_mem_service(int idx);
-  void modify_mem_service(int idx);
-  void disconnect_service(int idx);
-  void register_executor_service(int idx);
-  void wait_for_job_service(int idx);
+  void allocate_mem_service(struct rdma_connection* idx);
+  void modify_mem_service(struct rdma_connection* idx);
+  void disconnect_service(struct rdma_connection* idx);
+  void register_executor_service(struct rdma_connection* idx);
+  void wait_for_job_service(struct rdma_connection* idx);
   std::map<std::pair<size_t, size_t>, int> mem_seg;
-  std::unique_ptr<std::mutex> mtx;
   std::vector<std::thread*> threads;
-  std::unordered_map<int, executor_info> executors_;
-  void after_connect_qp(int idx) override {
+  std::unordered_map<struct rdma_connection*, executor_info> executors_;
+  void after_connect_qp(struct rdma_connection* idx) override {
     auto ser = [this, idx] {while(true) if(!this->service(idx)) break;};
     threads.push_back(new std::thread(ser));
     threads.back()->detach();
@@ -271,20 +276,20 @@ class RDMAServer : public RDMANode {
 class RDMAClient : public RDMANode {
  public:
   RDMAClient();
-  std::pair<long long, long long> allocate_mem_request(int idx, size_t size);
+  std::pair<long long, long long> allocate_mem_request(struct rdma_connection* idx, size_t size);
   // type == 0: free; type == 1: accessible to generator; type == 2: accessible to worker.
-  bool modify_mem_request(int idx, std::pair<long long, long long> offset,
+  bool modify_mem_request(struct rdma_connection* idx, std::pair<long long, long long> offset,
                           int type);
-  bool disconnect_request(int idx);
-  bool register_executor_request(int idx);
-  std::pair<long long, long long> wait_for_job_request(int idx);
+  bool disconnect_request(struct rdma_connection* idx);
+  bool register_executor_request(struct rdma_connection* idx);
+  std::pair<long long, long long> wait_for_job_request(struct rdma_connection* idx);
   size_t port = -1;
-  bool is_init_ = false;
   RegularMemNode memory_;
   RDMAMemNode rdma_mem_;
+  std::map<rdma_connection*, std::mutex> conn_mtx_;
 
  private:
-  void after_connect_qp(int idx) override {}
+  void after_connect_qp(struct rdma_connection* idx) override {}
 };
 
 // register_workers then opentcp
