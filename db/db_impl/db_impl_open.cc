@@ -2205,6 +2205,9 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
     delete impl;
     *dbptr = nullptr;
   }
+  if (s.ok()) {
+    s = impl->InitRDMAClient();
+  }
 
   return s;
 }
