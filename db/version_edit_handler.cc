@@ -171,10 +171,6 @@ VersionEditHandler::VersionEditHandler(
 }
 
 Status VersionEditHandler::Initialize() {
-  LOG("call VersionEditHandler::Initialize,CHECK remote_flush:");
-  for (auto& cf : column_families_) {
-    LOG("remote_flush:", cf.options.server_use_remote_flush ? "true" : "false");
-  }
   LOG("VersionEditHandler::Initialize");
   Status s;
   if (!initialized_) {

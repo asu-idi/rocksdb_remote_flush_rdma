@@ -17,11 +17,11 @@
 #include <memory>
 #include <string>
 
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
 #include "rocksdb/customizable.h"
+#include "rocksdb/logger.hpp"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/rocksdb_namespace.h"
-#include "util/logger.hpp"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -37,11 +37,7 @@ struct ConfigOptions;
 // including data loss, unreported corruption, deadlocks, and more.
 class SliceTransform : public Customizable {
  public:
-  virtual void PackLocal(TransferService* node) const {
-    LOG("SliceTransform::PackLocal: error: not implemented");
-    assert(false);
-  };
-  virtual void PackLocal(char*& buf) const {
+  virtual void PackLocal(TransferService*) const {
     LOG("SliceTransform::PackLocal: error: not implemented");
     assert(false);
   };

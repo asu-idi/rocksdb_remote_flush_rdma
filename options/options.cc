@@ -22,9 +22,7 @@
 #include <random>
 #include <sstream>
 
-#include "memory/remote_transfer_service.h"
 #include "logging/logging.h"
-#include "memory/remote_flush_service.h"
 #include "monitoring/statistics.h"
 #include "options/db_options.h"
 #include "options/options_helper.h"
@@ -39,6 +37,8 @@
 #include "rocksdb/filter_policy.h"
 #include "rocksdb/memtablerep.h"
 #include "rocksdb/merge_operator.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/slice_transform.h"
 #include "rocksdb/sst_file_manager.h"
@@ -50,7 +50,6 @@
 #include "rocksdb/wal_filter.h"
 #include "table/block_based/block_based_table_factory.h"
 #include "util/compression.h"
-#include "util/macro.hpp"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -183,17 +182,18 @@ void* ColumnFamilyOptions::UnPackLocal(TransferService* node) {
   size_t recv_length = std::string("/tmp/ColumnFamilyOptions-").length() + 10;
   void* mem = malloc(recv_length);
   node->receive(mem, recv_length);
-  LOG("read file name:", static_cast<char*>(mem));
-  std::string file_name =
-      std::string(static_cast<char*>(mem)).substr(0, recv_length);
+  std::string file_name = std::string(static_cast<char*>(mem), recv_length);
+  free(mem);
   LOG("Unpackaging ColumnFamilyOptions from file:", file_name.c_str());
   DBOptions db_options = DBOptions();
   ConfigOptions config_options;
   std::vector<ColumnFamilyDescriptor> loaded_cf_descs;
 
-  Status ret = LoadOptionsFromFile(config_options, file_name, &db_options,
-                                   &loaded_cf_descs);
-  assert(ret.ok());
+  Status ret = Status::Busy();
+  while (!ret.ok()) {
+    ret = LoadOptionsFromFile(config_options, file_name, &db_options,
+                              &loaded_cf_descs);
+  }
   auto* options = new ColumnFamilyOptions();
   LOG("Unpackaging ColumnFamilyOptions");
   assert(loaded_cf_descs.size() == 1);
@@ -208,90 +208,14 @@ void* ColumnFamilyOptions::UnPackLocal(TransferService* node) {
     node->receive(&path_len, sizeof(path_len));
     void* path_mem = malloc(path_len);
     node->receive(path_mem, path_len);
-    std::string path =
-        std::string(static_cast<char*>(path_mem)).substr(0, path_len);
+    std::string path = std::string(static_cast<char*>(path_mem), path_len);
+    free(path_mem);
     options->cf_paths.emplace_back(path, target_size);
   }
   // assert(options->table_factory == nullptr);
   LOG("checkpoint TIME:", options->table_factory->Name());
   auto* local_table_factory =
       reinterpret_cast<TableFactory*>(TablePackFactory::UnPackLocal(node));
-  options->table_factory.reset(local_table_factory);
-  return reinterpret_cast<void*>(options);
-}
-
-void ColumnFamilyOptions::PackLocal(char*& buf) const {
-  std::function<std::string()> gen = []() {
-    std::string ret = "/tmp/ColumnFamilyOptions-";
-    for (int i = 0; i < 10; i++) {
-      std::random_device rd;
-      std::mt19937 generator(rd());
-      ret += std::to_string(generator() % 10);
-    }
-    return ret;
-  };
-  std::string file_name = gen();
-  DBOptions db_options = DBOptions();
-  std::vector<std::string> cf_names_;
-  std::vector<ColumnFamilyOptions> cf_options_;
-  cf_names_.push_back("default");
-  cf_options_.push_back(*this);
-  Status ret =
-      PersistRocksDBOptions(db_options, cf_names_, cf_options_, file_name,
-                            Env::Default()->GetFileSystem().get());
-  assert(ret.ok());
-  PACK_TO_BUF(file_name.c_str(), buf, file_name.length());
-  LOG("Packaging ColumnFamilyOptions to file:", file_name.c_str());
-  size_t cf_path_size = cf_paths.size();
-  PACK_TO_BUF(&cf_path_size, buf, sizeof(cf_path_size));
-  for (auto& cf_path : cf_paths) {
-    PACK_TO_BUF(&cf_path.target_size, buf, sizeof(uint64_t));
-    size_t path_len = cf_path.path.length();
-    PACK_TO_BUF(&path_len, buf, sizeof(path_len));
-    PACK_TO_BUF(cf_path.path.c_str(), buf, path_len);
-  }
-  // table_factory
-  table_factory->PackLocal(buf);
-  LOG("Packaging ColumnFamilyOptions");
-}
-
-void* ColumnFamilyOptions::UnPackLocal(char*& buf) {
-  size_t recv_length = std::string("/tmp/ColumnFamilyOptions-").length() + 10;
-  void* mem = malloc(recv_length);
-  UNPACK_FROM_BUF(buf, mem, recv_length);
-  LOG("read file name:", static_cast<char*>(mem));
-  std::string file_name =
-      std::string(static_cast<char*>(mem)).substr(0, recv_length);
-  LOG("Unpackaging ColumnFamilyOptions from file:", file_name.c_str());
-  DBOptions db_options = DBOptions();
-  ConfigOptions config_options;
-  std::vector<ColumnFamilyDescriptor> loaded_cf_descs;
-
-  Status ret = LoadOptionsFromFile(config_options, file_name, &db_options,
-                                   &loaded_cf_descs);
-  assert(ret.ok());
-  auto* options = new ColumnFamilyOptions();
-  LOG("Unpackaging ColumnFamilyOptions");
-  assert(loaded_cf_descs.size() == 1);
-  *options = loaded_cf_descs[0].options;
-  LOG("Unpackaging ColumnFamilyOptions");
-  size_t cf_path_size = 0;
-  UNPACK_FROM_BUF(buf, &cf_path_size, sizeof(cf_path_size));
-  for (size_t i = 0; i < cf_path_size; i++) {
-    uint64_t target_size = 0;
-    UNPACK_FROM_BUF(buf, &target_size, sizeof(uint64_t));
-    size_t path_len = 0;
-    UNPACK_FROM_BUF(buf, &path_len, sizeof(path_len));
-    void* path_mem = malloc(path_len);
-    UNPACK_FROM_BUF(buf, path_mem, path_len);
-    std::string path =
-        std::string(static_cast<char*>(path_mem)).substr(0, path_len);
-    options->cf_paths.emplace_back(path, target_size);
-  }
-  // assert(options->table_factory == nullptr);
-  LOG("checkpoint TIME:", options->table_factory->Name());
-  auto* local_table_factory =
-      reinterpret_cast<TableFactory*>(TablePackFactory::UnPackLocal(buf));
   options->table_factory.reset(local_table_factory);
   return reinterpret_cast<void*>(options);
 }

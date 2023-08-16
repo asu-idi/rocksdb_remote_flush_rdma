@@ -8,7 +8,7 @@
 #include "memory/allocator.h"
 #include "memory/arena.h"
 #include "memory/concurrent_arena.h"
-#include "memory/remote_flush_service.h"
+#include "rocksdb/remote_flush_service.h"
 #include "rocksdb/write_buffer_manager.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -26,24 +26,6 @@ class BasicArenaFactory {
                std::string("ConcurrentArena").substr(0, 15)) {
       return reinterpret_cast<ConcurrentArena*>(
           ConcurrentArena::UnPackLocal(node));
-    } else {
-      LOG("BasicArenaFactory::UnPackLocal: error: ", msg, ' ', msg.substr(0, 5),
-          ' ', msg.substr(0, 15));
-
-      assert(false);
-      return nullptr;
-    }
-  }
-  static BasicArena* UnPackLocal(char*& buf) {
-    std::string msg;
-    msg.resize(15);
-    UNPACK_FROM_BUF(buf, msg.data(), 15);
-    if (msg.substr(0, 5) == "Arena") {
-      return reinterpret_cast<Arena*>(Arena::UnPackLocal(buf));
-    } else if (msg.substr(0, 15) ==
-               std::string("ConcurrentArena").substr(0, 15)) {
-      return reinterpret_cast<ConcurrentArena*>(
-          ConcurrentArena::UnPackLocal(buf));
     } else {
       LOG("BasicArenaFactory::UnPackLocal: error: ", msg, ' ', msg.substr(0, 5),
           ' ', msg.substr(0, 15));

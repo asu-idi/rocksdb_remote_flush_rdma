@@ -18,9 +18,9 @@
 #include <thread>
 
 #include "db/remote_flush_job.h"
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
 #include "rocksdb/configurable.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #ifdef OS_SOLARIS
 #include <alloca.h>
 #endif
@@ -314,7 +314,7 @@ DBImpl::DBImpl(const DBOptions& options, const std::string& dbname,
   }
 }
 
-void DBImpl::BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri) {
+void DBImpl::BackgroundCallRemoteFlush(int sockfd, Env::Priority) {
   TEST_SYNC_POINT("DBImpl::BackgroundCallRemoteFlush:Start");
 #ifdef ROCKSDB_RDMA
   // TODO(rdma): fix this. non-zero index is not supported. We need
@@ -354,8 +354,9 @@ void DBImpl::BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri) {
   const char* bye = "byebyemessage";
   void* end_msg = malloc(strlen(bye));
   transfer_service.receive(&end_msg, strlen(bye));
-  LOG("worker received MsgEnd: ", reinterpret_cast<char*>(end_msg));
-
+  LOG("worker received MsgEnd: ",
+      std::string(reinterpret_cast<char*>(end_msg), strlen(bye)));
+  free(end_msg);
 #ifdef ROCKSDB_RDMA
   // TODO(rdma): close connection with memnode or do nothing
 #else
@@ -397,12 +398,13 @@ void DBImpl::BackgroundCallRemoteFlush(int sockfd, Env::Priority thread_pri) {
   close(unpack_tcp_node.connection_info_.client_sockfd);
 
   delete worker_node;
-
+  free(local_handler);
   bg_flush_scheduled_--;
+  bg_cv_.SignalAll();
   TEST_SYNC_POINT("DBImpl::BackgroundCallRemoteFlush:Finish");
 }
 
-void DBImpl::UnscheduleRemoteFlushCallback(void* arg) {
+void DBImpl::UnscheduleRemoteFlushCallback(void*) {
   LOG("DBImpl::UnscheduleRemoteFlushCallback");
 }
 
@@ -419,69 +421,6 @@ void DBImpl::BGWorkRemoteFlush(void* arg) {
   TEST_SYNC_POINT("DBImpl::BGWorkRemoteFlush:Finish");
 }
 
-void DBImpl::TEST_BGWorkRemoteFlush(void* arg) {
-  RemoteFlushThreadArg fta = *(reinterpret_cast<RemoteFlushThreadArg*>(arg));
-  delete reinterpret_cast<RemoteFlushThreadArg*>(arg);
-  size_t magic = 0;
-  size_t buffer = 0;
-  char* buffer_ptr = reinterpret_cast<char*>(&buffer);
-
-  read_data(fta.sockfd_, buffer_ptr, sizeof(size_t));
-  LOG("Received RemoteFlushJob ptr ");
-  auto* flush_job = reinterpret_cast<RemoteFlushJob*>(buffer);
-  Status ret = flush_job->RunLocal();
-  if (ret.ok()) {
-    magic = 1234;
-  } else {
-    magic = 4321;
-  }
-  send(fta.sockfd_, &magic, sizeof(size_t), 0);
-  close(fta.sockfd_);
-}
-void DBImpl::TEST_RemoteFlushListener() {
-  std::function<void()> func = [this]() {
-    int server_fd, new_socket;
-    struct sockaddr_in address;
-    int opt = 1;
-    int addrlen = sizeof(address);
-    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-      LOG("socket failed");
-      assert(false);
-    }
-    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt,
-                   sizeof(opt))) {
-      LOG("setsockopt failed");
-      assert(false);
-    }
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(8980);
-    if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
-      LOG("bind failed");
-      assert(false);
-    }
-    if (listen(server_fd, 3) < 0) {
-      LOG("listen failed");
-      assert(false);
-    }
-    while (true) {
-      if ((new_socket = accept(server_fd, (struct sockaddr*)&address,
-                               (socklen_t*)&addrlen)) < 0) {
-        LOG("accept failed");
-        assert(false);
-      }
-      auto* fta = new RemoteFlushThreadArg();
-      fta->thread_pri_ = Env::Priority::HIGH;
-      fta->db_ = this;
-      fta->sockfd_ = new_socket;
-      std::thread thr(&DBImpl::TEST_BGWorkRemoteFlush, fta);
-      thr.detach();
-      LOG("Scheduled worker thread for remote flush job: ", new_socket);
-    }
-  };
-  std::thread thr(func);
-  thr.detach();
-}
 Status DBImpl::ListenAndScheduleFlushJob(int port) {
   mutex_.Lock();
   if (!opened_successfully_ || bg_work_paused_ > 0 ||
@@ -513,7 +452,7 @@ Status DBImpl::ListenAndScheduleFlushJob(int port) {
     LOG("bind failed");
     return Status::IOError("bind failed");
   }
-  if (listen(server_fd, 3) < 0) {
+  if (listen(server_fd, 10) < 0) {
     LOG("listen failed");
     return Status::IOError("listen failed");
   }
@@ -523,21 +462,14 @@ Status DBImpl::ListenAndScheduleFlushJob(int port) {
       LOG("accept failed");
       return Status::IOError("accept failed");
     }
-    {
-      char client_ip[INET_ADDRSTRLEN];
-      inet_ntop(AF_INET, &address.sin_addr, client_ip, INET_ADDRSTRLEN);
-      int client_port = ntohs(address.sin_port);
-      LOG_CERR("remote flush worker receive package from memnode: ", client_ip,
-               ':', client_port);
-    }
+    // if (!opened_successfully_ || bg_work_paused_ > 0 ||
+    //     (error_handler_.IsBGWorkStopped() &&
+    //      !error_handler_.IsRecoveryInProgress()) ||
+    //     shutting_down_.load(std::memory_order_acquire)) {
+    //   mutex_.Unlock();
+    //   return Status::Aborted("DB is not working");
+    // }
     mutex_.Lock();
-    if (!opened_successfully_ || bg_work_paused_ > 0 ||
-        (error_handler_.IsBGWorkStopped() &&
-         !error_handler_.IsRecoveryInProgress()) ||
-        shutting_down_.load(std::memory_order_acquire)) {
-      mutex_.Unlock();
-      return Status::Aborted("DB is not working");
-    }
     Status s = Status::OK();
     auto bg_job_limits = GetBGJobLimits();
     bool is_flush_pool_empty =

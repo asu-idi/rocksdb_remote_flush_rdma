@@ -1,4 +1,4 @@
-#include "memory/remote_flush_service.h"
+#include "rocksdb/remote_flush_service.h"
 
 #include <arpa/inet.h>
 #include <byteswap.h>
@@ -15,15 +15,17 @@
 #include <unistd.h>
 
 #include <cassert>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <ratio>
 #include <thread>
 #include <utility>
 
-#include "util/logger.hpp"
+#include "rocksdb/logger.hpp"
 
 #define MAX_POLL_CQ_TIMEOUT 2000
 #if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -39,32 +41,34 @@ static inline uint64_t ntohll(uint64_t x) { return x; }
 namespace ROCKSDB_NAMESPACE {
 
 bool TCPNode::send(const void *buf, size_t size) {
-  size_t total = 0;
   const char *hheader = "Header";
   void *header_ = malloc(sizeof(size) + 6);
   memcpy(header_, hheader, 6);
   memcpy(reinterpret_cast<char *>(header_) + 6, &size, sizeof(size));
-  assert(write(connection_info_.client_sockfd, header_, sizeof(size) + 6) ==
-         sizeof(size) + 6);
-
-  char *buf_ = reinterpret_cast<char *>(const_cast<void *>(buf));
-  while (total < size) {
-    fd_set write_fds;
-    FD_ZERO(&write_fds);
-    FD_SET(connection_info_.client_sockfd, &write_fds);
-    int ret = select(connection_info_.client_sockfd + 1, nullptr, &write_fds,
-                     nullptr, nullptr);
-    if (ret == -1) {
-      LOG("TCPNode::send: select error");
+  size_t total = 0;
+  while (total < sizeof(size) + 6) {
+    ssize_t n = write(connection_info_.client_sockfd,
+                      reinterpret_cast<char *>(header_) + total,
+                      sizeof(size) + 6 - total);
+    if (n == -1) {
+      LOG("TCPNode::send: write error");
       assert(false);
-    } else if (ret == 0) {
-      continue;
     }
+    total += n;
+  }
+
+  free(header_);
+  char *buf_ = reinterpret_cast<char *>(const_cast<void *>(buf));
+  total = 0;
+  while (total < size) {
     ssize_t n =
         write(connection_info_.client_sockfd, buf_ + total, size - total);
     if (n == -1) {
       LOG("TCPNode::send: write error");
       assert(false);
+    } else if (n == 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      continue;
     }
     total += n;
   }
@@ -77,13 +81,24 @@ bool TCPNode::send(const void *buf, size_t size) {
 bool TCPNode::receive(void **buf, size_t *size) {
   char *buf_ = reinterpret_cast<char *>(*buf);
   void *header_ = malloc(sizeof(size_t) + 6);
-  ssize_t temp =
-      read(connection_info_.client_sockfd, header_, sizeof(size_t) + 6);
-  LOG("TCPNode::receive: read header:", temp, ' ',
-      reinterpret_cast<char *>(header_), ' ',
-      *reinterpret_cast<size_t *>(reinterpret_cast<char *>(header_) + 6));
-
-  assert(memcmp(header_, "Header", 6) == 0);
+  ssize_t total = 0;
+  while (total < ssize_t(sizeof(size_t) + 6)) {
+    ssize_t n = read(connection_info_.client_sockfd,
+                     reinterpret_cast<char *>(header_) + total,
+                     sizeof(size_t) + 6 - total);
+    if (n == -1) {
+      LOG("TCPNode::receive: read error");
+      assert(false);
+    } else if (n == 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      continue;
+    }
+    total += n;
+  }
+  if (memcmp(header_, "Header", 6)) {
+    LOG("TCPNode::receive: header error");
+    assert(false);
+  }
   size_t package_size = 0;
   memcpy(&package_size, reinterpret_cast<char *>(header_) + 6,
          sizeof(package_size));
@@ -98,31 +113,20 @@ bool TCPNode::receive(void **buf, size_t *size) {
     *buf = buf_;
   }
   LOG("TCPNode::receive: package size:", package_size);
-  size_t total = 0;
-  while (total < package_size) {
-    fd_set read_fds;
-    FD_ZERO(&read_fds);
-    FD_SET(connection_info_.client_sockfd, &read_fds);
-    int ret = select(connection_info_.client_sockfd + 1, &read_fds, nullptr,
-                     nullptr, nullptr);
-    if (ret == -1) {
-      LOG("TCPNode::receive: select error");
-      assert(false);
-    } else if (ret == 0) {
-      continue;
-    }
-
+  total = 0;
+  while (total < ssize_t(package_size)) {
     ssize_t n = read(connection_info_.client_sockfd, buf_ + total,
                      package_size - total);
     if (n == -1) {
       LOG("TCPNode::receive: read error");
       assert(false);
     } else if (n == 0) {
-      break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      continue;
     }
     total += n;
   }
-  assert(total == package_size);
+  assert(total == ssize_t(package_size));
   return true;
 }
 
@@ -171,38 +175,42 @@ bool RemoteFlushJobPD::opentcp(int port) {
     auto *node = new TCPNode(client_address, client_sockfd);
     register_flush_job_generator(client_sockfd, node);
     LOG("tcp server accept success");
-    std::thread([client_sockfd, this]() {
+    std::thread([client_sockfd, node, this]() {
       // BGworkRemoteFlush
       LOG("remote flush job generator connected. start receiving.");
-      flushjob_package *package = receive_remote_flush_job(client_sockfd);
+      flushjob_package *package = receive_remote_flush_job(node);
       LOG("remote flush job received from generator.");
-      TCPNode *worker_tcpnode = choose_flush_job_executor();
+      TCPNode *worker_tcpnode = nullptr;
+      while (worker_tcpnode == nullptr) {
+        worker_tcpnode = choose_flush_job_executor();
+      }
       assert(worker_tcpnode != nullptr);
       LOG("remote flush job executor chosen.");
       send_remote_flush_job(package, worker_tcpnode);
       LOG("remote flush job sent to worker.");
       setfree_flush_job_executor(worker_tcpnode);
       LOG("remote flush job executor set free.");
-      unregister_flush_job_generator(client_sockfd);
+      TCPNode *generator = unregister_flush_job_generator(client_sockfd);
       LOG("remote flush job generator unregistered.");
+      delete generator;
+      delete package;
     }).detach();
   }
+  close(server_info_.tcp_server_sockfd_);
   return true;
 }
 
 RemoteFlushJobPD::flushjob_package *RemoteFlushJobPD::receive_remote_flush_job(
-    int client_sockfd) {
-  auto tcpnode = flush_job_generators_.at(client_sockfd);
+    TCPNode *generator_node) {
   auto *package = new flushjob_package();
   const char *bye = "byebyemessage";
   while (true) {
     void *buf_ = nullptr;
     size_t size = 0;
-    tcpnode->receive(&buf_, &size);
+    generator_node->receive(&buf_, &size);
     assert(buf_ != nullptr);
     if (size == 0) assert(false);
-    LOG("memnode recv data from generator:", reinterpret_cast<char *>(buf_),
-        ' ', size);
+    LOG("memnode recv data from generator:", size);
     if (size == strlen(bye) &&
         strncmp(reinterpret_cast<char *>(buf_), bye, size) == 0) {
       break;
@@ -210,19 +218,15 @@ RemoteFlushJobPD::flushjob_package *RemoteFlushJobPD::receive_remote_flush_job(
     package->package.push_back(std::make_pair(buf_, size));
   }
   LOG("receive_remote_flush_job: receive bye message");
-  close(client_sockfd);
   return package;
 }
 
 void RemoteFlushJobPD::send_remote_flush_job(flushjob_package *package,
                                              TCPNode *worker_node) {
   for (auto &it : package->package) {
-    LOG("remote flushjob worker send data:",
-        *reinterpret_cast<size_t *>(it.first), ' ', it.second);
     worker_node->send(it.first, it.second);
   }
   worker_node->send("byebyemessage", strlen("byebyemessage"));
-  close(worker_node->connection_info_.client_sockfd);
 }
 
 void RemoteFlushJobPD::setfree_flush_job_executor(TCPNode *worker_node) {
@@ -234,17 +238,17 @@ void RemoteFlushJobPD::setfree_flush_job_executor(TCPNode *worker_node) {
 }
 TCPNode *RemoteFlushJobPD::choose_flush_job_executor() {
   std::lock_guard<std::mutex> lock(mtx_);
+  int client_sockfd = socket(AF_INET, SOCK_STREAM, 0);
+  assert(client_sockfd != -1);
   for (auto &it : flush_job_executors_status_) {
     if (it.second) {
-      it.second = false;
-      int client_sockfd = socket(AF_INET, SOCK_STREAM, 0);
-      assert(client_sockfd != -1);
       if (connect(client_sockfd,
                   reinterpret_cast<struct sockaddr *>(
                       &it.first->connection_info_.sin_addr),
                   sizeof(it.first->connection_info_.sin_addr)) < 0) {
         LOG("remote flushjob worker connect error");
-        assert(false);
+        close(client_sockfd);
+        return nullptr;
       }
       {
         char client_ip[INET_ADDRSTRLEN];
@@ -254,6 +258,7 @@ TCPNode *RemoteFlushJobPD::choose_flush_job_executor() {
         LOG_CERR("MemNode send package to worker: ", client_ip, ':',
                  client_port);
       }
+      it.second = false;
       it.first->connection_info_.client_sockfd = client_sockfd;
       flush_job_executors_in_use_.insert(
           std::make_pair(client_sockfd, it.first));
@@ -261,6 +266,7 @@ TCPNode *RemoteFlushJobPD::choose_flush_job_executor() {
     }
   }
   LOG("no available worker");
+  close(client_sockfd);
   return nullptr;
 }
 
@@ -417,8 +423,8 @@ int RDMANode::post_send(int idx, size_t msg_size, ibv_wr_opcode opcode,
     sr.wr.rdma.remote_addr = res->remote_props.addr + remote_offset;
     sr.wr.rdma.rkey = res->remote_props.rkey;
   }
-  // there is a Receive Request in the responder side, so we won't get any into
-  // RNR flow
+  // there is a Receive Request in the responder side, so we won't get any
+  // into RNR flow
   rc = ibv_post_send(res->qp[idx], &sr, &bad_wr);
   if (rc)
     fprintf(stderr, "failed to post SR\n");
@@ -556,7 +562,8 @@ int RDMANode::resources_create(size_t size, size_t conn_cnt, size_t max_wr) {
     rc = 1;
     goto resources_create_exit;
   }
-  // each side will send only one WR, so Completion Queue with 1 entry is enough
+  // each side will send only one WR, so Completion Queue with 1 entry is
+  // enough
   cq_size = 10;
   for (i = 0; i < conn_cnt; i++) {
     res->cq.push_back(ibv_create_cq(res->ib_ctx, cq_size, nullptr, nullptr, 0));
@@ -691,7 +698,8 @@ int RDMANode::connect_qp(int idx) {
     uint8_t *p = remote_con_data.gid;
     // LOG("Remote GID =", p[0], ":", p[1], ":", p[2], ":", p[3], ":", p[4],
     // ":", p[5], ":", p[6], ":", p[7], ":", p[8],
-    // 	":", p[9], ":", p[10], ":", p[11], ":", p[12], ":", p[13], ":", p[14],
+    // 	":", p[9], ":", p[10], ":", p[11], ":", p[12], ":", p[13], ":",
+    // p[14],
     // ":", p[15], "\n");
   }
   // modify the QP to init

@@ -11,13 +11,12 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
-#include "memory/shared_package.h"
 #include "monitoring/perf_context_imp.h"
 #include "rocksdb/comparator.h"
 #include "rocksdb/comparator_factory.h"
-#include "util/logger.hpp"
+#include "rocksdb/logger.hpp"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -32,20 +31,7 @@ class UserComparatorWrapper {
   static void* UnPackLocal(TransferService* node) {
     void* ucmp = ComparatorFactory::UnPackLocal(node);
     void* mem = malloc(sizeof(UserComparatorWrapper));
-    size_t size = sizeof(UserComparatorWrapper);
-    node->receive(&mem, &size);
-    auto* ret = reinterpret_cast<UserComparatorWrapper*>(mem);
-    ret->user_comparator_ = reinterpret_cast<Comparator*>(ucmp);
-    return ret;
-  }
-  void PackLocal(char*& buf) const {
-    user_comparator_->PackLocal(buf);
-    PACK_TO_BUF(this, buf, sizeof(*this));
-  }
-  static void* UnPackLocal(char*& buf) {
-    void* ucmp = ComparatorFactory::UnPackLocal(buf);
-    void* mem = malloc(sizeof(UserComparatorWrapper));
-    UNPACK_FROM_BUF(buf, mem, sizeof(UserComparatorWrapper));
+    node->receive(&mem, sizeof(UserComparatorWrapper));
     auto* ret = reinterpret_cast<UserComparatorWrapper*>(mem);
     ret->user_comparator_ = reinterpret_cast<Comparator*>(ucmp);
     return ret;
@@ -92,37 +78,8 @@ class UserComparatorWrapper {
     return user_comparator_->EqualWithoutTimestamp(a, b);
   }
 
-  int Pack(shm_package::PackContext& ctx, int idx = -1) const;
-  void UnPack(shm_package::PackContext& ctx, int idx, size_t& offset) const;
-
  private:
   const Comparator* user_comparator_;
 };
-
-inline int UserComparatorWrapper::Pack(shm_package::PackContext& ctx,
-                                       int idx) const {
-  if (idx == -1) idx = ctx.add_package((void*)this, "UserComparatorWrapper");
-  ctx.append_str(idx, user_comparator_->Name());
-  return idx;
-}
-
-inline void UserComparatorWrapper::UnPack(shm_package::PackContext& ctx,
-                                          int idx, size_t& offset) const {
-  std::string str = ctx.get_str(idx, offset);
-  if (strcmp(str.c_str(), "leveldb.BytewiseComparator") == 0) {
-    auto* cmp = BytewiseComparator();
-    // todo: fix const
-    // user_comparator_ =
-    // static_cast<Comparator*>(const_cast<Comparator*>(cmp));
-  } else if (strcmp(str.c_str(), "rocksdb.ReverseBytewiseComparator") == 0) {
-    auto* cmp = ReverseBytewiseComparator();
-    // todo: fix const
-    // user_comparator_ =
-    // static_cast<Comparator*>(const_cast<Comparator*>(cmp));
-  } else {
-    LOG("UserComparatorWrapper::UnPack() is unimplemented: ", str.c_str());
-    assert(false);
-  }
-}
 
 }  // namespace ROCKSDB_NAMESPACE

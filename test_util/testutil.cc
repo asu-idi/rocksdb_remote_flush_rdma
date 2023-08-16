@@ -563,10 +563,6 @@ class SpecialMemTableRep : public MemTableRep {
     node->send(&msg, sizeof(msg));
     memtable_->PackLocal(node, protection_bytes_per_key);
   }
-  void PackLocal(char*& buf) const override {
-    assert(false);
-    memtable_->PackLocal(buf);
-  }
 
  public:
   explicit SpecialMemTableRep(Allocator* allocator, MemTableRep* memtable,

@@ -9,15 +9,6 @@
 
 #include "db/version_edit.h"
 
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
-#include "rocksdb/types.h"
-#include "util/socket_api.hpp"
-
-#ifdef __linux__
-#include <sys/socket.h>
-#include <unistd.h>
-#endif
 #include <array>
 #include <cassert>
 #include <cstddef>
@@ -31,7 +22,10 @@
 #include "db/version_set.h"
 #include "logging/event_logger.h"
 #include "rocksdb/file_checksum.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/slice.h"
+#include "rocksdb/types.h"
 #include "table/unique_id_impl.h"
 #include "test_util/sync_point.h"
 #include "util/coding.h"
@@ -149,36 +143,11 @@ void FileMetaData::PackRemote(TransferService* node) const {
   node->send(reinterpret_cast<const char*>(this), sizeof(FileMetaData));
   LOG("FileMetaData::PackRemote done.");
 }
-int FileMetaData::Pack(shm_package::PackContext& ctx, int idx) {
-  if (idx == -1) idx = ctx.add_package((void*)this, "FileMetaData");
-  ctx.append_str(idx, *smallest.rep());
-  ctx.append_str(idx, *largest.rep());
-  ctx.append_str(idx, file_checksum);
-  ctx.append_str(idx, file_checksum_func_name);
-  ctx.append_uint64(idx, unique_id[0]);
-  ctx.append_uint64(idx, unique_id[1]);
-  // smallest.Clear();
-  // largest.Clear();
-  // file_checksum.clear();
-  // file_checksum_func_name.clear();
-  // TODO: block fd.table_reader
-  return idx;
-}
-void FileMetaData::UnPack(shm_package::PackContext& ctx, int idx,
-                          size_t& offset) {
-  *smallest.get_rep() = ctx.get_str(idx, offset);
-  *largest.get_rep() = ctx.get_str(idx, offset);
-  file_checksum = ctx.get_str(idx, offset);
-  file_checksum_func_name = ctx.get_str(idx, offset);
-  unique_id[0] = ctx.get_uint64(idx, offset);
-  unique_id[1] = ctx.get_uint64(idx, offset);
-}
 
 void* FileMetaData::UnPackRemote(TransferService* node) {
   LOG("server FileMetaData::UnPackRemote");
   void* mem = malloc(sizeof(FileMetaData));
   auto ptr = reinterpret_cast<FileMetaData*>(mem);
-  size_t ret_val = 0;
   void* local_fd = FileDescriptor::UnPackRemote(node);
   std::string remote_file_checksum;
   size_t file_checksum_len = 0;
@@ -228,11 +197,15 @@ void* FileMetaData::UnPackRemote(TransferService* node) {
   ptr->largest.get_rep()->resize(largest_len);
   memcpy(const_cast<char*>(ptr->largest.get_rep()->data()),
          reinterpret_cast<char*>(local_largest), largest_len);
+  free(local_largest);
+  free(local_smallest);
 
   new (&ptr->unique_id) std::array<uint64_t, 2>();
   ptr->unique_id.at(0) = reinterpret_cast<uint64_t*>(local_uid)[0];
   ptr->unique_id.at(1) = reinterpret_cast<uint64_t*>(local_uid)[1];
   ptr->fd = *reinterpret_cast<FileDescriptor*>(local_fd);
+  free(local_fd);
+  free(local_uid);
 
   LOG("server FileMetaData::UnPackRemote done.");
   return mem;
@@ -283,6 +256,7 @@ void* FileMetaData::UnPackLocal(TransferService* node) {
   node->receive(mem, sizeof(FileMetaData));
   auto ptr = reinterpret_cast<FileMetaData*>(mem);
   ptr->fd = *reinterpret_cast<FileDescriptor*>(local_fd);
+  free(local_fd);
   new (&ptr->file_checksum) std::string(kUnknownFileChecksum);
   new (&ptr->file_checksum_func_name) std::string(kUnknownFileChecksumFuncName);
   // new (&ptr->smallest.SharedSet(const std::string &now)) InternalKey();
@@ -305,89 +279,10 @@ void* FileMetaData::UnPackLocal(TransferService* node) {
   new (&ptr->unique_id) std::array<uint64_t, 2>();
   ptr->unique_id.at(0) = reinterpret_cast<uint64_t*>(local_uid)[0];
   ptr->unique_id.at(1) = reinterpret_cast<uint64_t*>(local_uid)[1];
+  free(local_uid);
   LOG("client FileMetaData::UnPackLocal unique_id");
   free(data);
   free(data2);
-  return mem;
-}
-
-void FileMetaData::PackLocal(char*& buf) const {
-  LOG("server FileMetaData::PackLocal");
-  fd.PackLocal(buf);
-  LOG("server FileMetaData::PackLocal fd");
-  assert(table_reader_handle == nullptr);
-  assert(file_checksum == kUnknownFileChecksum);
-  assert(file_checksum_func_name == kUnknownFileChecksumFuncName);
-  void* mptr = reinterpret_cast<void*>(smallest.get_rep());
-  LOG("check data before PACK:", std::hex, *reinterpret_cast<int64_t*>(mptr),
-      ' ', *(reinterpret_cast<int64_t*>(mptr) + 1), ' ',
-      *(reinterpret_cast<int64_t*>(mptr) + 2), std::dec)
-  size_t ret_val = 0;
-  ret_val = smallest.size();
-  PACK_TO_BUF(&ret_val, buf, sizeof(size_t));
-  if (ret_val > 0) {
-    PACK_TO_BUF(smallest.get_rep(), buf, smallest.size());
-  }
-  ret_val = largest.size();
-  PACK_TO_BUF(&ret_val, buf, sizeof(size_t));
-  if (ret_val > 0) {
-    PACK_TO_BUF(largest.get_rep(), buf, largest.size());
-  }
-
-  uint64_t uid[2] = {unique_id.at(0), unique_id.at(1)};
-  PACK_TO_BUF(uid, buf, sizeof(uint64_t) * 2);
-  PACK_TO_BUF(reinterpret_cast<const char*>(this), buf, sizeof(FileMetaData));
-}
-
-void* FileMetaData::UnPackLocal(char*& buf) {
-  LOG("client FileMetaData::UnPackLocal");
-  void* local_fd = FileDescriptor::UnPackLocal(buf);
-  size_t len = 0, len2 = 0;
-  void *data = nullptr, *data2 = nullptr;
-  UNPACK_FROM_BUF(buf, &len, sizeof(size_t));
-  if (len > 0) {
-    data = malloc(len);
-    UNPACK_FROM_BUF(buf, data, len);
-  }
-
-  len2 = 0;
-  UNPACK_FROM_BUF(buf, &len2, sizeof(size_t));
-  if (len2 > 0) {
-    data2 = malloc(len2);
-    UNPACK_FROM_BUF(buf, data2, len2);
-  }
-
-  void* local_uid = malloc(2 * sizeof(uint64_t));
-  UNPACK_FROM_BUF(buf, local_uid, 2 * sizeof(uint64_t));
-
-  void* mem = malloc(sizeof(FileMetaData));
-  UNPACK_FROM_BUF(buf, mem, sizeof(FileMetaData));
-  auto ptr = reinterpret_cast<FileMetaData*>(mem);
-  ptr->fd = *reinterpret_cast<FileDescriptor*>(local_fd);
-  new (&ptr->file_checksum) std::string(kUnknownFileChecksum);
-  new (&ptr->file_checksum_func_name) std::string(kUnknownFileChecksumFuncName);
-  // new (&ptr->smallest.SharedSet(const std::string &now)) InternalKey();
-  if (len > 0) {
-    std::string* sptr = ptr->smallest.get_rep();
-    new (sptr) std::string(reinterpret_cast<const char*>(data), len);
-  } else {
-    std::string* sptr = ptr->smallest.get_rep();
-    new (sptr) std::string();
-  }
-  if (len2 > 0) {
-    std::string* sptr = ptr->largest.get_rep();
-    new (sptr) std::string(reinterpret_cast<const char*>(data2), len2);
-  } else {
-    std::string* sptr = ptr->largest.get_rep();
-    new (sptr) std::string();
-  }
-
-  LOG("client FileMetaData::UnPackLocal unique_id");
-  new (&ptr->unique_id) std::array<uint64_t, 2>();
-  ptr->unique_id.at(0) = reinterpret_cast<uint64_t*>(local_uid)[0];
-  ptr->unique_id.at(1) = reinterpret_cast<uint64_t*>(local_uid)[1];
-  LOG("client FileMetaData::UnPackLocal unique_id");
-
   return mem;
 }
 
@@ -432,6 +327,8 @@ void* VersionEdit::UnPackLocal(TransferService* node) {
     node->receive(&db_id_, db_id_len_);
     new (&ret_version_edit_->db_id_) std::string(db_id_, db_id_len_);
     delete[] db_id_;
+  } else {
+    new (&ret_version_edit_->db_id_) std::string();
   }
 
   size_t comparator_len_ = 0;
@@ -442,6 +339,8 @@ void* VersionEdit::UnPackLocal(TransferService* node) {
     new (&ret_version_edit_->comparator_)
         std::string(comparator_, comparator_len_);
     delete[] comparator_;
+  } else {
+    new (&ret_version_edit_->comparator_) std::string();
   }
 
   new (&ret_version_edit_->compact_cursors_)
@@ -484,6 +383,7 @@ void* VersionEdit::UnPackLocal(TransferService* node) {
     auto local_file_meta_data =
         reinterpret_cast<FileMetaData*>(FileMetaData::UnPackLocal(node));
     ret_version_edit_->new_files_.emplace_back(level, *local_file_meta_data);
+    free(local_file_meta_data);
   }
 
   new (&ret_version_edit_->blob_file_additions_)
@@ -501,6 +401,8 @@ void* VersionEdit::UnPackLocal(TransferService* node) {
     new (&ret_version_edit_->column_family_name_)
         std::string(column_family_name_, column_family_name_len);
     delete[] column_family_name_;
+  } else {
+    new (&ret_version_edit_->column_family_name_) std::string();
   }
 
   size_t full_history_ts_low_size = 0;
@@ -511,6 +413,8 @@ void* VersionEdit::UnPackLocal(TransferService* node) {
     new (&ret_version_edit_->full_history_ts_low_)
         std::string(full_history_ts_low_, full_history_ts_low_size);
     delete[] full_history_ts_low_;
+  } else {
+    new (&ret_version_edit_->full_history_ts_low_) std::string();
   }
   return mem;
 }
@@ -563,156 +467,19 @@ void VersionEdit::PackLocal(TransferService* node) const {
   }
 }
 
-void* VersionEdit::UnPackLocal(char*& buf) {
-  void* mem = malloc(sizeof(VersionEdit));
-  UNPACK_FROM_BUF(buf, mem, sizeof(VersionEdit));
-  auto ret_version_edit_ = reinterpret_cast<VersionEdit*>(mem);
-  size_t db_id_len_ = 0;
-  UNPACK_FROM_BUF(buf, &db_id_len_, sizeof(size_t));
-  if (db_id_len_ > 0) {
-    char* db_id_ = new char[db_id_len_];
-    UNPACK_FROM_BUF(buf, db_id_, db_id_len_);
-    new (&ret_version_edit_->db_id_) std::string(db_id_, db_id_len_);
-    delete[] db_id_;
-  }
-
-  size_t comparator_len_ = 0;
-  UNPACK_FROM_BUF(buf, &comparator_len_, sizeof(size_t));
-  if (comparator_len_ > 0) {
-    char* comparator_ = new char[comparator_len_];
-    UNPACK_FROM_BUF(buf, comparator_, comparator_len_);
-    new (&ret_version_edit_->comparator_)
-        std::string(comparator_, comparator_len_);
-    delete[] comparator_;
-  }
-
-  new (&ret_version_edit_->compact_cursors_)
-      std::vector<std::pair<int, InternalKey>>();
-  size_t compact_cursors_size_ = 0;
-  UNPACK_FROM_BUF(buf, &compact_cursors_size_, sizeof(size_t));
-  for (size_t i = 0; i < compact_cursors_size_; i++) {
-    int level = 0;
-    UNPACK_FROM_BUF(buf, &level, sizeof(int));
-    size_t str_len_ = 0;
-    UNPACK_FROM_BUF(buf, &str_len_, sizeof(size_t));
-    char* str_ = new char[str_len_];
-    UNPACK_FROM_BUF(buf, str_, str_len_);
-    InternalKey key;
-    key.DecodeFrom(Slice(str_, str_len_));
-    ret_version_edit_->compact_cursors_.emplace_back(level, key);
-    delete[] str_;
-  }
-
-  new (&ret_version_edit_->deleted_files_)
-      std::vector<std::pair<int, uint64_t>>();
-  size_t deleted_files_size_ = 0;
-  UNPACK_FROM_BUF(buf, &deleted_files_size_, sizeof(size_t));
-  for (size_t i = 0; i < deleted_files_size_; i++) {
-    int level = 0;
-    UNPACK_FROM_BUF(buf, &level, sizeof(int));
-    uint64_t file_number = 0;
-    UNPACK_FROM_BUF(buf, &file_number, sizeof(uint64_t));
-    ret_version_edit_->deleted_files_.insert(
-        std::make_pair(level, file_number));
-  }
-
-  new (&ret_version_edit_->new_files_)
-      std::vector<std::pair<int, FileMetaData>>();
-  size_t new_files_size_ = 0;
-  UNPACK_FROM_BUF(buf, &new_files_size_, sizeof(size_t));
-  for (size_t i = 0; i < new_files_size_; i++) {
-    int level = 0;
-    UNPACK_FROM_BUF(buf, &level, sizeof(int));
-    auto local_file_meta_data =
-        reinterpret_cast<FileMetaData*>(FileMetaData::UnPackLocal(buf));
-    ret_version_edit_->new_files_.emplace_back(level, *local_file_meta_data);
-  }
-
-  new (&ret_version_edit_->blob_file_additions_)
-      std::vector<BlobFileAddition>();
-  new (&ret_version_edit_->blob_file_garbages_) std::vector<BlobFileGarbage>();
-
-  new (&ret_version_edit_->wal_additions_) std::vector<WalAddition>();
-  new (&ret_version_edit_->wal_deletion_) WalDeletion();
-
-  size_t column_family_name_len = 0;
-  UNPACK_FROM_BUF(buf, &column_family_name_len, sizeof(size_t));
-  if (column_family_name_len > 0) {
-    char* column_family_name_ = new char[column_family_name_len];
-    UNPACK_FROM_BUF(buf, column_family_name_, column_family_name_len);
-    new (&ret_version_edit_->column_family_name_)
-        std::string(column_family_name_, column_family_name_len);
-    delete[] column_family_name_;
-  }
-
-  size_t full_history_ts_low_size = 0;
-  UNPACK_FROM_BUF(buf, &full_history_ts_low_size, sizeof(size_t));
-  if (full_history_ts_low_size > 0) {
-    char* full_history_ts_low_ = new char[full_history_ts_low_size];
-    UNPACK_FROM_BUF(buf, full_history_ts_low_, full_history_ts_low_size);
-    new (&ret_version_edit_->full_history_ts_low_)
-        std::string(full_history_ts_low_, full_history_ts_low_size);
-    delete[] full_history_ts_low_;
-  }
-  return mem;
-}
-
-void VersionEdit::PackLocal(char*& buf) const {
-  size_t ret_val = 0;
-  PACK_TO_BUF(reinterpret_cast<const void*>(this), buf, sizeof(VersionEdit));
-
-  size_t db_id_len_ = db_id_.size();
-  PACK_TO_BUF(&db_id_len_, buf, sizeof(size_t));
-  if (db_id_len_ > 0) {
-    PACK_TO_BUF(db_id_.c_str(), buf, db_id_len_);
-  }
-
-  size_t comparator_len_ = 0;
-  PACK_TO_BUF(&comparator_len_, buf, sizeof(size_t));
-  if (comparator_.size() > 0) {
-    PACK_TO_BUF(comparator_.c_str(), buf, comparator_.size());
-  }
-
-  size_t compact_cursors_size_ = compact_cursors_.size();
-  PACK_TO_BUF(&compact_cursors_size_, buf, sizeof(size_t));
-  for (auto pr : compact_cursors_) {
-    PACK_TO_BUF(&pr.first, buf, sizeof(int));
-    auto string_ptr = pr.second.get_rep();
-    size_t str_len_ = string_ptr->length();
-    PACK_TO_BUF(&str_len_, buf, sizeof(size_t));
-    PACK_TO_BUF(string_ptr->c_str(), buf, str_len_);
-  }
-
-  size_t deleted_files_size_ = deleted_files_.size();
-  PACK_TO_BUF(&deleted_files_size_, buf, sizeof(size_t));
-  for (auto pr : deleted_files_) {
-    PACK_TO_BUF(&pr.first, buf, sizeof(int));
-    PACK_TO_BUF(&pr.second, buf, sizeof(uint64_t));
-  }
-
-  size_t new_files_size_ = new_files_.size();
-  PACK_TO_BUF(&new_files_size_, buf, sizeof(size_t));
-  for (auto pr : new_files_) {
-    PACK_TO_BUF(&pr.first, buf, sizeof(int));
-    pr.second.PackLocal(buf);
-  }
-
-  size_t column_family_name_len = column_family_name_.size();
-  PACK_TO_BUF(&column_family_name_len, buf, sizeof(size_t));
-  if (column_family_name_len > 0) {
-    PACK_TO_BUF(column_family_name_.c_str(), buf, column_family_name_len);
-  }
-
-  size_t full_history_ts_low_size = full_history_ts_low_.size();
-  PACK_TO_BUF(&full_history_ts_low_size, buf, sizeof(size_t));
-  if (full_history_ts_low_size > 0) {
-    PACK_TO_BUF(full_history_ts_low_.c_str(), buf, full_history_ts_low_size);
-  }
+void VersionEdit::free_remote() {
+  new_files_.~NewFiles();
+  db_id_.~basic_string();
+  comparator_.~basic_string();
+  column_family_name_.~basic_string();
+  full_history_ts_low_.~basic_string();
+  compact_cursors_.~CompactCursors();
+  wal_additions_.~WalAdditions();
+  deleted_files_.~DeletedFiles();
 }
 
 void VersionEdit::PackRemote(TransferService* node) const {
   LOG("VersionEdit::PackRemote");
-  size_t ret_val = 0;
   size_t new_file_size_ = new_files_.size();
   node->send(&new_file_size_, sizeof(size_t));
   for (size_t i = 0; i < new_file_size_; i++) {
@@ -726,7 +493,6 @@ void VersionEdit::PackRemote(TransferService* node) const {
 
 void VersionEdit::UnPackRemote(TransferService* node) {
   LOG("VersionEdit::UnPackRemote");
-  size_t ret_val = 0;
   size_t new_file_size_ = 0;
   NewFiles remote_new_files_;
   node->receive(&new_file_size_, sizeof(size_t));
@@ -736,71 +502,12 @@ void VersionEdit::UnPackRemote(TransferService* node) {
     auto local_file_meta_data =
         reinterpret_cast<FileMetaData*>(FileMetaData::UnPackRemote(node));
     remote_new_files_.emplace_back(level, *local_file_meta_data);
+    free(local_file_meta_data);
   }
   new_files_ = remote_new_files_;
   node->receive(&has_last_sequence_, sizeof(bool));
   node->receive(&last_sequence_, sizeof(SequenceNumber));
   LOG("VersionEdit::UnPackRemote done.");
-}
-
-int VersionEdit::Pack(shm_package::PackContext& ctx, int idx) {
-  if (idx == -1) idx = ctx.add_package((void*)this, "VersionEdit");
-  ctx.append_str(idx, db_id_);
-  ctx.append_str(idx, comparator_);
-  ctx.append_str(idx, column_family_name_);
-  ctx.append_str(idx, full_history_ts_low_);
-  // db_id_.clear();
-  // comparator_.clear();
-  // column_family_name_.clear();
-  // full_history_ts_low_.clear();
-  ctx.append_uint64(idx, compact_cursors_.size());
-  for (auto& iter : compact_cursors_) {
-    ctx.append_uint64(idx, iter.first);
-    ctx.append_str(idx, *iter.second.rep());
-  }
-  // compact_cursors_.clear();
-  ctx.append_uint64(idx, deleted_files_.size());
-  for (auto& iter : deleted_files_) {
-    ctx.append_uint64(idx, iter.first);
-    ctx.append_uint64(idx, iter.second);
-  }
-  // deleted_files_.clear();
-  ctx.append_uint64(idx, new_files_.size());
-  for (auto& iter : new_files_) {
-    ctx.append_uint64(idx, iter.first);
-    iter.second.Pack(ctx, idx);
-  }
-  // TODO(block): try to block blob_file_additions_ && blob_file_garbages_
-  return idx;
-}
-void VersionEdit::UnPack(shm_package::PackContext& ctx, int idx,
-                         size_t& offset) {
-  db_id_ = ctx.get_str(idx, offset);
-  comparator_ = ctx.get_str(idx, offset);
-  column_family_name_ = ctx.get_str(idx, offset);
-  full_history_ts_low_ = ctx.get_str(idx, offset);
-
-  compact_cursors_.clear();
-  for (size_t i = 0, tot = ctx.get_uint64(idx, offset); i < tot; i++) {
-    int first = ctx.get_uint64(idx, offset);
-    std::string second = ctx.get_str(idx, offset);
-    compact_cursors_.push_back(std::make_pair(first, InternalKey()));
-    *compact_cursors_.back().second.get_rep() = second;
-  }
-
-  deleted_files_.clear();
-  for (size_t i = 0, tot = ctx.get_uint64(idx, offset); i < tot; i++) {
-    int first = ctx.get_uint64(idx, offset);
-    uint64_t second = ctx.get_uint64(idx, offset);
-    deleted_files_.insert(std::make_pair(first, second));
-  }
-
-  new_files_.clear();
-  for (size_t i = 0, tot = ctx.get_uint64(idx, offset); i < tot; i++) {
-    int first = ctx.get_uint64(idx, offset);
-    new_files_.push_back(std::make_pair(first, FileMetaData()));
-    new_files_.back().second.UnPack(ctx, idx, offset);
-  }
 }
 
 void VersionEdit::Clear() {

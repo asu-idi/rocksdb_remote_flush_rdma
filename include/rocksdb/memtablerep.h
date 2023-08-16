@@ -45,16 +45,12 @@
 #include <stdexcept>
 #include <unordered_set>
 
-#include "db/dbformat.h"
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
-#include "memory/shared_package.h"
-#include "memtable/skiplist.h"
 #include "rocksdb/customizable.h"
+#include "rocksdb/logger.hpp"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/status.h"
-#include "util/coding.h"
-#include "util/logger.hpp"
 namespace ROCKSDB_NAMESPACE {
 
 class Arena;
@@ -67,15 +63,10 @@ struct DBOptions;
 using KeyHandle = void*;
 
 extern Slice GetLengthPrefixedSlice(const char* data);
-
+extern int VarintLength(uint64_t v);
 class MemTableRep {
  public:
-  virtual void PackLocal(TransferService* node,
-                         size_t protection_bytes_per_key) const {
-    LOG("MemTableRep::PackLocal: error: not implemented");
-    assert(false);
-  }
-  virtual void PackLocal(char*& buf) const {
+  virtual void PackLocal(TransferService*, size_t) const {
     LOG("MemTableRep::PackLocal: error: not implemented");
     assert(false);
   }
@@ -85,11 +76,7 @@ class MemTableRep {
   // concatenated with values.
   class KeyComparator {
    public:
-    virtual void PackLocal(TransferService* node) const {
-      LOG("MemTableRep::KeyComparator::PackLocal: error: not implemented");
-      assert(false);
-    }
-    virtual void PackLocal(char*& buf) const {
+    virtual void PackLocal(TransferService*) const {
       LOG("MemTableRep::KeyComparator::PackLocal: error: not implemented");
       assert(false);
     }
@@ -330,10 +317,6 @@ class MemTableRep {
   // Default: true
   virtual bool IsSnapshotSupported() const { return true; }
 
-  // virtual int Pack(shm_package::PackContext& ctx, int idx = -1) = 0;
-  // virtual void UnPack(shm_package::PackContext& ctx, int idx, size_t& offset)
-  // = 0;
-
  protected:
   // When *key is an internal key concatenated with the value, returns the
   // user key.
@@ -366,10 +349,11 @@ class MemTableRepFactory : public Customizable {
     return CreateMemTableRep(key_cmp, allocator, slice_transform, logger);
   }
 
-  virtual MemTableRep* CreateExistMemTableWrapper(const Allocator* arna,
-                                                  const MemTableRep* memtable) {
+  virtual MemTableRep* CreateExistMemTableWrapper(const Allocator*,
+                                                  const MemTableRep*) {
     LOG("should not call default CreateExistMemTableWrapper");
     assert(false);
+    return nullptr;
   }
 
   const char* Name() const override = 0;
@@ -393,10 +377,6 @@ class MemTableRepFactory : public Customizable {
 //     steps). This is an optimization for the access pattern including many
 //     seeks with consecutive keys.
 class SkipListFactory : public MemTableRepFactory {
- public:
-  static void* UnPackLocal(int sockfd);
-  static void* UnPackLocal(char*& buf);
-
  public:
   explicit SkipListFactory(size_t lookahead = 0);
 

@@ -337,16 +337,6 @@ class LegacyWritableFileWrapper : public FSWritableFile {
 
 class LegacyDirectoryWrapper : public FSDirectory {
  public:
-  void PackLocal(int sockfd) const override {
-    LOG("LegacyDirectoryWrapper::PackLocal");
-    size_t msg = 0x03;
-    if (target_ == nullptr) msg += (0x01 << 8);
-    write(sockfd, &msg, sizeof(msg));
-    read_data(sockfd, &msg, sizeof(msg));
-    if (target_ != nullptr) target_->PackLocal(sockfd);
-  }
-
- public:
   explicit LegacyDirectoryWrapper(std::unique_ptr<Directory>&& target)
       : target_(std::move(target)) {}
 

@@ -13,7 +13,7 @@
 #include <string>
 #include <thread>
 
-#include "memory/remote_flush_service.h"
+#include "rocksdb/remote_flush_service.h"
 
 // TODO(rdma): need to receive different packages simutanously, and choose one
 // registered worker to send package to it.

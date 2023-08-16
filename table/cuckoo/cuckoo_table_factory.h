@@ -7,9 +7,9 @@
 
 #include <string>
 
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
 #include "rocksdb/options.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/table.h"
 #include "util/murmurhash.h"
 
@@ -57,10 +57,6 @@ class CuckooTableFactory : public TableFactory {
   void PackLocal(TransferService* node) const override {
     size_t msg = 2;
     node->send(&msg, sizeof(msg));
-  }
-  void PackLocal(char*& buf) const override {
-    size_t msg = 2;
-    PACK_TO_BUF(&msg, buf, sizeof(msg));
   }
 
  public:

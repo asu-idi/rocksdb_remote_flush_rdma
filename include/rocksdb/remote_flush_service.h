@@ -13,6 +13,7 @@
 #include <linux/types.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 #include <atomic>
 #include <cassert>
@@ -31,7 +32,7 @@
 #include <utility>
 #include <vector>
 
-#include "util/thread_local.h"
+#include "rocksdb/status.h"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -67,15 +68,13 @@ class RegularMemNode {
   }
   void free(char *addr) {
     std::lock_guard<std::mutex> lock(mtx_);
-    auto it = std::find_if(mempool_.begin(), mempool_.end(),
-                           [addr](const std::pair<void *, size_t> &p) {
-                             return p.first == reinterpret_cast<void *>(addr);
-                           });
-    if (it != mempool_.end())
-      ::free(addr);
-    else
-      assert(false);
-    mempool_.erase(it);
+    for (auto it = mempool_.begin(); it != mempool_.end(); ++it) {
+      if (it->first == addr) {
+        ::free(addr);
+        mempool_.erase(it);
+        break;
+      }
+    }
   }
 };
 
@@ -84,8 +83,13 @@ class RegularMemNode {
 class TCPNode {
  public:
   explicit TCPNode(sockaddr_in client_addr, int32_t client_sockfd)
-      : connection_info_{client_addr, client_sockfd} {}
-  ~TCPNode() = default;
+      : connection_info_{client_addr, client_sockfd, 0} {}
+  ~TCPNode() {
+    if (connection_info_.listen_sockfd > 0)
+      close(connection_info_.listen_sockfd);
+    if (connection_info_.client_sockfd > 0)
+      close(connection_info_.client_sockfd);
+  }
   bool send(const void *buf, size_t size);
 
   // set address & length to avoid unnecessary copy
@@ -104,6 +108,7 @@ class TCPNode {
   struct tcp_connect_meta {
     struct sockaddr_in sin_addr;
     int32_t client_sockfd;
+    int32_t listen_sockfd;
   } __attribute__((aligned)) connection_info_;
 
  private:
@@ -157,7 +162,7 @@ class RDMANode {
 
  public:
   RDMANode();
-  ~RDMANode() = default;
+  ~RDMANode() { delete res; }
   int resources_create(size_t size, size_t conn_cnt = 1, size_t max_wr = 5);
   int connect_qp(int idx);
   int send(int idx, size_t msg_size, long long local_offset) {
@@ -223,17 +228,20 @@ class RemoteFlushJobPD {
   bool closetcp();
   void register_flush_job_generator(int fd, const TCPNode *node) {
     std::lock_guard<std::mutex> lock(mtx_);
+    if (flush_job_generators_.find(fd) != flush_job_generators_.end())
+      assert(false);
     flush_job_generators_.insert(
         std::make_pair(fd, const_cast<TCPNode *>(node)));
   }
-  void unregister_flush_job_generator(int fd) {
+  TCPNode *unregister_flush_job_generator(int fd) {
     std::lock_guard<std::mutex> lock(mtx_);
     assert(flush_job_generators_.find(fd) != flush_job_generators_.end());
     TCPNode *node = flush_job_generators_.at(fd);
     flush_job_generators_.erase(fd);
-    delete node;
+    return node;
   }
-  void register_flush_job_executor(const std::string &ip, int port) {
+  void register_flush_job_executor([[maybe_unused]] const std::string &ip,
+                                   int port) {
     std::lock_guard<std::mutex> lock(mtx_);
 
     struct sockaddr_in serv_addr;
@@ -259,7 +267,7 @@ class RemoteFlushJobPD {
   struct flushjob_package {
     std::vector<std::pair<void *, size_t>> package;
   };
-  flushjob_package *receive_remote_flush_job(int client_sockfd);
+  flushjob_package *receive_remote_flush_job(TCPNode *generator_node);
   TCPNode *choose_flush_job_executor();
   void setfree_flush_job_executor(TCPNode *worker_node);
   void send_remote_flush_job(flushjob_package *package, TCPNode *worker_node);

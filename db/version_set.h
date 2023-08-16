@@ -47,8 +47,8 @@
 #include "db/version_edit.h"
 #include "db/write_controller.h"
 #include "env/file_system_tracer.h"
-#include "memory/remote_flush_service.h"
 #include "rocksdb/options.h"
+#include "rocksdb/remote_flush_service.h"
 #if USE_COROUTINES
 #include "folly/experimental/coro/BlockingWait.h"
 #include "folly/experimental/coro/Collect.h"
@@ -129,9 +129,6 @@ enum EpochNumberRequirement {
 // compaction, blob files, etc.
 class VersionStorageInfo {
  public:
-  void check();
-  void PackLocal(char*& buf) const;
-  static void* UnPackLocal(char*& buf);
   void PackLocal(TransferService* node) const;
   static void* UnPackLocal(TransferService* node);
 
@@ -828,9 +825,6 @@ using MultiGetRange = MultiGetContext::Range;
 // the column family at a certain point in time.
 class Version {
  public:
-  void check();
-  void PackLocal(char*& buf) const;
-  static void* UnPackLocal(char*& buf);
   void PackLocal(TransferService* node) const;
   static void* UnPackLocal(TransferService* node, void* cfd_ptr);
 
@@ -1132,9 +1126,7 @@ class AtomicGroupReadBuffer {
 // column families via ColumnFamilySet, i.e. set of the column families.
 class VersionSet {
  public:
-  void check();
-  void PackLocal(char*& buf) const;
-  static void* UnPackLocal(char*& buf);
+  void free_remote();
   void PackLocal(TransferService* node) const;
   static void* UnPackLocal(TransferService* node);
 

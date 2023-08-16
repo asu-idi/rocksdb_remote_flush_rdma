@@ -70,15 +70,18 @@ auto main(int argc, char** argv) -> signed {
   opt.prefix_extractor.reset(NewFixedPrefixTransform(3));
   opt.create_if_missing = true;
   // opt.merge_operator = MergeOperators::CreateStringAppendOperator();
+  opt.max_background_jobs = 32;
   opt.max_background_flushes = 32;
+  opt.max_background_compactions = 1;
+  opt.max_compaction_bytes = 1 << 30;
   opt.server_remote_flush = use_remote_flush;
   opt.write_buffer_size = 64 << 20;
 
-  // opt.max_background_compactions = 0;
-  // opt.disable_auto_compactions = true;
+  opt.max_background_compactions = 0;
+  opt.disable_auto_compactions = true;
 
   opt.max_write_buffer_number = 4;
-  opt.delayed_write_rate = 100 << 20;
+  opt.delayed_write_rate = 1 << 30;
   // opt.min_write_buffer_number_to_merge = 2;
   DB::Open(opt, db_name, &db);
   assert(db != nullptr);
@@ -93,73 +96,112 @@ auto main(int argc, char** argv) -> signed {
   db->register_local_ip(local_ip);
   LOG("local_ip: ", local_ip);
 
-  std::thread t[10];
-  for (size_t i = 0; i < 10; i++) {
+  std::chrono::steady_clock::time_point all_begin =
+      std::chrono::steady_clock::now();
+  std::thread t[15];
+  for (size_t i = 0; i < 15; i++) {
     t[i] = std::thread([i, db]() {
-      std::map<std::string, std::string> kv_pairs;
+      std::this_thread::sleep_for(std::chrono::seconds(i * 2));
+      std::chrono::steady_clock::time_point begin =
+          std::chrono::steady_clock::now();
+      // std::map<std::string, std::string> kv_pairs;
       int cnt_miss = 0;
       ColumnFamilyOptions cfo;
-      // cfo.write_buffer_size = 64 << 20;
-      // cfo.disable_auto_compactions = true;
+
       ColumnFamilyHandle* cf = nullptr;
-      db->CreateColumnFamily(cfo, "cf_num_" + std::to_string(i), &cf);
-      for (size_t j = 0; j < 1000; j++) {
+      assert(db->CreateColumnFamily(cfo, "cf_num_" + std::to_string(i), &cf) ==
+             Status::OK());
+      Status ret = Status::OK();
+      for (size_t j = 0; j < 750000000; j++) {
+        WriteOptions wo;
+        wo.disableWAL = true;
         std::random_device rd;
         std::mt19937 gen(rd());
         std::uniform_int_distribution<int64_t> dis(0, 1000000000000000000);
         std::string key = std::to_string(dis(gen));
         std::string value = std::to_string(dis(gen));
-        if (kv_pairs.find(key) != kv_pairs.end()) {
-          continue;
+        if (j % 50000 == 0) {
+          std::chrono::steady_clock::time_point end =
+              std::chrono::steady_clock::now();
+          LOG_CERR(
+              "cfd:", cf->GetName(), " write kv pairs: ", j, "time:",
+              std::chrono::duration_cast<std::chrono::milliseconds>(end - begin)
+                  .count(),
+              "ms", " speed:",
+              j * 1000.0 /
+                  std::chrono::duration_cast<std::chrono::milliseconds>(end -
+                                                                        begin)
+                      .count(),
+              " kvp/s");
         }
-        LOG("put, key=", key, " value=", value);
-        db->Put(WriteOptions(), cf, key, value);
-        kv_pairs.insert(std::make_pair(key, value));
+
+        // if (kv_pairs.find(key) != kv_pairs.end()) {
+        //   continue;
+        // }
+        // LOG("put, key=", key, " value=", value);
+        ret = db->Put(wo, cf, key, value);
+        // assert(ret == Status::OK());
+        // kv_pairs.insert(std::make_pair(key, value));
       }
       db->Flush(FlushOptions(), cf);
-      cnt_miss = 0;
-      for (auto kv : kv_pairs) {
-        std::string value;
-        db->Get(ReadOptions(), cf, kv.first, &value);
-        LOG("get, key=", kv.first, " value=\"", value, "\" \"", kv.second,
-            "\"");
-        if (value != kv.second) cnt_miss++;
-      }
-      cout << "cnt_miss=" << cnt_miss << endl;
+      // cnt_miss = 0;
+      // for (auto kv : kv_pairs) {
+      //   std::string value;
+      //   db->Get(ReadOptions(), cf, kv.first, &value);
+      //   LOG("get, key=", kv.first, " value=\"", value, "\" \"", kv.second,
+      //       "\"");
+      //   if (value != kv.second) cnt_miss++;
+      // }
+      // cout << "cfd_name" << i << " cnt_miss=" << cnt_miss << endl;
       db->DisableFileDeletions();
       db->DropColumnFamily(cf);
       db->DestroyColumnFamilyHandle(cf);
     });
   }
 
-  std::map<std::string, std::string> kv_pairs;
+  // std::map<std::string, std::string> kv_pairs;
   int cnt_miss = 0;
-  for (size_t j = 0; j < 1000; j++) {
+  WriteOptions wo;
+  wo.disableWAL = true;
+  //  40Bytes kv pair, 30GB, 750000000 kv pairs
+  for (size_t j = 0; j < 750000000; j++) {
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_int_distribution<int64_t> dis(0, 1000000000000000000);
-    std::string key = std::to_string(dis(gen));
+    std::string key = std::to_string(dis(gen)) + std::to_string(j);
     std::string value = std::to_string(dis(gen));
-    if (kv_pairs.find(key) != kv_pairs.end()) {
-      continue;
-    }
+    // if (kv_pairs.find(key) != kv_pairs.end()) {
+    //   continue;
+    // }
     LOG("put, key=", key, " value=", value);
-    db->Put(WriteOptions(), key, value);
-    kv_pairs.insert(std::make_pair(key, value));
+    db->Put(wo, key, value);
+    // kv_pairs.insert(std::make_pair(key, value));
   }
   db->Flush(FlushOptions());
-  cnt_miss = 0;
-  for (auto kv : kv_pairs) {
-    std::string value;
-    db->Get(ReadOptions(), kv.first, &value);
-    LOG("get, key=", kv.first, " value=\"", value, "\" \"", kv.second, "\"");
-    if (value != kv.second) cnt_miss++;
-  }
-  cout << "cnt_miss=" << cnt_miss << endl;
+  // cnt_miss = 0;
+  // for (auto kv : kv_pairs) {
+  //   std::string value;
+  //   db->Get(ReadOptions(), kv.first, &value);
+  //   LOG("get, key=", kv.first, " value=\"", value, "\" \"", kv.second, "\"");
+  //   if (value != kv.second) cnt_miss++;
+  // }
+  // cout << " default cnt_miss=" << cnt_miss << endl;
   db->DisableFileDeletions();
   for (auto& i : t) {
     i.join();
   }
+  std::chrono::steady_clock::time_point all_end =
+      std::chrono::steady_clock::now();
+  LOG_CERR(
+      "all write kv pairs: ", 750000000, "time:",
+      std::chrono::duration_cast<std::chrono::milliseconds>(all_end - all_begin)
+          .count(),
+      "ms", " speed:",
+      750000000 * 1000.0 /
+          std::chrono::duration_cast<std::chrono::milliseconds>(all_end -
+                                                                all_begin)
+              .count(),
+      " kvp/s");
   // int all_cf[] = {114514, 114515, 19119, 909090909, 233333333};
   // ColumnFamilyOptions cfo;
   // cfo.write_buffer_size = 1 << 20;

@@ -10,26 +10,14 @@
 #include <stdint.h>
 
 #include <cassert>
-
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
-#include "util/logger.hpp"
-#include "util/socket_api.hpp"
-// for socket API
-#ifdef __linux
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <pthread.h>
-#include <sys/socket.h>
-#include <unistd.h>
-#endif  //__linux
-
 #include <cstdint>
 #include <cstring>
 #include <memory>
 
-#include "memory/remote_flush_service.h"
 #include "rocksdb/customizable.h"
+#include "rocksdb/logger.hpp"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/rocksdb_namespace.h"
 #include "rocksdb/status.h"
 
@@ -50,13 +38,6 @@ class SystemClock : public Customizable {
     mem.resize(20);
     assert(mem.length() == 20);
     node->send(mem.c_str(), mem.length());
-    LOG("send ", mem.c_str());
-  }
-  virtual void PackLocal(char*& buf) const {
-    std::string mem(Name());
-    mem.resize(20);
-    assert(mem.length() == 20);
-    PACK_TO_BUF(mem.c_str(), buf, mem.length());
     LOG("send ", mem.c_str());
   }
 

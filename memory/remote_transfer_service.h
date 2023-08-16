@@ -1,7 +1,7 @@
 #pragma once
 
-#include "memory/remote_flush_service.h"
-#include "util/logger.hpp"
+#include "rocksdb/logger.hpp"
+#include "rocksdb/remote_flush_service.h"
 
 namespace ROCKSDB_NAMESPACE {
 

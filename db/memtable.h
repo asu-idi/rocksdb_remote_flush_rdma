@@ -24,15 +24,14 @@
 #include "db/version_edit.h"
 #include "memory/allocator.h"
 #include "memory/concurrent_arena.h"
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
-#include "memory/shared_package.h"
 #include "monitoring/instrumented_mutex.h"
 #include "options/cf_options.h"
 #include "rocksdb/compression_type.h"
 #include "rocksdb/db.h"
 #include "rocksdb/listener.h"
 #include "rocksdb/memtablerep.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/table_properties.h"
 #include "rocksdb/types.h"
 #include "table/multiget_context.h"
@@ -59,18 +58,6 @@ struct ImmutableMemTableOptions {
     void* mem = malloc(sizeof(ImmutableMemTableOptions));
     size_t size = sizeof(ImmutableMemTableOptions);
     node->receive(&mem, &size);
-    auto* ptr = reinterpret_cast<ImmutableMemTableOptions*>(mem);
-    ptr->info_log = nullptr;  // todo(iaIm14)
-    return mem;
-  }
-  void PackLocal(char*& buf) const {
-    LOG("ImmutableMemTableOptions::PackLocal");
-    PACK_TO_BUF(reinterpret_cast<const void*>(this), buf, sizeof(*this));
-  }
-  static void* UnPackLocal(char*& buf) {
-    LOG("ImmutableMemTableOptions::UnPackLocal");
-    void* mem = malloc(sizeof(ImmutableMemTableOptions));
-    UNPACK_FROM_BUF(buf, mem, sizeof(ImmutableMemTableOptions));
     auto* ptr = reinterpret_cast<ImmutableMemTableOptions*>(mem);
     ptr->info_log = nullptr;  // todo(iaIm14)
     return mem;
@@ -121,9 +108,13 @@ using MultiGetRange = MultiGetContext::Range;
 // written to (aka the 'immutable memtables').
 class MemTable {
  public:
-  void check();
-  static void* UnPackLocal(char*& buf);
-  void PackLocal(char*& buf) const;
+  void free_remote() {
+    flush_job_info_.reset();
+    delete arena_;
+    delete prefix_extractor_;
+    delete table_;
+    delete range_del_table_;
+  }
   static void* UnPackLocal(TransferService* node);
   void PackLocal(TransferService* node) const;
   void PackRemote(TransferService* node) const;
@@ -139,20 +130,6 @@ class MemTable {
     static void* UnPackLocal(TransferService* node) {
       LOG("KeyComparator::UnPackLocal");
       void* internal_key_comparator = InternalKeyComparator::UnPackLocal(node);
-      void* mem = new KeyComparator(InternalKeyComparator());
-      auto* kcmp = reinterpret_cast<KeyComparator*>(mem);
-      memcpy(reinterpret_cast<void*>(
-                 const_cast<InternalKeyComparator*>(&kcmp->comparator)),
-             internal_key_comparator, sizeof(InternalKeyComparator));
-      return mem;
-    }
-    void PackLocal(char*& buf) const override {
-      LOG("KeyComparator::PackLocal");
-      comparator.PackLocal(buf);
-    }
-    static void* UnPackLocal(char*& buf) {
-      LOG("KeyComparator::UnPackLocal");
-      void* internal_key_comparator = InternalKeyComparator::UnPackLocal(buf);
       void* mem = new KeyComparator(InternalKeyComparator());
       auto* kcmp = reinterpret_cast<KeyComparator*>(mem);
       memcpy(reinterpret_cast<void*>(
@@ -182,8 +159,7 @@ class MemTable {
                     const ImmutableOptions& ioptions,
                     const MutableCFOptions& mutable_cf_options,
                     WriteBufferManager* write_buffer_manager,
-                    SequenceNumber earliest_seq, uint32_t column_family_id,
-                    bool is_shared = false);
+                    SequenceNumber earliest_seq, uint32_t column_family_id);
 
   // No copying allowed
   MemTable(const MemTable&) = delete;
@@ -607,8 +583,6 @@ class MemTable {
   static Status VerifyEntryChecksum(const char* entry,
                                     size_t protection_bytes_per_key,
                                     bool allow_data_in_errors = false);
-  int Pack(shm_package::PackContext& ctx, int idx = -1);
-  void UnPack(shm_package::PackContext& ctx, int idx, size_t& offset);
 
  private:
   enum FlushStateEnum { FLUSH_NOT_REQUESTED, FLUSH_REQUESTED, FLUSH_SCHEDULED };

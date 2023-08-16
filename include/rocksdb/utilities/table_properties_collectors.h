@@ -7,12 +7,8 @@
 #include <atomic>
 #include <memory>
 
-#include "memory/remote_flush_service.h"
+#include "rocksdb/remote_flush_service.h"
 #include "rocksdb/table_properties.h"
-#include "util/socket_api.hpp"
-#ifdef __linux__
-#include <sys/socket.h>
-#endif  //__linux__
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -34,18 +30,6 @@ class CompactOnDeletionCollectorFactory
     *reinterpret_cast<double*>(msg + sizeof(size_t) * 2 + sizeof(size_t)) =
         deletion_ratio_.load();
     node->send(msg, msg_len);
-  }
-  void PackLocal(char*& buf) const override {
-    size_t msg_len = sizeof(size_t) + sizeof(size_t) * 2 + sizeof(double);
-    char* msg = reinterpret_cast<char*>(malloc(msg_len));
-    *reinterpret_cast<size_t*>(msg) = 2;
-    *reinterpret_cast<size_t*>(msg + sizeof(size_t)) =
-        sliding_window_size_.load();
-    *reinterpret_cast<size_t*>(msg + sizeof(size_t) * 2) =
-        deletion_trigger_.load();
-    *reinterpret_cast<double*>(msg + sizeof(size_t) * 2 + sizeof(size_t)) =
-        deletion_ratio_.load();
-    PACK_TO_BUF(msg, buf, msg_len);
   }
 
  public:

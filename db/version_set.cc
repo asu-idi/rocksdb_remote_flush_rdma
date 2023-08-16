@@ -47,11 +47,11 @@
 #include "db/version_builder.h"
 #include "db/version_edit_handler.h"
 #include "db/wal_edit.h"
-#include "memory/remote_flush_service.h"
 #include "options/db_options.h"
 #include "rocksdb/advanced_cache.h"
 #include "rocksdb/file_system.h"
 #include "rocksdb/options.h"
+#include "rocksdb/remote_flush_service.h"
 #include "rocksdb/statistics.h"
 #include "rocksdb/system_clock.h"
 #include "table/compaction_merging_iterator.h"
@@ -1545,19 +1545,6 @@ void LevelIterator::InitFileIterator(size_t new_file_index) {
 }
 }  // anonymous namespace
 
-void Version::check() {
-  LOG("Version::check", cfd_->GetName().c_str());
-  // table_cache_->get_cache().get().
-  storage_info_.check();
-  LOG("vset:", std::hex, vset_, std::dec);
-  if (vset_ != nullptr) vset_->check();
-  LOG("next_: ", std::hex, next_, std::dec);
-  LOG("prev_: ", std::hex, prev_, std::dec);
-  LOG("refs_: ", refs_);
-  LOG("version_number: ", version_number_);
-  LOG("Version::check done");
-}
-
 void Version::PackLocal(TransferService* node) const {
   storage_info_.PackLocal(node);
   node->send(reinterpret_cast<const void*>(this), sizeof(Version));
@@ -1569,21 +1556,8 @@ void* Version::UnPackLocal(TransferService* node, void* cfd_ptr) {
   node->receive(mem, sizeof(Version));
   memcpy(reinterpret_cast<void*>(&mem_ptr->storage_info_), worker_storage_info,
          sizeof(VersionStorageInfo));
+  free(worker_storage_info);
   mem_ptr->cfd_ = reinterpret_cast<ColumnFamilyData*>(cfd_ptr);
-  return mem;
-}
-
-void Version::PackLocal(char*& buf) const {
-  storage_info_.PackLocal(buf);
-  PACK_TO_BUF(reinterpret_cast<const void*>(this), buf, sizeof(Version));
-}
-void* Version::UnPackLocal(char*& buf) {
-  void* mem = malloc(sizeof(Version));
-  auto* mem_ptr = reinterpret_cast<Version*>(mem);
-  void* worker_storage_info = VersionStorageInfo::UnPackLocal(buf);
-  UNPACK_FROM_BUF(buf, mem, sizeof(Version));
-  memcpy(reinterpret_cast<void*>(&mem_ptr->storage_info_), worker_storage_info,
-         sizeof(VersionStorageInfo));
   return mem;
 }
 
@@ -3152,30 +3126,6 @@ void Version::UpdateAccumulatedStats() {
   }
 }
 
-void VersionStorageInfo::check() {
-  LOG("VersionStorageInfo::check");
-  LOG("  num_levels: ", num_levels_);
-  LOG("  num_non_empty_levels: ", num_non_empty_levels_);
-  LOG(" level_files_brief_:", level_files_brief_.size());
-  LOG("files_:", files_->size());
-  for (int level = 0; level < num_levels_; level++) {
-    LOG("  level: ", level);
-    LOG("    files: ", files_[level].size());
-    for (auto* file_meta : files_[level]) {
-      LOG("      file: ", file_meta->fd.GetNumber());
-    }
-  }
-  LOG("accumulated_file_size: ", accumulated_file_size_);
-  LOG("accumulated_raw_key_size: ", accumulated_raw_key_size_);
-  LOG("accumulated_raw_value_size: ", accumulated_raw_value_size_);
-  LOG("accumulated_num_non_deletions: ", accumulated_num_non_deletions_);
-  LOG("accumulated_num_deletions: ", accumulated_num_deletions_);
-  LOG("current_num_non_deletions: ", current_num_non_deletions_);
-  LOG("current_num_deletions: ", current_num_deletions_);
-  LOG("current_num_samples: ", current_num_samples_);
-  LOG("finalized_: ", finalized_);
-}
-
 void VersionStorageInfo::PackLocal(TransferService* node) const {
   node->send(reinterpret_cast<const void*>(this), sizeof(VersionStorageInfo));
 }
@@ -3183,17 +3133,6 @@ void VersionStorageInfo::PackLocal(TransferService* node) const {
 void* VersionStorageInfo::UnPackLocal(TransferService* node) {
   void* mem = malloc(sizeof(VersionStorageInfo));
   node->receive(mem, sizeof(VersionStorageInfo));
-  return mem;
-}
-
-void VersionStorageInfo::PackLocal(char*& buf) const {
-  PACK_TO_BUF(reinterpret_cast<const void*>(this), buf,
-              sizeof(VersionStorageInfo));
-}
-
-void* VersionStorageInfo::UnPackLocal(char*& buf) {
-  void* mem = malloc(sizeof(VersionStorageInfo));
-  UNPACK_FROM_BUF(buf, mem, sizeof(VersionStorageInfo));
   return mem;
 }
 
@@ -4842,21 +4781,9 @@ std::string Version::DebugString(bool hex, bool print_stats) const {
   return r;
 }
 
-void VersionSet::check() {
-  LOG("VersionSet::check");
-  LOG("table_cache_:", std::hex, table_cache_, std::dec);
-  // column_family_set_->check();
-  LOG("db_id_:", db_id_);
-  LOG("current_version_number_:", current_version_number_);
-  LOG("min_log_number_to_keep_:", min_log_number_to_keep_.load());
-  LOG("prev_log_number_:", prev_log_number_);
-  LOG("manifest_file_number_:", manifest_file_number_);
-  LOG("next_file_number_:", next_file_number_.load());
-  LOG("last_sequence_:", last_sequence_.load());
-  LOG("obsolete_files_:", obsolete_files_.size());
-  LOG("VersionSet::check done.");
+void VersionSet::free_remote() {
+  delete const_cast<ImmutableDBOptions*>(db_options_);
 }
-
 void VersionSet::PackLocal(TransferService* node) const {
   LOG("VersionSet::PackLocal dump ImmutablDBOptions file");
   db_options_->PackLocal(node);
@@ -4869,26 +4796,8 @@ void* VersionSet::UnPackLocal(TransferService* node) {
   void* mem = malloc(sizeof(VersionSet));
   auto ptr = reinterpret_cast<VersionSet*>(mem);
   node->receive(reinterpret_cast<void**>(&ptr), sizeof(VersionSet));
-  memcpy(
-      const_cast<void*>(reinterpret_cast<const void* const>(&ptr->db_options_)),
-      &local_db_options_, sizeof(ImmutableDBOptions*));
-  return mem;
-}
-
-void VersionSet::PackLocal(char*& buf) const {
-  LOG("VersionSet::PackLocal dump ImmutablDBOptions file");
-  db_options_->PackLocal(buf);
-  LOG("VersionSet::PackLocal dump ImmutablDBOptions file done.");
-  PACK_TO_BUF(reinterpret_cast<const void*>(this), buf, sizeof(VersionSet));
-}
-void* VersionSet::UnPackLocal(char*& buf) {
-  void* local_db_options_ = ImmutableDBOptions::UnPackLocal(buf);
-  void* mem = malloc(sizeof(VersionSet));
-  auto ptr = reinterpret_cast<VersionSet*>(mem);
-  UNPACK_FROM_BUF(buf, reinterpret_cast<void*>(ptr), sizeof(VersionSet));
-  memcpy(
-      const_cast<void*>(reinterpret_cast<const void* const>(&ptr->db_options_)),
-      &local_db_options_, sizeof(ImmutableDBOptions*));
+  memcpy(const_cast<void*>(reinterpret_cast<const void*>(&ptr->db_options_)),
+         &local_db_options_, sizeof(ImmutableDBOptions*));
   return mem;
 }
 
@@ -5678,8 +5587,6 @@ Status VersionSet::LogAndApply(
                          *mutable_cf_options_list[i], edit_lists[i], wcb);
     manifest_writers_.push_back(&writers[i]);
   }
-  LOG("");
-  GetColumnFamilySet()->GetDefault()->current()->storage_info()->check();
   assert(!writers.empty());
   ManifestWriter& first_writer = writers.front();
   TEST_SYNC_POINT_CALLBACK("VersionSet::LogAndApply:BeforeWriterWaiting",
@@ -5687,8 +5594,6 @@ Status VersionSet::LogAndApply(
   while (!first_writer.done && &first_writer != manifest_writers_.front()) {
     first_writer.cv.Wait();
   }
-  LOG("");
-  GetColumnFamilySet()->GetDefault()->current()->storage_info()->check();
   if (first_writer.done) {
     // All non-CF-manipulation operations can be grouped together and committed
     // to MANIFEST. They should all have finished. The status code is stored in
