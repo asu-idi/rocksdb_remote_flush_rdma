@@ -38,7 +38,7 @@
 
 #include "memory/allocator.h"
 #include "port/port.h"
-#include "util/logger.hpp"
+#include "rocksdb/logger.hpp"
 #include "util/random.h"
 namespace ROCKSDB_NAMESPACE {
 

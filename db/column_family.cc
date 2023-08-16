@@ -44,8 +44,6 @@
 #include "db/write_controller.h"
 #include "file/sst_file_manager_impl.h"
 #include "logging/logging.h"
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
 #include "monitoring/thread_status_util.h"
 #include "options/cf_options.h"
 #include "options/db_options.h"
@@ -54,7 +52,10 @@
 #include "rocksdb/configurable.h"
 #include "rocksdb/convenience.h"
 #include "rocksdb/env.h"
+#include "rocksdb/logger.hpp"
 #include "rocksdb/options.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/table.h"
 #include "rocksdb/write_buffer_manager.h"
 #include "table/merging_iterator.h"
@@ -63,8 +64,6 @@
 #include "util/autovector.h"
 #include "util/cast_util.h"
 #include "util/compression.h"
-#include "util/logger.hpp"
-#include "util/socket_api.hpp"
 #include "util/thread_local.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -573,9 +572,9 @@ ColumnFamilyData::ColumnFamilyData(
           cf_options.table_factory->IsDeleteRangeSupported()),
       write_buffer_manager_(write_buffer_manager),
       mem_(nullptr),
-      imm_(new MemTableList(ioptions_.min_write_buffer_number_to_merge,
-                            ioptions_.max_write_buffer_number_to_maintain,
-                            ioptions_.max_write_buffer_size_to_maintain)),
+      imm_(ioptions_.min_write_buffer_number_to_merge,
+           ioptions_.max_write_buffer_number_to_maintain,
+           ioptions_.max_write_buffer_size_to_maintain),
       super_version_(nullptr),
       super_version_number_(0),
       local_sv_(new ThreadLocalPtr(&SuperVersionUnrefHandle)),
@@ -723,12 +722,10 @@ ColumnFamilyData::~ColumnFamilyData() {
     delete mem_->Unref();
   }
   autovector<MemTable*> to_delete;
-  imm_->current()->Unref(&to_delete);
+  imm_.current()->Unref(&to_delete);
   for (MemTable* m : to_delete) {
     delete m;
   }
-  LOG("cfd delete MemtableList");
-  if (imm_ != nullptr) delete imm_;
 
   if (db_paths_registered_) {
     // TODO(cc): considering using ioptions_.fs, currently some tests rely on
@@ -743,17 +740,28 @@ ColumnFamilyData::~ColumnFamilyData() {
   }
 }
 
+void ColumnFamilyData::free_remote() {
+  if (internal_stats_ != nullptr) {
+    internal_stats_.reset();
+  }
+  free(current_);
+  const_cast<ImmutableOptions*>(&ioptions_)->~ImmutableOptions();
+  const_cast<ColumnFamilyOptions*>(&initial_cf_options_)
+      ->~ColumnFamilyOptions();
+  const_cast<MutableCFOptions*>(&mutable_cf_options_)->~MutableCFOptions();
+}
+
 void ColumnFamilyData::PackRemote(TransferService* node) const {
   LOG("ColumnFamilyData::PackRemote");
   assert(internal_stats_ != nullptr);
   internal_stats_->PackRemote(node);
+  ioptions_.PackRemote(node);
   LOG("ColumnFamilyData::PackRemote done.");
 }
 void ColumnFamilyData::UnPackRemote(TransferService* node) {
-  auto* install_info = new ColumnFamilyData::cfd_pack_remote_data;
   LOG("ColumnFamilyData::UnPackRemote");
   internal_stats_->UnPackRemote(node);
-
+  ioptions_.UnPackRemote(node);
   LOG("ColumnFamilyData::UnPackRemote done.");
 }
 
@@ -812,26 +820,24 @@ void* ColumnFamilyData::UnPackLocal(TransferService* node) {
 
   node->receive(reinterpret_cast<void*>(mem), sizeof(ColumnFamilyData));
   auto* worker_cfd_ = reinterpret_cast<ColumnFamilyData*>(mem);
-  memcpy(reinterpret_cast<void*>(const_cast<ColumnFamilyOptions*>(
-             &worker_cfd_->initial_cf_options_)),
-         reinterpret_cast<void*>(worker_initial_cf_options_),
-         sizeof(ColumnFamilyOptions));
-  memcpy(reinterpret_cast<void*>(
-             const_cast<ImmutableOptions*>(&worker_cfd_->ioptions_)),
-         reinterpret_cast<void*>(worker_ioptions_), sizeof(ImmutableOptions));
-  memcpy(reinterpret_cast<void*>(
-             const_cast<MutableCFOptions*>(&worker_cfd_->mutable_cf_options_)),
-         reinterpret_cast<void*>(worker_mutable_cf_options_),
-         sizeof(MutableCFOptions));
+  new (const_cast<ColumnFamilyOptions*>(&worker_cfd_->initial_cf_options_))
+      ColumnFamilyOptions(*worker_initial_cf_options_);
+  new (const_cast<ImmutableOptions*>(&worker_cfd_->ioptions_))
+      ImmutableOptions(*worker_ioptions_);
+  delete reinterpret_cast<ImmutableOptions*>(worker_ioptions_);
+  new (&worker_cfd_->mutable_cf_options_)
+      MutableCFOptions(*worker_mutable_cf_options_);
+  delete worker_mutable_cf_options_;
   LOG("retrieve Comparator:");
   auto worker_internal_comparator_ =
-      new InternalKeyComparator(worker_initial_cf_options_->comparator);
+      new InternalKeyComparator(worker_cfd_->initial_cf_options_.comparator);
   new (&worker_cfd_->name_) std::string(worker_name_);
   memcpy(const_cast<void*>(
              reinterpret_cast<const void*>(&worker_cfd_->internal_comparator_)),
          reinterpret_cast<void*>(worker_internal_comparator_),
          sizeof(InternalKeyComparator));
   delete worker_internal_comparator_;
+  delete reinterpret_cast<ColumnFamilyOptions*>(worker_initial_cf_options_);
   new (&worker_cfd_->int_tbl_prop_collector_factories_)
       std::vector<std::unique_ptr<IntTblPropCollectorPackFactory>>();
   worker_cfd_->int_tbl_prop_collector_factories_.resize(temp_factories.size());
@@ -844,106 +850,6 @@ void* ColumnFamilyData::UnPackLocal(TransferService* node) {
           worker_cfd_->ioptions_.num_levels, worker_cfd_->ioptions_.clock,
           worker_cfd_));
   worker_cfd_->current_ = worker_current_;
-  return mem;
-}
-int ColumnFamilyData::Pack(shm_package::PackContext& ctx, int idx) {
-  if (idx == -1) idx = ctx.add_package((void*)this, "ColumnFamilyData");
-  internal_comparator_.Pack(ctx, idx);
-  ioptions_.Pack(ctx, idx);
-  return idx;
-}
-void ColumnFamilyData::UnPack(shm_package::PackContext& ctx, int idx,
-                              size_t& offset) {
-  internal_comparator_.UnPack(ctx, idx, offset);
-  ioptions_.UnPack(ctx, idx, offset);
-}
-
-void ColumnFamilyData::PackLocal(char*& buf) const {
-  initial_cf_options_.PackLocal(buf);
-  current_->PackLocal(buf);
-  ioptions_.PackLocal(buf);
-  mutable_cf_options_.PackLocal(buf);
-  // int_tbl_prop_collector_factories_.PackLocal(sockfd);
-  size_t int_tbl_prop_collector_factories_size =
-      int_tbl_prop_collector_factories_.size();
-  PACK_TO_BUF(reinterpret_cast<void*>(&int_tbl_prop_collector_factories_size),
-              buf, sizeof(size_t));
-  LOG("server check int_tbl_prop_collector_factories_: ");
-  for (auto& factory : int_tbl_prop_collector_factories_) {
-    factory->PackLocal(buf);
-  }
-  LOG("server check int_tbl_prop_collector_factories_ done.");
-
-  int64_t ret_val = name_.size();
-  PACK_TO_BUF(reinterpret_cast<const void*>(&ret_val), buf, sizeof(int64_t));
-  PACK_TO_BUF(reinterpret_cast<const void*>(name_.data()), buf, name_.size());
-
-  PACK_TO_BUF(reinterpret_cast<const void*>(this), buf,
-              sizeof(ColumnFamilyData));
-  //  todo: remove this
-  LOG("server CHECK cfd_ Comparator: ");
-  assert(internal_comparator_.user_comparator() ==
-         initial_cf_options_.comparator);
-}
-
-void* ColumnFamilyData::UnPackLocal(char*& buf) {
-  auto* worker_initial_cf_options_ = reinterpret_cast<ColumnFamilyOptions*>(
-      ColumnFamilyOptions::UnPackLocal(buf));
-  auto* worker_current_ = reinterpret_cast<Version*>(Version::UnPackLocal(buf));
-  auto* worker_ioptions_ = reinterpret_cast<ImmutableOptions*>(
-      ImmutableOptions::UnPackLocal(buf, *worker_initial_cf_options_));
-  auto* worker_mutable_cf_options_ =
-      reinterpret_cast<MutableCFOptions*>(MutableCFOptions::UnPackLocal(buf));
-  size_t int_tbl_prop_collector_factories_size = 0;
-  UNPACK_FROM_BUF(
-      buf, reinterpret_cast<void*>(&int_tbl_prop_collector_factories_size),
-      sizeof(size_t));
-  std::vector<IntTblPropCollectorFactory*> temp_factories;
-  for (size_t i = 0; i < int_tbl_prop_collector_factories_size; i++) {
-    auto* int_tbl_prop_factory = reinterpret_cast<IntTblPropCollectorFactory*>(
-        IntTblPropCollectorPackFactory::UnPackLocal(buf));
-    temp_factories.emplace_back(int_tbl_prop_factory);
-  }
-  int64_t ret_val = 0;
-  UNPACK_FROM_BUF(buf, reinterpret_cast<void*>(&ret_val), sizeof(int64_t));
-  std::string worker_name_(ret_val, '\0');
-  UNPACK_FROM_BUF(buf, reinterpret_cast<void*>(worker_name_.data()),
-                  worker_name_.size());
-
-  void* mem = malloc(sizeof(ColumnFamilyData));
-  UNPACK_FROM_BUF(buf, mem, sizeof(ColumnFamilyData));
-  auto* worker_cfd_ = reinterpret_cast<ColumnFamilyData*>(mem);
-  memcpy(reinterpret_cast<void*>(const_cast<ColumnFamilyOptions*>(
-             &worker_cfd_->initial_cf_options_)),
-         reinterpret_cast<void*>(worker_initial_cf_options_),
-         sizeof(ColumnFamilyOptions));
-  memcpy(reinterpret_cast<void*>(
-             const_cast<ImmutableOptions*>(&worker_cfd_->ioptions_)),
-         reinterpret_cast<void*>(worker_ioptions_), sizeof(ImmutableOptions));
-  memcpy(reinterpret_cast<void*>(
-             const_cast<MutableCFOptions*>(&worker_cfd_->mutable_cf_options_)),
-         reinterpret_cast<void*>(worker_mutable_cf_options_),
-         sizeof(MutableCFOptions));
-  LOG("retrieve Comparator:");
-  auto worker_internal_comparator_ =
-      new InternalKeyComparator(worker_initial_cf_options_->comparator);
-  new (&worker_cfd_->name_) std::string(worker_name_);
-  memcpy(const_cast<void*>(
-             reinterpret_cast<const void*>(&worker_cfd_->internal_comparator_)),
-         reinterpret_cast<void*>(worker_internal_comparator_),
-         sizeof(InternalKeyComparator));
-  delete worker_internal_comparator_;
-  new (&worker_cfd_->int_tbl_prop_collector_factories_)
-      std::vector<std::unique_ptr<IntTblPropCollectorPackFactory>>();
-  worker_cfd_->int_tbl_prop_collector_factories_.resize(temp_factories.size());
-  for (auto factory : temp_factories) {
-    worker_cfd_->int_tbl_prop_collector_factories_.emplace_back(
-        std::unique_ptr<IntTblPropCollectorFactory>(factory));
-  }
-  new (&worker_cfd_->internal_stats_)
-      std::unique_ptr<InternalStats>(std::make_unique<InternalStats>(
-          worker_cfd_->ioptions_.num_levels, worker_cfd_->ioptions_.clock,
-          worker_cfd_));
   return mem;
 }
 
@@ -1555,14 +1461,14 @@ void ColumnFamilyData::InstallSuperVersion(
     const MutableCFOptions& mutable_cf_options) {
   SuperVersion* new_superversion = sv_context->new_superversion.release();
   new_superversion->mutable_cf_options = mutable_cf_options;
-  new_superversion->Init(this, mem_, imm_->current(), current_);
+  new_superversion->Init(this, mem_, imm_.current(), current_);
   SuperVersion* old_superversion = super_version_;
   super_version_ = new_superversion;
   ++super_version_number_;
   super_version_->version_number = super_version_number_;
   if (old_superversion == nullptr || old_superversion->current != current() ||
       old_superversion->mem != mem_ ||
-      old_superversion->imm != imm_->current()) {
+      old_superversion->imm != imm_.current()) {
     // Should not recalculate slow down condition if nothing has changed,
     // since currently RecalculateWriteStallConditions() treats it as
     // further slowing down is needed.

@@ -35,9 +35,6 @@
 #include "db/write_controller.h"
 #include "db/write_thread.h"
 #include "logging/event_logger.h"
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
-#include "memory/shared_package.h"
 #include "monitoring/instrumented_mutex.h"
 #include "options/db_options.h"
 #include "port/port.h"
@@ -45,6 +42,9 @@
 #include "rocksdb/env.h"
 #include "rocksdb/listener.h"
 #include "rocksdb/memtablerep.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
+#include "rocksdb/statistics.h"
 #include "rocksdb/status.h"
 #include "rocksdb/transaction_log.h"
 #include "table/scoped_arena_iterator.h"
@@ -88,10 +88,6 @@ class RemoteFlushJob {
       const std::string& db_session_id = "",
       std::string full_history_ts_low = "",
       BlobFileCompletionCallback* blob_callback = nullptr);
-  void PackLocal(char*& buf) const;
-  static void* UnPackLocal(char*& buf, DBImpl* remote_db);
-  void PackRemote(char*& buf) const;
-  static void* UnPackRemote(char*& buf);
   void PackLocal(TransferService* node) const;
   static void* UnPackLocal(TransferService* node, DBImpl* remote_db);
   void PackRemote(TransferService* node) const;
@@ -148,8 +144,6 @@ class RemoteFlushJob {
   std::list<std::unique_ptr<FlushJobInfo>>* GetCommittedFlushJobsInfo() {
     return &committed_flush_jobs_info_;
   }
-  int Pack(shm_package::PackContext& ctx, int idx = -1);
-  void UnPack(shm_package::PackContext& ctx, int idx, size_t& offset);
 
  private:
   friend class FlushJobTest_GetRateLimiterPriorityForWrite_Test;
@@ -244,6 +238,7 @@ class RemoteFlushJob {
   const std::string full_history_ts_low_;
   // BlobFileCompletionCallback* blob_callback_;
 
+  Statistics* stats_;
   // reference to the seqno_time_mapping_ in db_impl.h, not safe to read without
   // db mutex
   const SeqnoToTimeMapping& db_impl_seqno_time_mapping_;

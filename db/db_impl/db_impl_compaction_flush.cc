@@ -24,15 +24,15 @@
 #include "db/version_edit.h"
 #include "file/sst_file_manager_impl.h"
 #include "logging/logging.h"
-#include "memory/remote_flush_service.h"
 #include "monitoring/iostats_context_imp.h"
 #include "monitoring/perf_context_imp.h"
 #include "monitoring/thread_status_updater.h"
 #include "monitoring/thread_status_util.h"
+#include "rocksdb/logger.hpp"
+#include "rocksdb/remote_flush_service.h"
 #include "test_util/sync_point.h"
 #include "util/cast_util.h"
 #include "util/concurrent_task_limiter_impl.h"
-#include "util/logger.hpp"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -270,11 +270,6 @@ Status DBImpl::FlushMemTableToOutputFile(
     TEST_SYNC_POINT_CALLBACK(
         "DBImpl::FlushMemTableToOutputFile:AfterPickMemtables", &flush_job);
     LOG("flush job pick all Memtable finish");
-    for (auto* memtable : flush_job->GetMemTables()) {
-      LOG("FlushJob pick memtable:", memtable->GetID(),
-          " size=", memtable->get_data_size(),
-          " file-number=", memtable->GetFileNumber());
-    }
     // may temporarily unlock and lock the mutex.
     NotifyOnFlushBegin(cfd, &file_meta, mutable_cf_options, job_context->job_id,
                        flush_reason);
@@ -289,15 +284,8 @@ Status DBImpl::FlushMemTableToOutputFile(
     if (s.ok()) {
       LOG("flush job run remote: ptr = ", std::hex, flush_job.get(), std::dec);
       std::function<int()> get_available_port = [&]() -> int {
-        std::lock_guard<std::mutex> lock(transfer_mutex_);
-        for (int i = 0; i < 100; i++) {
-          if (metadata_recv_ports_in_used_[i] == false) {
-            metadata_recv_ports_in_used_[i] = true;
-            return i + 5000;
-          }
-        }
-        LOG("All port in used");
-        assert(false);
+        int32_t port = port_index_.fetch_add(1);
+        return port % 500 + 5000;
       };
       s = flush_job->RunRemote(&memnodes_ip_port_, &get_available_port,
                                local_ip_, &logs_with_prep_tracker_, &file_meta,
@@ -399,7 +387,6 @@ Status DBImpl::FlushMemTableToOutputFile(
     }
     TEST_SYNC_POINT("DBImpl::FlushMemTableToOutputFile:Finish");
     return s;
-
   } else {
     LOG("Construct traditional flush job");
     FlushJob flush_job(
@@ -449,12 +436,6 @@ Status DBImpl::FlushMemTableToOutputFile(
     }
     TEST_SYNC_POINT_CALLBACK(
         "DBImpl::FlushMemTableToOutputFile:AfterPickMemtables", &flush_job);
-    LOG("flush job pick all Memtable finish");
-    for (auto* memtable : flush_job.GetMemTables()) {
-      LOG("FlushJob pick memtable:", memtable->GetID(),
-          " size=", memtable->get_data_size(),
-          " file-number=", memtable->GetFileNumber());
-    }
     // may temporarily unlock and lock the mutex.
     NotifyOnFlushBegin(cfd, &file_meta, mutable_cf_options, job_context->job_id,
                        flush_reason);

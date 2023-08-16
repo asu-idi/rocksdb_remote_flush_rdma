@@ -21,14 +21,14 @@
 #include "db/table_properties_collector.h"
 #include "db/write_batch_internal.h"
 #include "db/write_controller.h"
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
 #include "options/cf_options.h"
 #include "rocksdb/compaction_job_stats.h"
 #include "rocksdb/db.h"
 #include "rocksdb/env.h"
 #include "rocksdb/file_system.h"
 #include "rocksdb/options.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "trace_replay/block_cache_tracer.h"
 #include "util/hash_containers.h"
 #include "util/thread_local.h"
@@ -295,8 +295,7 @@ class ColumnFamilyData {
     std::vector<CompactionStats> compaction_stats;
     std::vector<CompactionJobStats> compaction_stats_by_pri;
   };
-  void PackLocal(char*& buf) const;
-  static void* UnPackLocal(char*& buf);
+  void free_remote();
   void PackLocal(TransferService* node) const;
   static void* UnPackLocal(TransferService* node);
   void PackRemote(TransferService* node) const;
@@ -378,7 +377,7 @@ class ColumnFamilyData {
 
   InternalStats* internal_stats() { return internal_stats_.get(); }
 
-  MemTableList* imm() { return imm_; }
+  MemTableList* imm() { return &imm_; }
   MemTable* mem() { return mem_; }
 
   bool IsEmpty() {
@@ -617,7 +616,7 @@ class ColumnFamilyData {
   WriteBufferManager* write_buffer_manager_;
 
   MemTable* mem_;
-  MemTableList* imm_;  // shared
+  MemTableList imm_;
   SuperVersion* super_version_;
 
   // An ordinal representing the current SuperVersion. Updated by
@@ -677,10 +676,6 @@ class ColumnFamilyData {
   bool mempurge_used_;
 
   std::atomic<uint64_t> next_epoch_number_;
-
- public:
-  int Pack(shm_package::PackContext& ctx, int idx = -1);
-  void UnPack(shm_package::PackContext& ctx, int idx, size_t& offset);
 };
 
 // ColumnFamilySet has interesting thread-safety requirements

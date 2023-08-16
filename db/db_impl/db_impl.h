@@ -49,8 +49,6 @@
 #include "db/write_controller.h"
 #include "db/write_thread.h"
 #include "logging/event_logger.h"
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
 #include "monitoring/instrumented_mutex.h"
 #include "options/db_options.h"
 #include "port/port.h"
@@ -58,6 +56,8 @@
 #include "rocksdb/db.h"
 #include "rocksdb/env.h"
 #include "rocksdb/memtablerep.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/status.h"
 #include "rocksdb/trace_reader_writer.h"
 #include "rocksdb/transaction_log.h"
@@ -194,9 +194,6 @@ class DBImpl : public DB {
 
   using DB::ListenAndScheduleFlushJob;
   Status ListenAndScheduleFlushJob(int port) override;
-
-  using DB::TEST_RemoteFlushListener;
-  void TEST_RemoteFlushListener() override;
 
   using DB::Put;
   Status Put(const WriteOptions& options, ColumnFamilyHandle* column_family,
@@ -2083,7 +2080,6 @@ class DBImpl : public DB {
   static void BGWorkFlush(void* arg);
   static void BGWorkPurge(void* arg);
   static void BGWorkRemoteFlush(void* arg);
-  static void TEST_BGWorkRemoteFlush(void* arg);
   static void UnscheduleRemoteFlushCallback(void* arg);
   static void UnscheduleCompactionCallback(void* arg);
   static void UnscheduleFlushCallback(void* arg);
@@ -2725,7 +2721,7 @@ class DBImpl : public DB {
 
   // remote flush
   std::mutex transfer_mutex_;
-  bool metadata_recv_ports_in_used_[100] = {false};
+  std::atomic<int> port_index_ = {0};
   std::vector<std::pair<std::string, size_t>> memnodes_ip_port_;
   std::string local_ip_;
 

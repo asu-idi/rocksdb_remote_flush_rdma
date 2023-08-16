@@ -17,12 +17,13 @@
 #include <mutex>
 #include <sstream>
 #include <string>
-#include "memory/remote_transfer_service.h"
+
 #include "db/dbformat.h"
-#include "memory/remote_flush_service.h"
 #include "port/lang.h"
 #include "port/port.h"
 #include "rocksdb/convenience.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/slice.h"
 #include "rocksdb/utilities/customizable_util.h"
 #include "rocksdb/utilities/object_registry.h"
@@ -38,12 +39,6 @@ class BytewiseComparatorImpl : public Comparator {
     int64_t msg = 0;
     msg += (0x00);
     node->send(&msg, sizeof(int64_t));
-  }
-  void PackLocal(char*& buf) const override {
-    LOG("BytewiseComparatorImpl::PackLocal");
-    int64_t msg = 0;
-    msg += (0x00);
-    PACK_TO_BUF(&msg, buf, sizeof(int64_t));
   }
 
  public:
@@ -170,12 +165,6 @@ class ReverseBytewiseComparatorImpl : public BytewiseComparatorImpl {
     int64_t msg = 0;
     msg += (0x01);
     node->send(&msg, sizeof(int64_t));
-  }
-  void PackLocal(char*& buf) const override {
-    LOG("ReverseBytewiseComparatorImpl::PackLocal");
-    int64_t msg = 0;
-    msg += (0x01);
-    PACK_TO_BUF(&msg, buf, sizeof(int64_t));
   }
 
  public:

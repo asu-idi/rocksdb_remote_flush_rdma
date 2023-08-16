@@ -896,11 +896,9 @@ TEST_F(MemTableListTest, DISABLED_SharedMemListVersion) {
   int64_t max_write_buffer_size_to_maintain =
       7 * static_cast<int64_t>(options.write_buffer_size);
   autovector<MemTableList*> lists;
-  LOG("create MemTableList");
-  // note: MemTableList isn't shared, but MemTableListVersion is
   lists.emplace_back(new MemTableList(min_write_buffer_number_to_merge,
                                       max_write_buffer_number_to_maintain,
-                                      max_write_buffer_size_to_maintain, true));
+                                      max_write_buffer_size_to_maintain));
 }
 
 TEST_F(MemTableListTest, AtomicFlusTest) {

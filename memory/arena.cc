@@ -15,12 +15,12 @@
 #include <cstdint>
 
 #include "logging/logging.h"
-#include "memory/remote_flush_service.h"
 #include "port/malloc.h"
 #include "port/port.h"
 #include "rocksdb/env.h"
+#include "rocksdb/logger.hpp"
+#include "rocksdb/remote_flush_service.h"
 #include "test_util/sync_point.h"
-#include "util/logger.hpp"
 #include "util/string_util.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -32,19 +32,7 @@ void Arena::PackLocal(TransferService* node) const {
   node->send(name.data(), 15);
 }
 
-void* Arena::UnPackLocal(TransferService* node) {
-  void* arena = reinterpret_cast<void*>(new Arena());
-  return arena;
-}
-
-void Arena::PackLocal(char*& buf) const {
-  LOG("Arena::PackLocal");
-  std::string name = "Arena";
-  name.resize(15);
-  PACK_TO_BUF(name.data(), buf, name.size());
-}
-
-void* Arena::UnPackLocal(char*& buf) {
+void* Arena::UnPackLocal(TransferService*) {
   void* arena = reinterpret_cast<void*>(new Arena());
   return arena;
 }

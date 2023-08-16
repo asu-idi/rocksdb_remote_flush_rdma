@@ -23,21 +23,18 @@
 #include "db/column_family.h"
 #include "db/db_impl/db_impl.h"
 #include "db/internal_stats.h"
-#include "db/retrieve_info.h"
 #include "db/seqno_to_time_mapping.h"
 #include "db/snapshot_checker.h"
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
+#include "db/system_clock_factory.h"
 #include "monitoring/instrumented_mutex.h"
 #include "options/cf_options.h"
 #include "rocksdb/file_system.h"
-#include "rocksdb/file_system_directory_factory.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/system_clock.h"
 #include "rocksdb/table_properties.h"
 #include "table/internal_iterator.h"
 #include "util/autovector.h"
-#include "util/macro.hpp"
-#include "util/socket_api.hpp"
 
 // for socket API
 #ifdef __linux
@@ -137,6 +134,7 @@ RemoteFlushJob::RemoteFlushJob(
       thread_pri_(thread_pri),
       clock_(db_options_.clock),
       full_history_ts_low_(std::move(full_history_ts_low)),
+      stats_(stats),
       db_impl_seqno_time_mapping_(seqno_time_mapping) {
   // Update the thread status to indicate flush.
   ReportStartedFlush();
@@ -183,11 +181,9 @@ void RemoteFlushJob::PackLocal(TransferService* node) const {
   // Pack db_impl_seqno_time_mapping_
   db_impl_seqno_time_mapping_.PackLocal(node);
   seqno_to_time_mapping_.PackLocal(node);
+  db_mutex_->Lock();
   // Pack cfd_
   cfd_->PackLocal(node);
-  meta_.PackLocal(node);
-  file_options_.PackLocal(node);
-
   assert(base_ != nullptr && base_->cfd() == cfd_);
   if (base_ != cfd_->current()) {
     size_t msg = 0;
@@ -197,6 +193,11 @@ void RemoteFlushJob::PackLocal(TransferService* node) const {
     size_t msg = 1;
     node->send(&msg, sizeof(size_t));
   }
+  db_mutex_->Unlock();
+  meta_.PackLocal(node);
+  file_options_.PackLocal(node);
+  // db_mutex_->Lock();
+  // db_mutex_->Unlock();
   // mutable_cf_options_.PackLocal(server_socket_fd);
   size_t dbname_len = dbname_.size();
   node->send(&dbname_len, sizeof(size_t));
@@ -231,7 +232,7 @@ void RemoteFlushJob::PackLocal(TransferService* node) const {
     node->send(&msg, sizeof(size_t));
     snapshot_checker_->PackLocal(node);
   }
-
+  assert(stats_ == cfd_->ioptions()->stats);
   node->send(reinterpret_cast<const void*>(this), sizeof(RemoteFlushJob));
 }
 
@@ -244,10 +245,7 @@ void* RemoteFlushJob::UnPackLocal(TransferService* node, DBImpl* remote_db) {
   // void* output_file_directory_ret =
   //     FSDirectoryFactory::UnPackLocal(worker_socket_fd);
   // void* db_directory_ret = FSDirectoryFactory::UnPackLocal(worker_socket_fd);
-  std::string clock_info_;
-  clock_info_.resize(20);
-  node->receive(clock_info_.data(), 20);
-  void* clock_ret_addr = retrieve_from(clock_info_);
+  void* clock_ret_addr = SystemClockFactory::UnPackLocal(node);
 
   // RemoteFlushJob recv other data
   size_t* mems_size_ = nullptr;
@@ -264,14 +262,14 @@ void* RemoteFlushJob::UnPackLocal(TransferService* node, DBImpl* remote_db) {
   void* db_impl_seqno_time_mapping_ret = SeqnoToTimeMapping::UnPackLocal(node);
   void* seqno_to_time_mapping_ret = SeqnoToTimeMapping::UnPackLocal(node);
   void* cfd_ret = ColumnFamilyData::UnPackLocal(node);
-  void* meta_ret = FileMetaData::UnPackLocal(node);
-  void* file_options_ret = FileOptions::UnPackLocal(node);
-  void* base_version_ret = nullptr;
   size_t base_version_flag = 0;
   node->receive(&base_version_flag, sizeof(size_t));
+  void* base_version_ret = nullptr;
   if (base_version_flag == 0) {
     base_version_ret = Version::UnPackLocal(node, cfd_ret);
   }
+  void* meta_ret = FileMetaData::UnPackLocal(node);
+  void* file_options_ret = FileOptions::UnPackLocal(node);
   // void* mutable_cf_options_ret =
   //     MutableCFOptions::UnPackLocal(worker_socket_fd);
   size_t dbname_len = 0;
@@ -321,7 +319,7 @@ void* RemoteFlushJob::UnPackLocal(TransferService* node, DBImpl* remote_db) {
   local_handler->remote_db_ = remote_db;
   local_handler->clock_ = reinterpret_cast<SystemClock*>(clock_ret_addr);
   local_handler->db_mutex_ = new InstrumentedMutex();
-  local_handler->db_mutex_->Unlock();
+  // local_handler->db_mutex_->Unlock();
   local_handler->mems_ = autovector<MemTable*>();
   local_handler->job_context_ = reinterpret_cast<JobContext*>(job_context_ret);
   local_handler->output_file_directory_ = nullptr;
@@ -336,6 +334,7 @@ void* RemoteFlushJob::UnPackLocal(TransferService* node, DBImpl* remote_db) {
   LOG("local_handler copy FileMetaData");
   new (&local_handler->meta_)
       FileMetaData(*reinterpret_cast<FileMetaData*>(meta_ret));
+  free(meta_ret);
   for (auto& memtable : mems_temp) {
     LOG("worker copy data: ", memtable);
     local_handler->mems_.emplace_back(memtable);
@@ -347,8 +346,10 @@ void* RemoteFlushJob::UnPackLocal(TransferService* node, DBImpl* remote_db) {
          sizeof(SeqnoToTimeMapping*));
   memcpy(reinterpret_cast<void*>(const_cast<SeqnoToTimeMapping*>(
              &(local_handler->seqno_to_time_mapping_))),
-         reinterpret_cast<void*>(&seqno_to_time_mapping_ret),
-         sizeof(SeqnoToTimeMapping*));
+         reinterpret_cast<void*>(seqno_to_time_mapping_ret),
+         sizeof(SeqnoToTimeMapping));
+  free(seqno_to_time_mapping_ret);
+
   local_handler->cfd_ = reinterpret_cast<ColumnFamilyData*>(cfd_ret);
   local_handler->base_ = base_version_flag == 1
                              ? local_handler->cfd_->current()
@@ -365,6 +366,7 @@ void* RemoteFlushJob::UnPackLocal(TransferService* node, DBImpl* remote_db) {
       std::string(local_dbname);
   new (const_cast<FileOptions*>(&local_handler->file_options_))
       FileOptions(*reinterpret_cast<FileOptions*>(file_options_ret));
+  delete reinterpret_cast<FileOptions*>(file_options_ret);
   new (&local_handler->existing_snapshots_) std::vector<SequenceNumber>();
   for (auto& snapshot : existing_snapshots) {
     local_handler->existing_snapshots_.emplace_back(snapshot);
@@ -383,222 +385,10 @@ void* RemoteFlushJob::UnPackLocal(TransferService* node, DBImpl* remote_db) {
   auto* mptr = local_handler->cfd_->GetLatestMutableCFOptions();
   memcpy(reinterpret_cast<void*>(hack_dboption_ptr),
          reinterpret_cast<const void*>(&mptr), sizeof(MutableCFOptions*));
+  local_handler->stats_ = local_handler->cfd_->ioptions()->stats;
   LOG("local_handler copy done");
   // new (const_cast<MutableCFOptions*>(&local_handler->mutable_cf_options_))
   //     MutableCFOptions(*local_handler->cfd_->GetLatestMutableCFOptions());
-  LOG("RemoteFlushJob::UnPackLocal done");
-  return mem;
-}
-
-void RemoteFlushJob::PackLocal(char*& buf) const {
-  LOG("RemoteFlushJob::PackLocal thread_id:", std::this_thread::get_id(),
-      "Pack data from local side");
-  // Pack clock
-  clock_->PackLocal(buf);
-  // Pack mems_
-  size_t mem_size = mems_.size();
-  PACK_TO_BUF(&mem_size, buf, sizeof(size_t));
-  LOG("server send mems size: ", mem_size);
-  for (auto& memtable : mems_) {
-    memtable->PackLocal(buf);
-  }
-  versions_->PackLocal(buf);
-  edit_->PackLocal(buf);
-  if (job_context_ != nullptr) {
-    LOG("jobcontext not null");
-    size_t msg_ = 1;
-    PACK_TO_BUF(&msg_, buf, sizeof(size_t));
-    job_context_->PackLocal(buf);
-  } else {
-    LOG("jobcontext null");
-    size_t msg_ = 0;
-    PACK_TO_BUF(&msg_, buf, sizeof(size_t));
-  }
-  // Pack db_impl_seqno_time_mapping_
-  db_impl_seqno_time_mapping_.PackLocal(buf);
-  seqno_to_time_mapping_.PackLocal(buf);
-  // Pack cfd_
-  cfd_->PackLocal(buf);
-  meta_.PackLocal(buf);
-  file_options_.PackLocal(buf);
-  assert(base_ == cfd_->current());
-  // mutable_cf_options_.PackLocal(server_socket_fd);
-  size_t dbname_len = dbname_.size();
-  PACK_TO_BUF(&dbname_len, buf, sizeof(size_t));
-  if (!dbname_.empty()) {
-    PACK_TO_BUF(dbname_.data(), buf, dbname_len);
-  }
-  size_t len = full_history_ts_low_.size();
-  PACK_TO_BUF(&len, buf, sizeof(size_t));
-  if (!full_history_ts_low_.empty()) {
-    PACK_TO_BUF(full_history_ts_low_.data(), buf, len);
-  }
-  size_t db_id_len = db_id_.size();
-  PACK_TO_BUF(&db_id_len, buf, sizeof(size_t));
-  if (!db_id_.empty()) {
-    PACK_TO_BUF(db_id_.data(), buf, db_id_len);
-  }
-  size_t db_session_id_len = db_session_id_.size();
-  PACK_TO_BUF(&db_session_id_len, buf, sizeof(size_t));
-  if (!db_session_id_.empty()) {
-    PACK_TO_BUF(db_session_id_.data(), buf, db_session_id_len);
-  }
-  size_t existing_snapshots_len = existing_snapshots_.size();
-  PACK_TO_BUF(&existing_snapshots_len, buf, sizeof(size_t));
-  if (existing_snapshots_len) {
-    for (size_t i = 0; i < existing_snapshots_len; i++) {
-      PACK_TO_BUF(&existing_snapshots_[i], buf, sizeof(SequenceNumber));
-    }
-  }
-
-  if (snapshot_checker_ == nullptr) {
-    size_t msg = 0xff;
-    PACK_TO_BUF(&msg, buf, sizeof(size_t));
-  } else {
-    size_t msg = 0x02;
-    PACK_TO_BUF(&msg, buf, sizeof(size_t));
-    snapshot_checker_->PackLocal(buf);
-  }
-
-  PACK_TO_BUF(reinterpret_cast<const void*>(this), buf, sizeof(RemoteFlushJob));
-}
-
-void* RemoteFlushJob::UnPackLocal(char*& buf, DBImpl* remote_db) {
-  LOG("RemoteFlushJob::UnPackLocal thread_id:", std::this_thread::get_id(),
-      "UnPack data from local side");
-  void* mem = malloc(sizeof(RemoteFlushJob));
-  auto* local_handler = reinterpret_cast<RemoteFlushJob*>(mem);
-
-  std::string clock_info_;
-  clock_info_.resize(20);
-  UNPACK_FROM_BUF(buf, clock_info_.data(), clock_info_.length());
-  void* clock_ret_addr = retrieve_from(clock_info_);
-
-  // RemoteFlushJob recv other data
-  size_t mems_size_ = 0;
-  UNPACK_FROM_BUF(buf, &mems_size_, sizeof(size_t));
-  LOG("worker recv mems size: ", mems_size_);
-  std::vector<MemTable*> mems_temp;
-  for (size_t i = 0; i < mems_size_; i++) {
-    void* local_mem_handler = MemTable::UnPackLocal(buf);
-    mems_temp.emplace_back(reinterpret_cast<MemTable*>(local_mem_handler));
-  }
-  void* versions_ret = VersionSet::UnPackLocal(buf);
-  void* edit_ret = VersionEdit::UnPackLocal(buf);
-  void* job_context_ret = JobContext::UnPackLocal(buf);
-  void* db_impl_seqno_time_mapping_ret = SeqnoToTimeMapping::UnPackLocal(buf);
-  void* seqno_to_time_mapping_ret = SeqnoToTimeMapping::UnPackLocal(buf);
-  void* cfd_ret = ColumnFamilyData::UnPackLocal(buf);
-  void* meta_ret = FileMetaData::UnPackLocal(buf);
-  void* file_options_ret = FileOptions::UnPackLocal(buf);
-  // void* mutable_cf_options_ret =
-  //     MutableCFOptions::UnPackLocal(worker_socket_fd);
-  size_t dbname_len = 0;
-  UNPACK_FROM_BUF(buf, &dbname_len, sizeof(size_t));
-  std::string local_dbname;
-  local_dbname.resize(dbname_len);
-  if (local_dbname.size()) {
-    UNPACK_FROM_BUF(buf, local_dbname.data(), local_dbname.size());
-  }
-
-  size_t ts_len = 0;
-  UNPACK_FROM_BUF(buf, &ts_len, sizeof(size_t));
-  std::string local_ts_low;
-  local_ts_low.resize(ts_len);
-  if (local_ts_low.size()) {
-    UNPACK_FROM_BUF(buf, local_ts_low.data(), local_ts_low.size());
-  }
-  size_t db_id_len = 0;
-  UNPACK_FROM_BUF(buf, &db_id_len, sizeof(size_t));
-  std::string local_db_id;
-  local_db_id.resize(db_id_len);
-  if (local_db_id.size()) {
-    UNPACK_FROM_BUF(buf, local_db_id.data(), local_db_id.size());
-  }
-  size_t db_session_id_len = 0;
-  UNPACK_FROM_BUF(buf, &db_session_id_len, sizeof(size_t));
-  std::string local_db_session_id;
-  local_db_session_id.resize(db_session_id_len);
-  if (local_db_session_id.size()) {
-    UNPACK_FROM_BUF(buf, local_db_session_id.data(),
-                    local_db_session_id.size());
-  }
-
-  size_t existing_snapshots_len = 0;
-  UNPACK_FROM_BUF(buf, &existing_snapshots_len, sizeof(size_t));
-  std::vector<SequenceNumber> existing_snapshots;
-  existing_snapshots.resize(existing_snapshots_len);
-  if (existing_snapshots_len) {
-    for (size_t i = 0; i < existing_snapshots_len; i++) {
-      UNPACK_FROM_BUF(buf, &existing_snapshots[i], sizeof(SequenceNumber));
-    }
-  }
-  auto* local_snapshot_checker = reinterpret_cast<SnapshotChecker*>(
-      SnapshotCheckerFactory::UnPackLocal(buf));
-  UNPACK_FROM_BUF(buf, mem, sizeof(RemoteFlushJob));
-  LOG("worker recv ", std::hex, mem, std::dec);
-
-  // fill local_handler
-  local_handler->remote_db_ = remote_db;
-  local_handler->clock_ = reinterpret_cast<SystemClock*>(clock_ret_addr);
-  local_handler->db_mutex_ = new InstrumentedMutex();
-  local_handler->db_mutex_->Unlock();
-  local_handler->mems_ = autovector<MemTable*>();
-  local_handler->job_context_ = reinterpret_cast<JobContext*>(job_context_ret);
-  local_handler->output_file_directory_ = nullptr;
-  local_handler->db_directory_ = nullptr;
-  LOG("local_handler copy FileMetaData");
-  new (&local_handler->meta_)
-      FileMetaData(*reinterpret_cast<FileMetaData*>(meta_ret));
-  for (auto& memtable : mems_temp) {
-    LOG("worker copy data: ", memtable);
-    local_handler->mems_.emplace_back(memtable);
-  }
-  char* ptr = reinterpret_cast<char*>(&local_handler->seqno_to_time_mapping_);
-  ptr -= sizeof(SeqnoToTimeMapping*);
-  memcpy(reinterpret_cast<void*>(ptr),
-         reinterpret_cast<void*>(&db_impl_seqno_time_mapping_ret),
-         sizeof(SeqnoToTimeMapping*));
-  memcpy(reinterpret_cast<void*>(const_cast<SeqnoToTimeMapping*>(
-             &(local_handler->seqno_to_time_mapping_))),
-         reinterpret_cast<void*>(&seqno_to_time_mapping_ret),
-         sizeof(SeqnoToTimeMapping*));
-  local_handler->cfd_ = reinterpret_cast<ColumnFamilyData*>(cfd_ret);
-  local_handler->base_ = local_handler->cfd_->current();
-  local_handler->versions_ = reinterpret_cast<VersionSet*>(versions_ret);
-  local_handler->edit_ = reinterpret_cast<VersionEdit*>(edit_ret);
-  new (const_cast<std::string*>(&local_handler->full_history_ts_low_))
-      std::string(local_ts_low);
-  new (const_cast<std::string*>(&local_handler->db_id_))
-      std::string(local_db_id);
-  new (const_cast<std::string*>(&local_handler->db_session_id_))
-      std::string(local_db_session_id);
-  new (const_cast<std::string*>(&local_handler->dbname_))
-      std::string(local_dbname);
-  new (const_cast<FileOptions*>(&local_handler->file_options_))
-      FileOptions(*reinterpret_cast<FileOptions*>(file_options_ret));
-  new (&local_handler->existing_snapshots_) std::vector<SequenceNumber>();
-  for (auto& snapshot : existing_snapshots) {
-    local_handler->existing_snapshots_.emplace_back(snapshot);
-  }
-  // table_properties_ construct local empty version
-  new (&local_handler->table_properties_) TableProperties();
-  char* hack_dboption_ptr = reinterpret_cast<char*>(&local_handler->cfd_);
-  hack_dboption_ptr += sizeof(ColumnFamilyData*);
-  void* local_db_options = const_cast<void*>(
-      reinterpret_cast<const void*>(local_handler->versions_->db_options()));
-  memcpy(reinterpret_cast<void*>(hack_dboption_ptr),
-         reinterpret_cast<void*>(&local_db_options),
-         sizeof(ImmutableDBOptions*));
-  hack_dboption_ptr = reinterpret_cast<char*>(&local_handler->max_memtable_id_);
-  hack_dboption_ptr -= sizeof(MutableCFOptions*);
-  auto* mptr = local_handler->cfd_->GetLatestMutableCFOptions();
-  memcpy(reinterpret_cast<void*>(hack_dboption_ptr),
-         reinterpret_cast<const void*>(&mptr), sizeof(MutableCFOptions*));
-  LOG("local_handler copy done");
-  // new (const_cast<MutableCFOptions*>(&local_handler->mutable_cf_options_))
-  //     MutableCFOptions(*local_handler->cfd_->GetLatestMutableCFOptions());
-  LOG("worker send ", std::hex, mem, std::dec);
   LOG("RemoteFlushJob::UnPackLocal done");
   return mem;
 }
@@ -612,6 +402,27 @@ void RemoteFlushJob::PackRemote(TransferService* node) const {
   table_properties_.PackRemote(node);
   edit_->PackRemote(node);
   meta_.PackRemote(node);
+  edit_->free_remote();
+  mems_[0]->free_remote();
+  cfd_->free_remote();
+  table_properties_.~TableProperties();
+  versions_->free_remote();
+  // delete db_mutex_;
+  const_cast<std::string*>(&db_id_)->~basic_string();
+  const_cast<std::string*>(&db_session_id_)->~basic_string();
+  const_cast<std::string*>(&dbname_)->~basic_string();
+  const_cast<std::vector<SequenceNumber>*>(&existing_snapshots_)->clear();
+  const_cast<std::string*>(&full_history_ts_low_)->~basic_string();
+  const_cast<FileOptions*>(&file_options_)->~FileOptions();
+  free(cfd_);
+  free(mems_[0]);
+  free(versions_);
+  free(job_context_);
+  free(edit_);
+  char* ptr = reinterpret_cast<char*>(
+      const_cast<SeqnoToTimeMapping*>(&seqno_to_time_mapping_));
+  ptr -= sizeof(SeqnoToTimeMapping*);
+  free(*reinterpret_cast<void**>(ptr));
   LOG("RemoteFlushJob::PackRemote done");
 }
 void RemoteFlushJob::UnPackRemote(TransferService* node) {
@@ -621,11 +432,13 @@ void RemoteFlushJob::UnPackRemote(TransferService* node) {
   LOG("RemoteFlushJob::UnPackRemote mems_[0]");
   mems_[0]->UnPackRemote(node);
   LOG("RemoteFlushJob::UnPackRemote cfd_");
+  db_mutex_->Lock();
   cfd_->UnPackRemote(node);
   auto new_table_properties =
       reinterpret_cast<TableProperties*>(TableProperties::UnPackRemote(node));
   table_properties_ = *new_table_properties;
   delete new_table_properties;
+  db_mutex_->Unlock();
   edit_->UnPackRemote(node);
   auto remote_metadata =
       reinterpret_cast<FileMetaData*>(FileMetaData::UnPackRemote(node));
@@ -648,18 +461,11 @@ void RemoteFlushJob::UnPackRemote(TransferService* node) {
   meta_.file_checksum_func_name = remote_metadata->file_checksum_func_name;
   meta_.unique_id = remote_metadata->unique_id;
   meta_.oldest_ancester_time = remote_metadata->oldest_ancester_time;
-  delete remote_metadata;
-
+  free(remote_metadata);
+  db_mutex_->Lock();
   base_->Unref();
+  db_mutex_->Unlock();
   LOG("RemoteFlushJob::UnPackRemote done");
-}
-void RemoteFlushJob::PackRemote(char*& buf) const { assert(false); }
-void* RemoteFlushJob::UnPackRemote(char*& buf) {
-  LOG("RemoteFlushJob::UnPackRemote thread_id:", std::this_thread::get_id(),
-      "UnPack data from remote side");
-  assert(false);
-  LOG("RemoteFlushJob::UnPackRemote done");
-  return nullptr;
 }
 
 std::shared_ptr<RemoteFlushJob> RemoteFlushJob::CreateRemoteFlushJob(
@@ -711,46 +517,10 @@ void RemoteFlushJob::ReportFlushInputSize(const autovector<MemTable*>& mems) {
 }
 
 void RemoteFlushJob::RecordFlushIOStats() {
+  RecordTick(stats_, FLUSH_WRITE_BYTES, IOSTATS(bytes_written));
   ThreadStatusUtil::IncreaseThreadOperationProperty(
       ThreadStatus::FLUSH_BYTES_WRITTEN, IOSTATS(bytes_written));
   IOSTATS_RESET(bytes_written);
-}
-
-int RemoteFlushJob::Pack(shm_package::PackContext& ctx, int idx) {
-  if (idx == -1) idx = ctx.add_package((void*)this, "RemoteFlushJob");
-  ctx.append_uint64(idx, mems_.size());
-  for (auto memtable : mems_) {
-    if (!ctx.ptr_to_idx.count("MemTable") ||
-        !ctx.ptr_to_idx["MemTable"].count(memtable))
-      ctx.ptr_to_idx["MemTable"][memtable] = memtable->Pack(ctx, -1);
-    ctx.append_uint64(idx, ctx.ptr_to_idx["MemTable"][memtable]);
-  }
-  if (!ctx.ptr_to_idx.count("ColumnFamilyData") ||
-      !ctx.ptr_to_idx["ColumnFamilyData"].count(cfd_))
-    ctx.ptr_to_idx["ColumnFamilyData"][cfd_] = cfd_->Pack(ctx, -1);
-  ctx.append_uint64(idx, ctx.ptr_to_idx["ColumnFamilyData"][cfd_]);
-  return idx;
-}
-void RemoteFlushJob::UnPack(shm_package::PackContext& ctx, int idx,
-                            size_t& offset) {
-  // mems_.clear();
-  for (int i = 0, tot = ctx.get_uint64(idx, offset); i < tot; i++) {
-    size_t des = ctx.get_uint64(idx, offset);
-    if (!ctx.idx_to_ptr.count(des)) {
-      ctx.idx_to_ptr[des] = mems_[i];  // ctx.idx_to_ptr[des] = new MemTable();
-      size_t tmp = 0;
-      ((MemTable*)ctx.idx_to_ptr[des])->UnPack(ctx, des, tmp);
-    }
-    // mems_.push_back(ctx.idx_to_ptr[des]);
-  }
-  size_t des = ctx.get_uint64(idx, offset);
-  if (!ctx.idx_to_ptr.count(des)) {
-    ctx.idx_to_ptr[des] =
-        cfd_;  // ctx.idx_to_ptr[des] = new ColumnFamilyData();
-    size_t tmp = 0;
-    ((ColumnFamilyData*)ctx.idx_to_ptr[des])->UnPack(ctx, des, tmp);
-  }
-  // cfd_ = ctx.idx_to_ptr[des];
 }
 
 void RemoteFlushJob::PickMemTable() {
@@ -856,7 +626,7 @@ Status RemoteFlushJob::RunRemote(
     LOG(edit_->DebugString());
     LOG(meta_.DebugString());
     LOG(table_properties_.ToString());
-
+    db_mutex_->Unlock();
     // We create connection with one memnode and send package to it
     assert(MatchMemNode(memnodes_) == Status::OK());
     // TODO(rdma): create a rdma connection with memnode, choose from memnodes_
@@ -879,9 +649,9 @@ Status RemoteFlushJob::RunRemote(
     PackLocal(&transfer_service);
 
     int port = (*get_available_port)();
-    assert(port >= 5000 && port <= 5100);
     LOG("Get available port from port list: ", port);
     transfer_service.send(&port, sizeof(int));
+    assert(local_ip.size());
     transfer_service.send(local_ip.c_str(), local_ip.size());
 
     // close connection with memnode
@@ -897,14 +667,27 @@ Status RemoteFlushJob::RunRemote(
     TCPTransferService transfer_service2(&local_generator_node);
     UnPackRemote(&transfer_service2);
     // s = Status::OK();
-
+    LOG("rebuild table cache");
+    std::unique_ptr<InternalIterator> it(cfd_->table_cache()->NewIterator(
+        ReadOptions(), file_options_, cfd_->internal_comparator(), meta_,
+        nullptr /* range_del_agg */, mutable_cf_options_.prefix_extractor,
+        nullptr,
+        (cfd_->internal_stats() == nullptr)
+            ? nullptr
+            : cfd_->internal_stats()->GetFileReadHist(0),
+        TableReaderCaller::kFlush, /*arena=*/nullptr,
+        /*skip_filter=*/false, 0, MaxFileSizeForL0MetaPin(mutable_cf_options_),
+        /*smallest_compaction_key=*/nullptr,
+        /*largest_compaction_key*/ nullptr,
+        /*allow_unprepared_value*/ false));
     // close connection with remote worker
     assert(QuitRemoteWorker() == Status::OK());
-
+    db_mutex_->Lock();
     LOG("Run job: write l0table done");
     LOG(edit_->DebugString());
     LOG(meta_.DebugString());
     LOG(table_properties_.ToString());
+    assert(stats_ == cfd_->ioptions()->stats);
   }
 
   if (s.ok() && cfd_->IsDropped()) {
@@ -942,39 +725,45 @@ Status RemoteFlushJob::RunRemote(
 
 Status RemoteFlushJob::MatchRemoteWorker(int port) {
   LOG_CERR("waiting to connect with remote flush worker on localhost:", port);
+#ifdef ROCKSDB_RDMA
+  local_generator_rdma_client.~RDMAClient();
+#else
+  local_generator_node.~TCPNode();
+#endif
   memset(reinterpret_cast<void*>(&local_generator_node), 0, sizeof(TCPNode));
-  if ((local_generator_node.connection_info_.client_sockfd =
+  if ((local_generator_node.connection_info_.listen_sockfd =
            socket(AF_INET, SOCK_STREAM, 0)) < 0) {
     LOG("Socket creation error");
     return Status::IOError("Socket creation error");
   }
   int opt = ~SOCK_NONBLOCK;
-  if (setsockopt(local_generator_node.connection_info_.client_sockfd,
+  if (setsockopt(local_generator_node.connection_info_.listen_sockfd,
                  SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt))) {
     LOG("setsockopt failed");
     return Status::IOError("setsockopt");
   }
   local_generator_node.connection_info_.sin_addr.sin_family = AF_INET;
   local_generator_node.connection_info_.sin_addr.sin_port = htons(port);
-  if (bind(local_generator_node.connection_info_.client_sockfd,
+  if (bind(local_generator_node.connection_info_.listen_sockfd,
            (struct sockaddr*)&local_generator_node.connection_info_.sin_addr,
            sizeof(local_generator_node.connection_info_.sin_addr)) < 0) {
     LOG("bind failed");
     return Status::IOError("bind failed");
   }
-  if (listen(local_generator_node.connection_info_.client_sockfd, 1) < 0) {
+  if (listen(local_generator_node.connection_info_.listen_sockfd, 1) < 0) {
     LOG("listen failed");
     return Status::IOError("listen failed");
   }
   socklen_t len = sizeof(local_generator_node.connection_info_.sin_addr);
   if ((local_generator_node.connection_info_.client_sockfd = accept(
-           local_generator_node.connection_info_.client_sockfd,
+           local_generator_node.connection_info_.listen_sockfd,
            (struct sockaddr*)&local_generator_node.connection_info_.sin_addr,
            &len)) < 0) {
     LOG("accept failed");
     return Status::IOError("accept failed");
   }
-
+  close(local_generator_node.connection_info_.listen_sockfd);
+  local_generator_node.connection_info_.listen_sockfd = 0;
   LOG("create connection with remote flush worker, ready to receive data");
   return Status::OK();
 }
@@ -985,6 +774,7 @@ Status RemoteFlushJob::QuitMemNode() {
     local_generator_node.send(bye, strlen(bye));
     LOG("server sent: ", strlen(bye), ' ', bye);
     close(local_generator_node.connection_info_.client_sockfd);
+    local_generator_node.connection_info_.client_sockfd = 0;
     return Status::OK();
   } else {
     // TODO(rdma): close connection or do nothing, use
@@ -994,6 +784,7 @@ Status RemoteFlushJob::QuitMemNode() {
 }
 Status RemoteFlushJob::MatchMemNode(
     std::vector<std::pair<std::string, size_t>>* ip_port_list) {
+  assert(ip_port_list->size() != 0);
   int choosen = (int)(rand() % ip_port_list->size());
 #ifdef ROCKSDN_RDMA
   // TODO(rdma): create one RDMA connection.
@@ -1004,7 +795,7 @@ Status RemoteFlushJob::MatchMemNode(
   local_generator_rdma_client.connect_qp(0);
   local_generator_rdma_client.is_init_ = true;
 #else
-
+  local_generator_node.~TCPNode();
   memset(reinterpret_cast<void*>(&local_generator_node), 0, sizeof(TCPNode));
   if ((local_generator_node.connection_info_.client_sockfd =
            socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -1040,11 +831,11 @@ Status RemoteFlushJob::MatchMemNode(
 Status RemoteFlushJob::QuitRemoteWorker() {
   const char* bye = "byebyemessage";
   void* mem = reinterpret_cast<void*>(malloc(strlen(bye)));
-  size_t mem_size = strlen(bye);
-  local_generator_node.receive(&mem, &mem_size);
-  LOG("server recv: ", reinterpret_cast<char*>(mem));
-  assert(strncmp(reinterpret_cast<char*>(mem), bye, mem_size) == 0);
+  local_generator_node.receive(&mem, strlen(bye));
+  assert(strncmp(reinterpret_cast<char*>(mem), bye, strlen(bye)) == 0);
   close(local_generator_node.connection_info_.client_sockfd);
+  local_generator_node.connection_info_.client_sockfd = 0;
+  free(mem);
   return Status::OK();
 }
 
@@ -1055,10 +846,11 @@ Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
       " RemoteFlushJob ptr: ", std::hex, reinterpret_cast<void*>(this),
       std::dec);
   LOG("worker calculation: ");
-  std::chrono::steady_clock::time_point local_flush_begin =
+  [[maybe_unused]] std::chrono::steady_clock::time_point local_flush_begin =
       std::chrono::steady_clock::now();
+  db_mutex_->Lock();
   Status ret = WriteLevel0Table();
-  std::chrono::steady_clock::time_point local_flush_end =
+  [[maybe_unused]] std::chrono::steady_clock::time_point local_flush_end =
       std::chrono::steady_clock::now();
   LOG("RemoteFlushJob::RunLocal local_flush_all_time: ",
       std::chrono::duration_cast<std::chrono::milliseconds>(local_flush_end -
@@ -1070,15 +862,15 @@ Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
 }
 
 void RemoteFlushJob::Cancel() {
-  // db_mutex_->AssertHeld();
+  db_mutex_->AssertHeld();
   assert(base_ != nullptr);
   base_->Unref();
 }
 
 Status RemoteFlushJob::MemPurge() {
   Status s;
-  // db_mutex_->AssertHeld();
-  // db_mutex_->Unlock();
+  db_mutex_->AssertHeld();
+  db_mutex_->Unlock();
   assert(!mems_.empty());
 
   // Measure purging time.
@@ -1301,7 +1093,7 @@ Status RemoteFlushJob::MemPurge() {
           !(new_mem->ShouldFlushNow())) {
         // Construct fragmented memtable range tombstones without mutex
         new_mem->ConstructFragmentedRangeTombstones();
-        // db_mutex_->Lock();
+        db_mutex_->Lock();
         uint64_t new_mem_id = mems_[0]->GetID();
 
         new_mem->SetID(new_mem_id);
@@ -1312,10 +1104,10 @@ Status RemoteFlushJob::MemPurge() {
         cfd_->imm()->Add(new_mem, &job_context_->memtables_to_free);
         new_mem->Ref();
         // Piggyback RemoteFlushJobInfo on the first flushed memtable.
-        // db_mutex_->AssertHeld();
+        db_mutex_->AssertHeld();
         meta_.fd.file_size = 0;
         mems_[0]->SetFlushJobInfo(GetFlushJobInfo());
-        // db_mutex_->Unlock();
+        db_mutex_->Unlock();
       } else {
         s = Status::Aborted(Slice("Mempurge filled more than one memtable."));
         new_mem_capacity = 1.0;
@@ -1331,7 +1123,7 @@ Status RemoteFlushJob::MemPurge() {
   }
 
   // Reacquire the mutex for WriteLevel0 function.
-  // db_mutex_->Lock();
+  db_mutex_->Lock();
 
   // If mempurge successful, don't write input tables to level0,
   // but write any full output table to level0.
@@ -1528,7 +1320,7 @@ bool RemoteFlushJob::MemPurgeDecider(double threshold) {
 Status RemoteFlushJob::WriteLevel0Table() {
   AutoThreadOperationStageUpdater stage_updater(
       ThreadStatus::STAGE_REMOTE_FLUSH_WRITE_L0);
-  // db_mutex_->AssertHeld();
+  db_mutex_->AssertHeld();
   const uint64_t start_micros = clock_->NowMicros();
   const uint64_t start_cpu_micros = clock_->CPUMicros();
   SequenceNumber smallest_seqno = mems_.front()->GetEarliestSequenceNumber();
@@ -1542,7 +1334,7 @@ Status RemoteFlushJob::WriteLevel0Table() {
   {
     auto write_hint = cfd_->CalculateSSTWriteHint(0);
     Env::IOPriority io_priority = GetRateLimiterPriorityForWrite();
-    // db_mutex_->Unlock();
+    db_mutex_->Unlock();
     // memtables and range_del_iters store internal iterators over each data
     // memtable and its associated range deletion memtable, respectively, at
     // corresponding indexes.
@@ -1660,6 +1452,10 @@ Status RemoteFlushJob::WriteLevel0Table() {
       }
       if (tboptions.reason == TableFileCreationReason::kFlush) {
         TEST_SYNC_POINT("DBImpl::RemoteFlushJob:Flush");
+        RecordTick(stats_, MEMTABLE_PAYLOAD_BYTES_AT_FLUSH,
+                   memtable_payload_bytes);
+        RecordTick(stats_, MEMTABLE_GARBAGE_BYTES_AT_FLUSH,
+                   memtable_garbage_bytes);
       }
       LogFlush(db_options_.info_log);
     }
@@ -1670,9 +1466,9 @@ Status RemoteFlushJob::WriteLevel0Table() {
           DirFsyncOptions(DirFsyncOptions::FsyncReason::kNewFileSynced));
     }
     TEST_SYNC_POINT_CALLBACK("RemoteFlushJob::WriteLevel0Table", &mems_);
-    // db_mutex_->Lock();
+    db_mutex_->Lock();
   }
-  base_->Unref();
+  // base_->Unref();
 
   // Note that if file_size is zero, the file has been deleted and
   // should not be added to the manifest.
@@ -1723,12 +1519,14 @@ Status RemoteFlushJob::WriteLevel0Table() {
 
   stats.num_output_files_blob = static_cast<int>(blobs.size());
 
+  RecordTimeToHistogram(stats_, FLUSH_TIME, stats.micros);
   cfd_->internal_stats()->AddCompactionStats(0 /* level */, thread_pri_,
                                              stats);  // packremote
   cfd_->internal_stats()->AddCFStats(
       InternalStats::BYTES_FLUSHED,
       stats.bytes_written + stats.bytes_written_blob);  // packremote
   RecordFlushIOStats();
+  db_mutex_->Unlock();
   return s;
 }
 
@@ -1758,7 +1556,7 @@ Env::IOPriority RemoteFlushJob::GetRateLimiterPriorityForWrite() {
 }
 
 std::unique_ptr<FlushJobInfo> RemoteFlushJob::GetFlushJobInfo() const {
-  // db_mutex_->AssertHeld();
+  db_mutex_->AssertHeld();
   std::unique_ptr<FlushJobInfo> info(new FlushJobInfo{});
   info->cf_id = cfd_->GetID();
   info->cf_name = cfd_->GetName();

@@ -9,17 +9,11 @@
 #include <stdexcept>
 #include <unordered_set>
 
-#include "memory/remote_flush_service.h"
 #include "memtable/readonly_inlineskiplist.h"
+#include "rocksdb/logger.hpp"
 #include "rocksdb/memtablerep.h"
+#include "rocksdb/remote_flush_service.h"
 #include "rocksdb/status.h"
-#include "util/logger.hpp"
-#include "util/socket_api.hpp"
-#ifdef __linux__
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <unistd.h>
-#endif  //__linux__
 
 #ifdef ROCKSDB_ALL_TESTS_ENABLED
 #include "test_util/testutil.h"
@@ -28,7 +22,6 @@
 namespace ROCKSDB_NAMESPACE {
 class MemTableRepPackFactory {
  public:
-  static void* UnPackLocal(char*& buf);
   static void* UnPackLocal(TransferService* node);
   MemTableRepPackFactory(const MemTableRepPackFactory&) = delete;
   MemTableRepPackFactory& operator=(const MemTableRepPackFactory&) = delete;
@@ -44,7 +37,7 @@ inline void* MemTableRepPackFactory::UnPackLocal(TransferService* node) {
   size_t size = sizeof(int64_t);
   node->receive(reinterpret_cast<void**>(&msg), &size);
   int64_t type = *msg & 0xff;
-  int64_t info = *msg >> 8;
+  [[maybe_unused]] int64_t info = *msg >> 8;
   if (type == 1 /*SkipListRep*/) {
     void* local_skiplistrep = ReadOnlySkipListRep::UnPackLocal(node);
     return local_skiplistrep;
@@ -52,7 +45,8 @@ inline void* MemTableRepPackFactory::UnPackLocal(TransferService* node) {
     LOG("MemTableRepPackFactory::UnPackLocal: SpecialMemTableRep: ", type, ' ',
         info);
     void* sub_memtable_ = UnPackLocal(node);
-    auto memtable_ = reinterpret_cast<MemTableRep*>(sub_memtable_);
+    [[maybe_unused]] auto memtable_ =
+        reinterpret_cast<MemTableRep*>(sub_memtable_);
 #ifdef ROCKSDB_ALL_TESTS_ENABLED
     int num_entries_flush = info;
     MemTableRepFactory* factory =
@@ -68,22 +62,7 @@ inline void* MemTableRepPackFactory::UnPackLocal(TransferService* node) {
     LOG("MemTableRepPackFactory::UnPackLocal error", type, ' ', info);
     assert(false);
   }
-}
-
-inline void* MemTableRepPackFactory::UnPackLocal(char*& buf) {
-  int64_t msg = 0;
-  UNPACK_FROM_BUF(buf, &msg, sizeof(msg));
-  int64_t type = msg & 0xff;
-  int64_t info = msg >> 8;
-  if (type == 1 /*SkipListRep*/) {
-    LOG("MemTableRepPackFactory::UnPackLocal: SkipListRep");
-    void* local_skiplistrep = ReadOnlySkipListRep::UnPackLocal(buf);
-    return local_skiplistrep;
-  } else {
-    LOG("MemTableRepPackFactory::UnPackLocal error", type, ' ', info);
-    assert(false);
-    return nullptr;
-  }
+  return nullptr;
 }
 
 }  // namespace ROCKSDB_NAMESPACE

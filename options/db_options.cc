@@ -14,8 +14,6 @@
 
 #include "file/filename.h"
 #include "logging/logging.h"
-#include "memory/remote_transfer_service.h"
-#include "memory/remote_flush_service.h"
 #include "options/configurable_helper.h"
 #include "options/options_helper.h"
 #include "options/options_parser.h"
@@ -29,6 +27,8 @@
 #include "rocksdb/listener.h"
 #include "rocksdb/options.h"
 #include "rocksdb/rate_limiter.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/sst_file_manager.h"
 #include "rocksdb/statistics.h"
 #include "rocksdb/status.h"
@@ -805,93 +805,17 @@ void* ImmutableDBOptions::UnPackLocal(TransferService* node) {
   void* mem = malloc(recv_length);
   node->receive(&mem, recv_length);
   std::string file_name =
-      std::string(reinterpret_cast<char*>(mem)).substr(0, recv_length);
+      std::string(reinterpret_cast<char*>(mem), recv_length);
+  free(mem);
   LOG("UnPackaging ImmutableDBOptions from file:", file_name.c_str());
   DBOptions db_options = DBOptions();
   ConfigOptions config_options;
   std::vector<ColumnFamilyDescriptor> loaded_cf_descs;
-  Status ret = LoadOptionsFromFile(config_options, file_name, &db_options,
-                                   &loaded_cf_descs);
-  assert(ret.ok());
-  auto* immutable_dboptions = new ImmutableDBOptions();
-  *immutable_dboptions = BuildImmutableDBOptions(db_options);
-  LOG("UnPackaging ImmutableDBOptions");
-  return reinterpret_cast<void*>(immutable_dboptions);
-}
-int ImmutableDBOptions::Pack(shm_package::PackContext& ctx, int idx) const {
-  if (idx == -1) idx = ctx.add_package((void*)this, "ImmutableDBOptions");
-  std::function<std::string()> gen = []() {
-    std::string ret = "/tmp/DBOptions-";
-    for (int i = 0; i < 10; i++) {
-      std::random_device rd;
-      std::mt19937 generator(rd());
-      ret += std::to_string(generator() % 10);
-    }
-    return ret;
-  };
-  std::string file_name = gen();
-  ctx.append_str(idx, file_name);
-  DBOptions db_options = BuildDBOptions(*this, MutableDBOptions());
-  std::vector<std::string> cf_names_;
-  // TODO: remove this
-  std::vector<ColumnFamilyOptions> cf_opts_;
-  cf_names_.push_back("default");
-  cf_opts_.push_back(ColumnFamilyOptions());
-  Status ret = PersistRocksDBOptions(db_options, cf_names_, cf_opts_, file_name,
-                                     fs.get());
-  assert(ret.ok());
-  return idx;
-}
-void ImmutableDBOptions::UnPack(shm_package::PackContext& ctx, int idx,
-                                size_t& offset) const {
-  std::string file_name = ctx.get_str(idx, offset);
-  DBOptions db_options;
-  ConfigOptions config_options;
-  std::vector<ColumnFamilyDescriptor> loaded_cf_descs;
-  Status ret = LoadOptionsFromFile(config_options, file_name, &db_options,
-                                   &loaded_cf_descs);
-  assert(ret.ok());
-  // todo: fix const
-  // *this = BuildImmutableDBOptions(db_options);
-}
-
-void ImmutableDBOptions::PackLocal(char*& buf) const {
-  std::function<std::string()> gen = []() {
-    std::string ret = "/tmp/DBOptions-";
-    for (int i = 0; i < 10; i++) {
-      std::random_device rd;
-      std::mt19937 generator(rd());
-      ret += std::to_string(generator() % 10);
-    }
-    return ret;
-  };
-  std::string file_name = gen();
-  DBOptions dboptions = BuildDBOptions(*this, MutableDBOptions());
-  std::vector<std::string> cf_names_;
-  std::vector<ColumnFamilyOptions> cf_opts_;
-  cf_names_.push_back("default");
-  cf_opts_.push_back(ColumnFamilyOptions());
-  Status ret = PersistRocksDBOptions(dboptions, cf_names_, cf_opts_, file_name,
-                                     Env::Default()->GetFileSystem().get());
-  assert(ret.ok());
-  PACK_TO_BUF(file_name.c_str(), buf, file_name.length());
-  LOG("Packaging ImmutableDBOptions to file:", file_name.c_str());
-  LOG("Packaging ImmutableDBOptions");
-}
-
-void* ImmutableDBOptions::UnPackLocal(char*& buf) {
-  size_t recv_length = std::string("/tmp/DBOptions-").length() + 10;
-  void* mem = malloc(recv_length);
-  UNPACK_FROM_BUF(buf, mem, recv_length);
-  std::string file_name =
-      std::string(reinterpret_cast<char*>(mem)).substr(0, recv_length);
-  LOG("UnPackaging ImmutableDBOptions from file:", file_name.c_str());
-  DBOptions db_options = DBOptions();
-  ConfigOptions config_options;
-  std::vector<ColumnFamilyDescriptor> loaded_cf_descs;
-  Status ret = LoadOptionsFromFile(config_options, file_name, &db_options,
-                                   &loaded_cf_descs);
-  assert(ret.ok());
+  Status ret = Status::Busy();
+  while (!ret.ok()) {
+    ret = LoadOptionsFromFile(config_options, file_name, &db_options,
+                              &loaded_cf_descs);
+  }
   auto* immutable_dboptions = new ImmutableDBOptions();
   *immutable_dboptions = BuildImmutableDBOptions(db_options);
   LOG("UnPackaging ImmutableDBOptions");

@@ -11,12 +11,11 @@
 #include <cassert>
 #include <string>
 
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
 #include "rocksdb/customizable.h"
+#include "rocksdb/logger.hpp"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/rocksdb_namespace.h"
-#include "util/coding.h"
-#include "util/logger.hpp"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -26,11 +25,7 @@ class Slice;
 // Comparator and some internal data structures.
 class CompareInterface {
  public:
-  virtual void PackLocal(TransferService* node) const {
-    LOG("CompareInterface::PackLocal");
-    assert(false);
-  };
-  virtual void PackLocal(char*& buf) const {
+  virtual void PackLocal(TransferService*) const {
     LOG("CompareInterface::PackLocal");
     assert(false);
   };
@@ -58,11 +53,7 @@ class CompareInterface {
 // including data loss, unreported corruption, deadlocks, and more.
 class Comparator : public Customizable, public CompareInterface {
  public:
-  void PackLocal(TransferService* node) const override {
-    LOG("Comparator::PackLocal");
-    assert(false);
-  }
-  void PackLocal(char*& buf) const override {
+  void PackLocal(TransferService*) const override {
     LOG("Comparator::PackLocal");
     assert(false);
   }

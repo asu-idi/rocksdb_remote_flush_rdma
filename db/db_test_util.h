@@ -585,12 +585,6 @@ class SpecialEnv : public EnvWrapper {
     } else {
       class NoopDirectory : public Directory {
        public:
-        void PackLocal(int sockfd) const override {
-          LOG("NoopDirectory::PackLocal");
-          assert(false);
-        }
-
-       public:
         NoopDirectory() {}
         ~NoopDirectory() {}
 

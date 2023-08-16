@@ -81,6 +81,10 @@
 #define EXT4_SUPER_MAGIC 0xEF53
 #endif
 
+#ifdef HDFS
+#include "plugin/hdfs/env_hdfs.h"
+#endif
+
 namespace ROCKSDB_NAMESPACE {
 #if defined(OS_WIN)
 static const std::string kSharedLibExt = ".dll";
@@ -416,6 +420,12 @@ PosixEnv::PosixEnv()
       mu_(mu_storage_),
       threads_to_join_(threads_to_join_storage_),
       allow_non_owner_access_(allow_non_owner_access_storage_) {
+#ifdef HDFS
+  std::shared_ptr<FileSystem> fs;
+  Status s = NewHdfsFileSystem("hdfs://localhost:9000/", &fs);
+  assert(s.ok());
+  file_system_ = std::move(fs);
+#endif
   ThreadPoolImpl::PthreadCall("mutex_init", pthread_mutex_init(&mu_, nullptr));
   for (int pool_id = 0; pool_id < Env::Priority::TOTAL; ++pool_id) {
     thread_pools_[pool_id].SetThreadPriority(

@@ -947,27 +947,6 @@ ImmutableOptions::ImmutableOptions(const ImmutableDBOptions& db_options,
                                    const ImmutableCFOptions& cf_options)
     : ImmutableDBOptions(db_options), ImmutableCFOptions(cf_options) {}
 
-int ImmutableCFOptions::Pack(shm_package::PackContext& ctx, int idx) const {
-  if (idx == -1) idx = ctx.add_package((void*)this, "ImmutableCFOptions");
-  // TODO: add Dump
-  return idx;
-}
-void ImmutableCFOptions::UnPack(shm_package::PackContext& ctx, int idx,
-                                size_t& offset) const {
-  // TODO: add Parse
-}
-int ImmutableOptions::Pack(shm_package::PackContext& ctx, int idx) const {
-  if (idx == -1) idx = ctx.add_package((void*)this, "ImmutableOptions");
-  ImmutableDBOptions::Pack(ctx, idx);
-  ImmutableCFOptions::Pack(ctx, idx);
-  return idx;
-}
-void ImmutableOptions::UnPack(shm_package::PackContext& ctx, int idx,
-                              size_t& offset) const {
-  ImmutableDBOptions::UnPack(ctx, idx, offset);
-  ImmutableCFOptions::UnPack(ctx, idx, offset);
-}
-
 // Multiple two operands. If they overflow, return op1.
 uint64_t MultiplyCheckOverflow(uint64_t op1, double op2) {
   if (op1 == 0 || op2 <= 0) {

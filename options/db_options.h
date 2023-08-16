@@ -9,18 +9,15 @@
 #include <string>
 #include <vector>
 
-#include "memory/remote_transfer_service.h"
-#include "memory/remote_flush_service.h"
-#include "memory/shared_package.h"
 #include "rocksdb/options.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 
 namespace ROCKSDB_NAMESPACE {
 class SystemClock;
 
 struct ImmutableDBOptions {
  public:
-  void PackLocal(char*& buf) const;
-  static void* UnPackLocal(char*& buf);
   void PackLocal(TransferService* node) const;
   static void* UnPackLocal(TransferService* node);
 
@@ -30,9 +27,6 @@ struct ImmutableDBOptions {
   explicit ImmutableDBOptions(const DBOptions& options);
 
   void Dump(Logger* log) const;
-
-  int Pack(shm_package::PackContext& ctx, int idx = -1) const;
-  void UnPack(shm_package::PackContext& ctx, int idx, size_t& offset) const;
 
   bool create_if_missing;
   bool create_missing_column_families;

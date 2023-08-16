@@ -7,15 +7,17 @@
 
 #include <unistd.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "memory/remote_transfer_service.h"
 #include "db/dbformat.h"
-#include "memory/remote_flush_service.h"
-#include "memory/shared_package.h"
+#include "db/slice_transform_factory.h"
 #include "options/db_options.h"
 #include "rocksdb/options.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
+#include "rocksdb/slice_transform.h"
 #include "util/compression.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -29,9 +31,6 @@ struct ImmutableCFOptions {
   static const char* kName() { return "ImmutableCFOptions"; }
   explicit ImmutableCFOptions();
   explicit ImmutableCFOptions(const ColumnFamilyOptions& cf_options);
-
-  int Pack(shm_package::PackContext& ctx, int idx = -1) const;
-  void UnPack(shm_package::PackContext& ctx, int idx, size_t& offset) const;
 
   CompactionStyle compaction_style;
 
@@ -100,6 +99,12 @@ struct ImmutableOptions : public ImmutableDBOptions, public ImmutableCFOptions {
  public:
   void PackLocal(TransferService* node) const {
     this->ImmutableDBOptions::PackLocal(node);
+    if (stats == nullptr) {
+      bool signal = false;
+      node->send(reinterpret_cast<const void*>(&signal), sizeof(bool));
+    } else {
+      stats->PackLocal(node);
+    }
   }
   static void* UnPackLocal(TransferService* node,
                            const ColumnFamilyOptions& cf_options) {
@@ -107,15 +112,30 @@ struct ImmutableOptions : public ImmutableDBOptions, public ImmutableCFOptions {
     auto* db_options_ =
         reinterpret_cast<ImmutableDBOptions*>(immutabe_dboptions_);
     auto* ret = new ImmutableOptions(*db_options_, cf_options);
+    delete db_options_;
+    void* ret_stats = Statistics::UnPackLocal(node);
+    ret->stats =
+        ret_stats == nullptr
+            ? nullptr
+            : reinterpret_cast<std::shared_ptr<Statistics>*>(ret_stats)->get();
+    if (ret->stats != nullptr) ret->stats->set_remote_trigger(true);
     return reinterpret_cast<void*>(ret);
   }
-  void PackLocal(char*& buf) const { this->ImmutableDBOptions::PackLocal(buf); }
-  static void* UnPackLocal(char*& buf, const ColumnFamilyOptions& cf_options) {
-    void* immutabe_dboptions_ = ImmutableDBOptions::UnPackLocal(buf);
-    auto* db_options_ =
-        reinterpret_cast<ImmutableDBOptions*>(immutabe_dboptions_);
-    auto* ret = new ImmutableOptions(*db_options_, cf_options);
-    return reinterpret_cast<void*>(ret);
+  void PackRemote(TransferService* node) const {
+    if (stats == nullptr) {
+      bool signal = false;
+      node->send(reinterpret_cast<const void*>(&signal), sizeof(bool));
+    } else {
+      stats->PackRemote(node);
+    }
+    const_cast<std::vector<DbPath>*>(&cf_paths)->clear();
+  }
+  void UnPackRemote(TransferService* node) const {
+    bool signal = false;
+    node->receive(reinterpret_cast<void*>(&signal), sizeof(bool));
+    if (signal) {
+      stats->UnPackRemote(node);
+    }
   }
 
  public:
@@ -133,32 +153,27 @@ struct ImmutableOptions : public ImmutableDBOptions, public ImmutableCFOptions {
 
   ImmutableOptions(const ImmutableDBOptions& db_options,
                    const ColumnFamilyOptions& cf_options);
-
-  int Pack(shm_package::PackContext& ctx, int idx = -1) const;
-  void UnPack(shm_package::PackContext& ctx, int idx, size_t& offset) const;
 };
 
 struct MutableCFOptions {
  public:
   void PackLocal(TransferService* node) const {
-    node->send(reinterpret_cast<const void*>(this), sizeof(MutableCFOptions));
+    // node->send(reinterpret_cast<const void*>(this),
+    // sizeof(MutableCFOptions));
+    if (prefix_extractor != nullptr)
+      prefix_extractor->PackLocal(node);
+    else {
+      int64_t msg = 0xff;
+      node->send(&msg, sizeof(msg));
+    }
+    node->send(&memtable_whole_key_filtering, sizeof(bool));
   }
   static void* UnPackLocal(TransferService* node) {
-    // todo(iaIm14): not use empty mutable_cf_options to avoid crash
-    void* mem = new MutableCFOptions();
-    node->receive(mem, sizeof(MutableCFOptions));
     void* mem2 = new MutableCFOptions();
-    return mem2;
-  }
-  void PackLocal(char*& buf) const {
-    PACK_TO_BUF(reinterpret_cast<const void*>(this), buf,
-                sizeof(MutableCFOptions));
-  }
-  static void* UnPackLocal(char*& buf) {
-    // todo(iaIm14): not use empty mutable_cf_options to avoid crash
-    void* mem = new MutableCFOptions();
-    UNPACK_FROM_BUF(buf, mem, sizeof(MutableCFOptions));
-    void* mem2 = new MutableCFOptions();
+    auto* ptr = reinterpret_cast<MutableCFOptions*>(mem2);
+    ptr->prefix_extractor.reset(reinterpret_cast<SliceTransform*>(
+        SliceTransformFactory::UnPackLocal(node)));
+    node->receive(&ptr->memtable_whole_key_filtering, sizeof(bool));
     return mem2;
   }
 

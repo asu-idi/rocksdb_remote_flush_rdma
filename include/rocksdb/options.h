@@ -17,7 +17,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include "memory/remote_flush_service.h"
 #include "rocksdb/advanced_options.h"
 #include "rocksdb/comparator.h"
 #include "rocksdb/compression_type.h"
@@ -26,6 +25,7 @@
 #include "rocksdb/env.h"
 #include "rocksdb/file_checksum.h"
 #include "rocksdb/listener.h"
+#include "rocksdb/remote_flush_service.h"
 #include "rocksdb/sst_partitioner.h"
 #include "rocksdb/types.h"
 #include "rocksdb/universal_compaction.h"
@@ -65,8 +65,6 @@ using FileTypeSet = SmallEnumSet<FileType, FileType::kBlobFile>;
 
 struct ColumnFamilyOptions : public AdvancedColumnFamilyOptions {
  public:
-  void PackLocal(char*& buf) const;
-  static void* UnPackLocal(char*& buf);
   void PackLocal(TransferService* node) const;
   static void* UnPackLocal(TransferService* node);
 

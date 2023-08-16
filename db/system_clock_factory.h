@@ -1,13 +1,30 @@
-#include "db/retrieve_info.h"
-
 #include <cassert>
-#include <cstring>
+#include <cstddef>
+#include <iterator>
+#include <thread>
 
+#include "db/remote_flush_job.h"
 #include "env/emulated_clock.h"
-#include "rocksdb/env.h"
+#include "monitoring/instrumented_mutex.h"
 #include "rocksdb/system_clock.h"
+
 namespace ROCKSDB_NAMESPACE {
-SystemClock* retrieve_from(const std::string& clock_info_) {
+class SystemClockFactory {
+ public:
+  static void* UnPackLocal(TransferService* node);
+
+  SystemClockFactory(const SystemClockFactory&) = delete;
+  void operator=(const SystemClockFactory&) = delete;
+
+ private:
+  SystemClockFactory() = default;
+  ~SystemClockFactory() = default;
+};
+inline void* SystemClockFactory::UnPackLocal(TransferService* node) {
+  std::string clock_info_;
+  clock_info_.resize(20);
+  node->receive(clock_info_.data(), 20);
+
   if (strncmp(clock_info_.c_str(), "SystemClock", strlen("SystemClock")) == 0 ||
       strncmp(clock_info_.c_str(), "DefaultClock", strlen("DefaultClock")) ==
           0) {

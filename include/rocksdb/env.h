@@ -19,16 +19,6 @@
 #include <stdint.h>
 
 #include <cassert>
-
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
-
-#ifdef __linux__
-#include <sys/socket.h>
-#include <sys/syscall.h>
-#include <unistd.h>
-
-#endif
 #include <cstdarg>
 #include <functional>
 #include <limits>
@@ -36,13 +26,13 @@
 #include <string>
 #include <vector>
 
-#include "memory/remote_flush_service.h"
 #include "rocksdb/customizable.h"
 #include "rocksdb/functor_wrapper.h"
 #include "rocksdb/port_defs.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/status.h"
 #include "rocksdb/thread_status.h"
-#include "util/socket_api.hpp"
 
 #ifdef _WIN32
 // Windows API macro interference
@@ -87,23 +77,12 @@ const size_t kDefaultPageSize = 4 * 1024;
 struct EnvOptions {
  public:
   void PackLocal(TransferService* node) const {
-    size_t ret_val = 0;
     assert(rate_limiter == nullptr);
     node->send(reinterpret_cast<const void*>(this), sizeof(EnvOptions));
   }
   static void* UnPackLocal(TransferService* node) {
     void* mem = malloc(sizeof(EnvOptions));
     node->receive(mem, sizeof(EnvOptions));
-    return mem;
-  }
-  void PackLocal(char*& buf) const {
-    size_t ret_val = 0;
-    assert(rate_limiter == nullptr);
-    PACK_TO_BUF(reinterpret_cast<const void*>(this), buf, sizeof(EnvOptions));
-  }
-  static void* UnPackLocal(char*& buf) {
-    void* mem = malloc(sizeof(EnvOptions));
-    UNPACK_FROM_BUF(buf, mem, sizeof(EnvOptions));
     return mem;
   }
   // Construct with default Options
@@ -1173,12 +1152,6 @@ class MemoryMappedFileBuffer {
 // filesystem operations that can be executed on directories.
 class Directory {
  public:
-  virtual void PackLocal(int sockfd) const {
-    LOG("Directory::PackLocal not supported");
-    assert(false);
-  }
-
- public:
   virtual ~Directory() {}
   // Fsync directory. Can be called concurrently from multiple threads.
   virtual Status Fsync() = 0;
@@ -1849,12 +1822,6 @@ class RandomRWFileWrapper : public RandomRWFile {
 };
 
 class DirectoryWrapper : public Directory {
- public:
-  void PackLocal(int sockfd) const override {
-    LOG("DirectoryWrapper::PackLocal");
-    assert(false);
-  }
-
  public:
   explicit DirectoryWrapper(Directory* target) : target_(target) {}
 

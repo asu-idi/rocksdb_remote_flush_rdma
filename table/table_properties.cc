@@ -17,7 +17,6 @@
 #include "table/table_properties_internal.h"
 #include "table/unique_id_impl.h"
 #include "util/random.h"
-#include "util/socket_api.hpp"
 #include "util/string_util.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -48,40 +47,48 @@ void TableProperties::PackRemote(TransferService* node) const {
   node->send(reinterpret_cast<const void*>(this), sizeof(TableProperties));
   size_t db_id_len = db_id.size();
   node->send(&db_id_len, sizeof(size_t));
-  node->send(db_id.c_str(), db_id_len);
+  if (db_id_len) node->send(db_id.c_str(), db_id_len);
 
   size_t db_session_id_len = db_session_id.size();
   node->send(&db_session_id_len, sizeof(size_t));
-  node->send(db_session_id.c_str(), db_session_id_len);
+  if (db_session_id_len) node->send(db_session_id.c_str(), db_session_id_len);
   size_t db_host_id_len = db_host_id.size();
   node->send(&db_host_id_len, sizeof(size_t));
-  node->send(db_host_id.c_str(), db_host_id_len);
+  if (db_host_id_len) node->send(db_host_id.c_str(), db_host_id_len);
   size_t column_family_name_len = column_family_name.size();
   node->send(&column_family_name_len, sizeof(size_t));
-  node->send(column_family_name.c_str(), column_family_name_len);
+  if (column_family_name_len)
+    node->send(column_family_name.c_str(), column_family_name_len);
   size_t filter_policy_name_len = filter_policy_name.size();
   node->send(&filter_policy_name_len, sizeof(size_t));
   if (filter_policy_name_len)
     node->send(filter_policy_name.c_str(), filter_policy_name_len);
   size_t comparator_name_len = comparator_name.size();
   node->send(&comparator_name_len, sizeof(size_t));
-  node->send(comparator_name.c_str(), comparator_name_len);
+  if (comparator_name_len)
+    node->send(comparator_name.c_str(), comparator_name_len);
 
   size_t merge_operator_name_len = merge_operator_name.size();
   node->send(&merge_operator_name_len, sizeof(size_t));
-  node->send(merge_operator_name.c_str(), merge_operator_name_len);
+  if (merge_operator_name_len)
+    node->send(merge_operator_name.c_str(), merge_operator_name_len);
   size_t prefix_extractor_name_len = prefix_extractor_name.size();
   node->send(&prefix_extractor_name_len, sizeof(size_t));
-  node->send(prefix_extractor_name.c_str(), prefix_extractor_name_len);
+  if (prefix_extractor_name_len)
+    node->send(prefix_extractor_name.c_str(), prefix_extractor_name_len);
   size_t property_collectors_names_len = property_collectors_names.size();
   node->send(&property_collectors_names_len, sizeof(size_t));
-  node->send(property_collectors_names.c_str(), property_collectors_names_len);
+  if (property_collectors_names_len)
+    node->send(property_collectors_names.c_str(),
+               property_collectors_names_len);
   size_t compression_name_len = compression_name.size();
   node->send(&compression_name_len, sizeof(size_t));
-  node->send(compression_name.c_str(), compression_name_len);
+  if (compression_name_len)
+    node->send(compression_name.c_str(), compression_name_len);
   size_t compression_options_len = compression_options.size();
   node->send(&compression_options_len, sizeof(size_t));
-  node->send(compression_options.c_str(), compression_options_len);
+  if (compression_options_len)
+    node->send(compression_options.c_str(), compression_options_len);
 
   size_t seqno_to_time_mapping_len = seqno_to_time_mapping.size();
   node->send(&seqno_to_time_mapping_len, sizeof(size_t));
@@ -114,35 +121,51 @@ void TableProperties::PackRemote(TransferService* node) const {
 }
 
 void* TableProperties::UnPackRemote(TransferService* node) {
-  size_t ret_num = 0;
   auto* ret_ptr = new TableProperties();
   void* mem = reinterpret_cast<void*>(ret_ptr);
 
   node->receive(mem, sizeof(TableProperties));
   size_t db_id_len = 0;
   node->receive(&db_id_len, sizeof(size_t));
-  char* db_id = new char[db_id_len];
-  node->receive(db_id, db_id_len);
-  LOG("TableProperties::UnPackRemote");
-  new (&ret_ptr->db_id) std::string(db_id, db_id_len);
+  if (db_id_len > 0) {
+    char* db_id = new char[db_id_len];
+    node->receive(db_id, db_id_len);
+    new (&ret_ptr->db_id) std::string(db_id, db_id_len);
+    delete[] db_id;
+  } else {
+    new (&ret_ptr->db_id) std::string();
+  }
   size_t db_session_id_len = 0;
   node->receive(&db_session_id_len, sizeof(size_t));
-  char* db_session_id = new char[db_session_id_len];
-  node->receive(db_session_id, db_session_id_len);
-  new (&ret_ptr->db_session_id) std::string(db_session_id, db_session_id_len);
+  if (db_session_id_len > 0) {
+    char* db_session_id = new char[db_session_id_len];
+    node->receive(db_session_id, db_session_id_len);
+    new (&ret_ptr->db_session_id) std::string(db_session_id, db_session_id_len);
+    delete[] db_session_id;
+  } else {
+    new (&ret_ptr->db_session_id) std::string();
+  }
   size_t db_host_id_len = 0;
   node->receive(&db_host_id_len, sizeof(size_t));
-  char* db_host_id = new char[db_host_id_len];
-  node->receive(db_host_id, db_host_id_len);
-  new (&ret_ptr->db_host_id) std::string(db_host_id, db_host_id_len);
-  LOG("TableProperties::UnPackRemote");
+  if (db_host_id_len > 0) {
+    char* db_host_id = new char[db_host_id_len];
+    node->receive(db_host_id, db_host_id_len);
+    new (&ret_ptr->db_host_id) std::string(db_host_id, db_host_id_len);
+    delete[] db_host_id;
+  } else {
+    new (&ret_ptr->db_host_id) std::string();
+  }
   size_t column_family_name_len = 0;
   node->receive(&column_family_name_len, sizeof(size_t));
-  char* column_family_name = new char[column_family_name_len];
-  node->receive(column_family_name, column_family_name_len);
-  new (&ret_ptr->column_family_name)
-      std::string(column_family_name, column_family_name_len);
-  LOG("TableProperties::UnPackRemote");
+  if (column_family_name_len > 0) {
+    char* column_family_name = new char[column_family_name_len];
+    node->receive(column_family_name, column_family_name_len);
+    new (&ret_ptr->column_family_name)
+        std::string(column_family_name, column_family_name_len);
+    delete[] column_family_name;
+  } else {
+    new (&ret_ptr->column_family_name) std::string();
+  }
   size_t filter_policy_name_len = 0;
   node->receive(&filter_policy_name_len, sizeof(size_t));
   if (filter_policy_name_len > 0) {
@@ -150,52 +173,76 @@ void* TableProperties::UnPackRemote(TransferService* node) {
     node->receive(filter_policy_name, filter_policy_name_len);
     new (&ret_ptr->filter_policy_name)
         std::string(filter_policy_name, filter_policy_name_len);
+    delete[] filter_policy_name;
   } else {
     new (&ret_ptr->filter_policy_name) std::string();
   }
-  LOG("TableProperties::UnPackRemote");
   size_t comparator_name_len = 0;
   node->receive(&comparator_name_len, sizeof(size_t));
-  char* comparator_name = new char[comparator_name_len];
-  node->receive(comparator_name, comparator_name_len);
-  new (&ret_ptr->comparator_name)
-      std::string(comparator_name, comparator_name_len);
-  LOG("TableProperties::UnPackRemote");
+  if (comparator_name_len > 0) {
+    char* comparator_name = new char[comparator_name_len];
+    node->receive(comparator_name, comparator_name_len);
+    new (&ret_ptr->comparator_name)
+        std::string(comparator_name, comparator_name_len);
+    delete[] comparator_name;
+  } else {
+    new (&ret_ptr->comparator_name) std::string();
+  }
   size_t merge_operator_name_len = 0;
   node->receive(&merge_operator_name_len, sizeof(size_t));
-  char* merge_operator_name = new char[merge_operator_name_len];
-  node->receive(merge_operator_name, merge_operator_name_len);
-  new (&ret_ptr->merge_operator_name)
-      std::string(merge_operator_name, merge_operator_name_len);
-  LOG("TableProperties::UnPackRemote");
+  if (merge_operator_name_len > 0) {
+    char* merge_operator_name = new char[merge_operator_name_len];
+    node->receive(merge_operator_name, merge_operator_name_len);
+    new (&ret_ptr->merge_operator_name)
+        std::string(merge_operator_name, merge_operator_name_len);
+    delete[] merge_operator_name;
+  } else {
+    new (&ret_ptr->merge_operator_name) std::string();
+  }
   size_t prefix_extractor_name_len = 0;
   node->receive(&prefix_extractor_name_len, sizeof(size_t));
-  char* prefix_extractor_name = new char[prefix_extractor_name_len];
-  node->receive(prefix_extractor_name, prefix_extractor_name_len);
-  new (&ret_ptr->prefix_extractor_name)
-      std::string(prefix_extractor_name, prefix_extractor_name_len);
-  LOG("TableProperties::UnPackRemote");
+  if (prefix_extractor_name_len > 0) {
+    char* prefix_extractor_name = new char[prefix_extractor_name_len];
+    node->receive(prefix_extractor_name, prefix_extractor_name_len);
+    new (&ret_ptr->prefix_extractor_name)
+        std::string(prefix_extractor_name, prefix_extractor_name_len);
+    delete[] prefix_extractor_name;
+  } else {
+    new (&ret_ptr->prefix_extractor_name) std::string();
+  }
   size_t property_collectors_names_len = 0;
   node->receive(&property_collectors_names_len, sizeof(size_t));
-  char* property_collectors_names = new char[property_collectors_names_len];
-  node->receive(property_collectors_names, property_collectors_names_len);
-  new (&ret_ptr->property_collectors_names)
-      std::string(property_collectors_names, property_collectors_names_len);
-  LOG("TableProperties::UnPackRemote");
+  if (property_collectors_names_len > 0) {
+    char* property_collectors_names = new char[property_collectors_names_len];
+    node->receive(property_collectors_names, property_collectors_names_len);
+    new (&ret_ptr->property_collectors_names)
+        std::string(property_collectors_names, property_collectors_names_len);
+    delete[] property_collectors_names;
+  } else {
+    new (&ret_ptr->property_collectors_names) std::string();
+  }
   size_t compression_name_len = 0;
   node->receive(&compression_name_len, sizeof(size_t));
-  char* compression_name = new char[compression_name_len];
-  node->receive(compression_name, compression_name_len);
-  new (&ret_ptr->compression_name)
-      std::string(compression_name, compression_name_len);
-  LOG("TableProperties::UnPackRemote");
+  if (compression_name_len > 0) {
+    char* compression_name = new char[compression_name_len];
+    node->receive(compression_name, compression_name_len);
+    new (&ret_ptr->compression_name)
+        std::string(compression_name, compression_name_len);
+    delete[] compression_name;
+  } else {
+    new (&ret_ptr->compression_name) std::string();
+  }
   size_t compression_options_len = 0;
   node->receive(&compression_options_len, sizeof(size_t));
-  char* compression_options = new char[compression_options_len];
-  node->receive(compression_options, compression_options_len);
-  new (&ret_ptr->compression_options)
-      std::string(compression_options, compression_options_len);
-  LOG("TableProperties::UnPackRemote");
+  if (compression_options_len > 0) {
+    char* compression_options = new char[compression_options_len];
+    node->receive(compression_options, compression_options_len);
+    new (&ret_ptr->compression_options)
+        std::string(compression_options, compression_options_len);
+    delete[] compression_options;
+  } else {
+    new (&ret_ptr->compression_options) std::string();
+  }
   size_t seqno_to_time_mapping_len = 0;
   node->receive(&seqno_to_time_mapping_len, sizeof(size_t));
   if (seqno_to_time_mapping_len > 0) {
@@ -203,11 +250,10 @@ void* TableProperties::UnPackRemote(TransferService* node) {
     node->receive(seqno_to_time_mapping, seqno_to_time_mapping_len);
     new (&ret_ptr->seqno_to_time_mapping)
         std::string(seqno_to_time_mapping, seqno_to_time_mapping_len);
+    delete[] seqno_to_time_mapping;
   } else {
     new (&ret_ptr->seqno_to_time_mapping) std::string();
   }
-
-  LOG("TableProperties::UnPackRemote");
   size_t user_collected_properties_len = 0;
   node->receive(&user_collected_properties_len, sizeof(size_t));
   new (&ret_ptr->user_collected_properties)
@@ -221,17 +267,18 @@ void* TableProperties::UnPackRemote(TransferService* node) {
     node->receive(&key_len, sizeof(size_t));
     char* key_cp = new char[key_len];
     node->receive(key_cp, key_len);
-    key = key_cp;
+    key = std::string(key_cp, key_len);
+    delete[] key_cp;
     size_t value_len = 0;
     node->receive(&value_len, sizeof(size_t));
     char* value_cp = new char[value_len];
     node->receive(value_cp, value_len);
-    value = value_cp;
+    value = std::string(value_cp, value_len);
+    delete[] value_cp;
     ret_ptr->user_collected_properties[key] = value;
   }
   size_t readable_properties_len = 0;
   node->receive(&readable_properties_len, sizeof(size_t));
-  LOG("TableProperties::UnPackRemote");
   for (size_t i = 0; i < readable_properties_len; i++) {
     std::string key = "";
     std::string value = "";
@@ -239,12 +286,14 @@ void* TableProperties::UnPackRemote(TransferService* node) {
     node->receive(&key_len, sizeof(size_t));
     char* key_cp = new char[key_len];
     node->receive(key_cp, key_len);
-    key = key_cp;
+    key = std::string(key_cp, key_len);
+    delete[] key_cp;
     size_t value_len = 0;
     node->receive(&value_len, sizeof(size_t));
     char* value_cp = new char[value_len];
     node->receive(value_cp, value_len);
-    value = value_cp;
+    value = std::string(value_cp, value_len);
+    delete[] value_cp;
     ret_ptr->readable_properties[key] = value;
   }
   LOG("TableProperties::UnPackRemote");
@@ -558,113 +607,5 @@ void TEST_SetRandomTableProperties(TableProperties* props) {
   }
 }
 #endif
-
-int TableProperties::Pack(shm_package::PackContext& ctx, int idx) {
-  if (idx == -1) idx = ctx.add_package((void*)this, "TableProperties");
-  ctx.append_uint64(idx, orig_file_number);
-  ctx.append_uint64(idx, data_size);
-  ctx.append_uint64(idx, index_size);
-  ctx.append_uint64(idx, index_partitions);
-  ctx.append_uint64(idx, top_level_index_size);
-  ctx.append_uint64(idx, index_key_is_user_key);
-  ctx.append_uint64(idx, index_value_is_delta_encoded);
-  ctx.append_uint64(idx, filter_size);
-  ctx.append_uint64(idx, raw_key_size);
-  ctx.append_uint64(idx, raw_value_size);
-  ctx.append_uint64(idx, num_data_blocks);
-  ctx.append_uint64(idx, num_entries);
-  ctx.append_uint64(idx, num_filter_entries);
-  ctx.append_uint64(idx, num_deletions);
-  ctx.append_uint64(idx, num_merge_operands);
-  ctx.append_uint64(idx, num_range_deletions);
-  ctx.append_uint64(idx, format_version);
-  ctx.append_uint64(idx, fixed_key_len);
-  ctx.append_uint64(idx, column_family_id);
-  ctx.append_uint64(idx, creation_time);
-  ctx.append_uint64(idx, oldest_key_time);
-  ctx.append_uint64(idx, file_creation_time);
-  ctx.append_uint64(idx, slow_compression_estimated_data_size);
-  ctx.append_uint64(idx, fast_compression_estimated_data_size);
-  ctx.append_uint64(idx, external_sst_file_global_seqno_offset);
-  ctx.append_str(idx, db_id);
-  ctx.append_str(idx, db_session_id);
-  ctx.append_str(idx, db_host_id);
-  ctx.append_str(idx, column_family_name);
-  ctx.append_str(idx, filter_policy_name);
-  ctx.append_str(idx, comparator_name);
-  ctx.append_str(idx, merge_operator_name);
-  ctx.append_str(idx, prefix_extractor_name);
-  ctx.append_str(idx, property_collectors_names);
-  ctx.append_str(idx, compression_name);
-  ctx.append_str(idx, compression_options);
-  ctx.append_str(idx, seqno_to_time_mapping);
-
-  //    user_collected_properties_package_
-  ctx.append_uint64(idx, user_collected_properties.size());
-  for (auto& iter : user_collected_properties) {
-    ctx.append_str(idx, iter.first);
-    ctx.append_str(idx, iter.second);
-  }
-  //   readable_properties_package_
-  ctx.append_uint64(idx, readable_properties.size());
-  for (auto& iter : readable_properties) {
-    ctx.append_str(idx, iter.first);
-    ctx.append_str(idx, iter.second);
-  }
-  return idx;
-}
-void TableProperties::UnPack(shm_package::PackContext& ctx, int idx,
-                             size_t& offset) {
-  orig_file_number = ctx.get_uint64(idx, offset);
-  data_size = ctx.get_uint64(idx, offset);
-  index_size = ctx.get_uint64(idx, offset);
-  index_partitions = ctx.get_uint64(idx, offset);
-  top_level_index_size = ctx.get_uint64(idx, offset);
-  index_key_is_user_key = ctx.get_uint64(idx, offset);
-  index_value_is_delta_encoded = ctx.get_uint64(idx, offset);
-  filter_size = ctx.get_uint64(idx, offset);
-  raw_key_size = ctx.get_uint64(idx, offset);
-  raw_value_size = ctx.get_uint64(idx, offset);
-  num_data_blocks = ctx.get_uint64(idx, offset);
-  num_entries = ctx.get_uint64(idx, offset);
-  num_filter_entries = ctx.get_uint64(idx, offset);
-  num_deletions = ctx.get_uint64(idx, offset);
-  num_merge_operands = ctx.get_uint64(idx, offset);
-  num_range_deletions = ctx.get_uint64(idx, offset);
-  format_version = ctx.get_uint64(idx, offset);
-  fixed_key_len = ctx.get_uint64(idx, offset);
-  column_family_id = ctx.get_uint64(idx, offset);
-  creation_time = ctx.get_uint64(idx, offset);
-  oldest_key_time = ctx.get_uint64(idx, offset);
-  file_creation_time = ctx.get_uint64(idx, offset);
-  slow_compression_estimated_data_size = ctx.get_uint64(idx, offset);
-  fast_compression_estimated_data_size = ctx.get_uint64(idx, offset);
-  external_sst_file_global_seqno_offset = ctx.get_uint64(idx, offset);
-  db_id = ctx.get_str(idx, offset);
-  db_session_id = ctx.get_str(idx, offset);
-  db_host_id = ctx.get_str(idx, offset);
-  column_family_name = ctx.get_str(idx, offset);
-  filter_policy_name = ctx.get_str(idx, offset);
-  comparator_name = ctx.get_str(idx, offset);
-  merge_operator_name = ctx.get_str(idx, offset);
-  prefix_extractor_name = ctx.get_str(idx, offset);
-  property_collectors_names = ctx.get_str(idx, offset);
-  compression_name = ctx.get_str(idx, offset);
-  compression_options = ctx.get_str(idx, offset);
-  seqno_to_time_mapping = ctx.get_str(idx, offset);
-
-  user_collected_properties.clear();  // assert
-  for (size_t i = 0, tot = ctx.get_uint64(idx, offset); i < tot; i++) {
-    std::string first = ctx.get_str(idx, offset);
-    std::string second = ctx.get_str(idx, offset);
-    user_collected_properties.insert(std::make_pair(first, second));
-  }
-  readable_properties.clear();  // assert
-  for (size_t i = 0, tot = ctx.get_uint64(idx, offset); i < tot; i++) {
-    std::string first = ctx.get_str(idx, offset);
-    std::string second = ctx.get_str(idx, offset);
-    readable_properties.insert(std::make_pair(first, second));
-  }
-}
 
 }  // namespace ROCKSDB_NAMESPACE

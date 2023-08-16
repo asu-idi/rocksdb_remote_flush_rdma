@@ -5,12 +5,7 @@
 
 #pragma once
 
-#include "memory/remote_flush_service.h"
-#ifdef __linux__
-#include <sys/socket.h>
-#endif
-
-#include "memory/remote_flush_service.h"
+#include "rocksdb/remote_flush_service.h"
 #include "rocksdb/table.h"
 #include "util/gflags_compat.h"
 #include "util/random.h"
@@ -63,12 +58,6 @@ class DbStressTablePropertiesCollectorFactory
     char* msg = reinterpret_cast<char*>(malloc(msg_len));
     *reinterpret_cast<size_t*>(msg) = 1;
     node->send(msg, msg_len);
-  }
-  void PackLocal(char*& buf) const override {
-    size_t msg_len = sizeof(size_t) + sizeof(size_t) * 2 + sizeof(double);
-    char* msg = reinterpret_cast<char*>(malloc(msg_len));
-    *reinterpret_cast<size_t*>(msg) = 1;
-    PACK_TO_BUF(msg, buf, msg_len);
   }
 
  public:

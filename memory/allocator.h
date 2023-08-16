@@ -15,8 +15,8 @@
 #include <cerrno>
 #include <cstddef>
 
-#include "memory/remote_flush_service.h"
-#include "memory/remote_transfer_service.h"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/write_buffer_manager.h"
 
 namespace ROCKSDB_NAMESPACE {
@@ -37,7 +37,6 @@ class Allocator {
 
 class BasicArena : public Allocator {
  public:
-  virtual void PackLocal(char*& buf) const = 0;
   virtual void PackLocal(TransferService* node) const = 0;
 
  public:
@@ -45,8 +44,7 @@ class BasicArena : public Allocator {
   virtual size_t MemoryAllocatedBytes() const = 0;
   virtual size_t AllocatedAndUnused() const = 0;
   virtual size_t IrregularBlockNum() const = 0;
-  virtual bool IsInInlineBlock()
-      const = 0;  // TODO: remove unneccessary functions
+  virtual bool IsInInlineBlock() const = 0;
   const char* name() const override { return "should not use this allocator"; };
 };
 class AllocTracker {

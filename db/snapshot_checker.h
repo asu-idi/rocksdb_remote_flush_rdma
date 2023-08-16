@@ -7,15 +7,10 @@
 
 #include <cassert>
 
-#include "memory/remote_flush_service.h"
-#include "util/socket_api.hpp"
-#ifdef __linux__
-#include <sys/socket.h>
-#include <unistd.h>
-#endif
-#include "memory/remote_transfer_service.h"
+#include "rocksdb/logger.hpp"
+#include "rocksdb/remote_flush_service.h"
+#include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/types.h"
-#include "util/logger.hpp"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -30,11 +25,7 @@ enum class SnapshotCheckerResult : int {
 // Callback class that control GC of duplicate keys in flush/compaction.
 class SnapshotChecker {
  public:
-  virtual void PackLocal(TransferService* node) const {
-    LOG("should not use default SnapshotChecker::PackLocal");
-    assert(false);
-  }
-  virtual void PackLocal(char*& buf) const {
+  virtual void PackLocal([[maybe_unused]] TransferService* node) const {
     LOG("should not use default SnapshotChecker::PackLocal");
     assert(false);
   }
@@ -51,11 +42,6 @@ class DisableGCSnapshotChecker : public SnapshotChecker {
     size_t msg = 0;
     msg += (0x2);
     node->send(&msg, sizeof(msg));
-  }
-  void PackLocal(char*& buf) const override {
-    size_t msg = 0;
-    msg += (0x2);
-    PACK_TO_BUF(&msg, buf, sizeof(msg));
   }
 
  public:
@@ -90,7 +76,6 @@ class WritePreparedSnapshotChecker : public SnapshotChecker {
 
 class SnapshotCheckerFactory {
  public:
-  static void* UnPackLocal(char*& buf);
   static void* UnPackLocal(TransferService* node);
 
  public:
@@ -118,19 +103,5 @@ inline void* SnapshotCheckerFactory::UnPackLocal(TransferService* node) {
     assert(false);
   }
 }
-inline void* SnapshotCheckerFactory::UnPackLocal(char*& buf) {
-  size_t msg = 0;
-  UNPACK_FROM_BUF(buf, &msg, sizeof(msg));
-  if (msg == 0xff) {
-    return nullptr;
-  }
-  msg = 0;
-  UNPACK_FROM_BUF(buf, &msg, sizeof(msg));
-  if (msg == 0x02) {
-    return DisableGCSnapshotChecker::Instance();
-  } else {
-    LOG("SnapshotCheckerFactory::UnPackLocal: invalid msg:", msg);
-    assert(false);
-  }
-}
+
 }  // namespace ROCKSDB_NAMESPACE
