@@ -102,11 +102,11 @@ RemoteFlushJob::RemoteFlushJob(
     Statistics* stats, EventLogger* event_logger, bool measure_io_stats,
     const bool sync_output_directory, const bool write_manifest,
     Env::Priority thread_pri, const std::shared_ptr<IOTracer>& io_tracer,
-    const SeqnoToTimeMapping& seqno_time_mapping, const std::string& db_id,
+    const SeqnoToTimeMapping& seqno_time_mapping, RDMAClient* rdma_client, const std::string& db_id,
     const std::string& db_session_id, std::string full_history_ts_low,
     BlobFileCompletionCallback* blob_callback)
     : local_generator_node(sockaddr_in{}, 0),
-      local_generator_rdma_client(),
+      local_generator_rdma_client(rdma_client),
       dbname_(dbname),
       db_id_(db_id),
       db_session_id_(db_session_id),
@@ -482,7 +482,7 @@ std::shared_ptr<RemoteFlushJob> RemoteFlushJob::CreateRemoteFlushJob(
     Statistics* stats, EventLogger* event_logger, bool measure_io_stats,
     const bool sync_output_directory, const bool write_manifest,
     Env::Priority thread_pri, const std::shared_ptr<IOTracer>& io_tracer,
-    const SeqnoToTimeMapping& seqno_time_mapping, const std::string& db_id,
+    const SeqnoToTimeMapping& seqno_time_mapping, RDMAClient* rdma_client, const std::string& db_id,
     const std::string& db_session_id, std::string full_history_ts_low,
     BlobFileCompletionCallback* blob_callback) {
   auto mem = new RemoteFlushJob(
@@ -492,7 +492,7 @@ std::shared_ptr<RemoteFlushJob> RemoteFlushJob::CreateRemoteFlushJob(
       snapshot_checker, job_context, flush_reason, log_buffer, db_directory,
       output_file_directory, output_compression, stats, event_logger,
       measure_io_stats, sync_output_directory, write_manifest, thread_pri,
-      io_tracer, seqno_time_mapping, db_id, db_session_id,
+      io_tracer, seqno_time_mapping, rdma_client, db_id, db_session_id,
       std::move(full_history_ts_low), blob_callback);
   return std::shared_ptr<RemoteFlushJob>(mem);
 }
@@ -642,7 +642,8 @@ Status RemoteFlushJob::RunRemote(
     // send(server_socket_fd_, rdma_info, 2 * sizeof(long long), 0);
 
 #ifdef ROCKSDB_RDMA
-    RDMATransferService transfer_service(&local_generator_rdma_client);
+    auto offset = local_generator_rdma_client->rdma_mem_.allocate(1ull << 27);
+    RDMATransferService transfer_service(local_generator_rdma_client, offset);
 #else
     TCPTransferService transfer_service(&local_generator_node);
 #endif
@@ -653,6 +654,13 @@ Status RemoteFlushJob::RunRemote(
     transfer_service.send(&port, sizeof(int));
     assert(local_ip.size());
     transfer_service.send(local_ip.c_str(), local_ip.size());
+#ifdef ROCKSDB_RDMA
+    auto remote_seg = local_generator_rdma_client->allocate_mem_request(rdma_conn, transfer_service.get_size());
+    local_generator_rdma_client->rdma_write(rdma_conn, transfer_service.get_size(), offset, remote_seg.first);
+    assert(local_generator_rdma_client->poll_completion(rdma_conn) == 0);
+    local_generator_rdma_client->rdma_mem_.free(offset);
+    assert(local_generator_rdma_client->modify_mem_request(rdma_conn, remote_seg, 2));
+#endif
 
     // close connection with memnode
     assert(QuitMemNode().ok());
@@ -660,6 +668,7 @@ Status RemoteFlushJob::RunRemote(
     // s = WriteLevel0Table();
     // assert(s == Status::OK());
 
+#ifndef ROCKSDB_RDMA
     // We receive some metadata directly from remote worker
     // Or maybe we could receive from memnode
     assert(MatchRemoteWorker(port) == Status::OK());
@@ -682,7 +691,9 @@ Status RemoteFlushJob::RunRemote(
         /*allow_unprepared_value*/ false));
     // close connection with remote worker
     assert(QuitRemoteWorker() == Status::OK());
+#endif
     db_mutex_->Lock();
+
     LOG("Run job: write l0table done");
     LOG(edit_->DebugString());
     LOG(meta_.DebugString());
@@ -726,7 +737,6 @@ Status RemoteFlushJob::RunRemote(
 Status RemoteFlushJob::MatchRemoteWorker(int port) {
   LOG_CERR("waiting to connect with remote flush worker on localhost:", port);
 #ifdef ROCKSDB_RDMA
-  local_generator_rdma_client.~RDMAClient();
 #else
   local_generator_node.~TCPNode();
 #endif
@@ -769,31 +779,30 @@ Status RemoteFlushJob::MatchRemoteWorker(int port) {
 }
 
 Status RemoteFlushJob::QuitMemNode() {
-  if (!local_generator_rdma_client.is_init_) {
+#ifndef ROCKSDB_RDMA
     const char* bye = "byebyemessage";
     local_generator_node.send(bye, strlen(bye));
     LOG("server sent: ", strlen(bye), ' ', bye);
     close(local_generator_node.connection_info_.client_sockfd);
     local_generator_node.connection_info_.client_sockfd = 0;
     return Status::OK();
-  } else {
-    // TODO(rdma): close connection or do nothing, use
-    // local_generator_rdma_client.
+#else
+    local_generator_rdma_client->conn_mtx_[rdma_conn].unlock();
     return Status::OK();
-  }
+#endif
 }
 Status RemoteFlushJob::MatchMemNode(
     std::vector<std::pair<std::string, size_t>>* ip_port_list) {
   assert(ip_port_list->size() != 0);
   int choosen = (int)(rand() % ip_port_list->size());
-#ifdef ROCKSDN_RDMA
-  // TODO(rdma): create one RDMA connection.
-  local_generator_rdma_client.config.server_name =
-      (*ip_port_list)[choosen].first;
-  local_generator_rdma_client.port = (*ip_port_list)[choosen].second;
-  local_generator_rdma_client.resources_create(1ull << 27, 1);
-  local_generator_rdma_client.connect_qp(0);
-  local_generator_rdma_client.is_init_ = true;
+#ifdef ROCKSDB_RDMA
+  int chosen = (int)(rand() % local_generator_rdma_client->res->conns.size());
+  for(int i = 0; ; i++){
+    rdma_conn = local_generator_rdma_client->res->conns[
+      (chosen + i) % local_generator_rdma_client->res->conns.size()];
+    if(local_generator_rdma_client->conn_mtx_[rdma_conn].try_lock())
+      return Status::OK();
+  }
 #else
   local_generator_node.~TCPNode();
   memset(reinterpret_cast<void*>(&local_generator_node), 0, sizeof(TCPNode));
@@ -821,10 +830,10 @@ Status RemoteFlushJob::MatchMemNode(
     LOG("Connection Failed");
     return Status::IOError("Connection Failed");
   }
-#endif
   LOG_CERR("create connection with memnode: ",
            (*ip_port_list)[choosen].first.c_str(), ' ',
            (*ip_port_list)[choosen].second);
+#endif
   return Status::OK();
 }
 

@@ -21,7 +21,7 @@
 #include "rocksdb/slice_transform.h"
 #include "rocksdb/status.h"
 #include "rocksdb/utilities/options_type.h"
-#include "util/logger.hpp"
+#include "rocksdb/logger.hpp"
 #include "utilities/merge_operators.h"
 #define ROOT_DIR "/root/code/rocksdb_remote_flush/"
 using namespace std;
