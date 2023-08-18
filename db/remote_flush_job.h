@@ -66,7 +66,9 @@ class Arena;
 class RemoteFlushJob {
  public:
   TCPNode local_generator_node;
-  RDMAClient local_generator_rdma_client;
+  RDMAClient* local_generator_rdma_client;
+ private:
+  RDMANode::rdma_connection* rdma_conn;
 
  public:
   static std::shared_ptr<RemoteFlushJob> CreateRemoteFlushJob(
@@ -84,7 +86,7 @@ class RemoteFlushJob {
       EventLogger* event_logger, bool measure_io_stats,
       const bool sync_output_directory, const bool write_manifest,
       Env::Priority thread_pri, const std::shared_ptr<IOTracer>& io_tracer,
-      const SeqnoToTimeMapping& seq_time_mapping, const std::string& db_id = "",
+      const SeqnoToTimeMapping& seq_time_mapping, RDMAClient* rdma_client, const std::string& db_id = "",
       const std::string& db_session_id = "",
       std::string full_history_ts_low = "",
       BlobFileCompletionCallback* blob_callback = nullptr);
@@ -114,6 +116,7 @@ class RemoteFlushJob {
                  Env::Priority thread_pri,
                  const std::shared_ptr<IOTracer>& io_tracer,
                  const SeqnoToTimeMapping& seq_time_mapping,
+                 RDMAClient* rdma_client,
                  const std::string& db_id = "",
                  const std::string& db_session_id = "",
                  std::string full_history_ts_low = "",
