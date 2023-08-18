@@ -17,11 +17,11 @@
 #include "db/memtable.h"
 #include "rocksdb/db.h"
 #include "rocksdb/listener.h"
+#include "rocksdb/logger.hpp"
 #include "rocksdb/options.h"
 #include "rocksdb/slice_transform.h"
 #include "rocksdb/status.h"
 #include "rocksdb/utilities/options_type.h"
-#include "rocksdb/logger.hpp"
 #include "utilities/merge_operators.h"
 #define ROOT_DIR "/root/code/rocksdb_remote_flush/"
 using namespace std;
@@ -96,13 +96,13 @@ auto main(int argc, char** argv) -> signed {
   db->register_local_ip(local_ip);
   LOG("local_ip: ", local_ip);
 
-  std::chrono::steady_clock::time_point all_begin =
+  [[maybe_unused]] std::chrono::steady_clock::time_point all_begin =
       std::chrono::steady_clock::now();
   std::thread t[15];
   for (size_t i = 0; i < 15; i++) {
     t[i] = std::thread([i, db]() {
       std::this_thread::sleep_for(std::chrono::seconds(i * 2));
-      std::chrono::steady_clock::time_point begin =
+      [[maybe_unused]] std::chrono::steady_clock::time_point begin =
           std::chrono::steady_clock::now();
       // std::map<std::string, std::string> kv_pairs;
       int cnt_miss = 0;
@@ -121,7 +121,7 @@ auto main(int argc, char** argv) -> signed {
         std::string key = std::to_string(dis(gen));
         std::string value = std::to_string(dis(gen));
         if (j % 50000 == 0) {
-          std::chrono::steady_clock::time_point end =
+          [[maybe_unused]] std::chrono::steady_clock::time_point end =
               std::chrono::steady_clock::now();
           LOG_CERR(
               "cfd:", cf->GetName(), " write kv pairs: ", j, "time:",
@@ -190,7 +190,7 @@ auto main(int argc, char** argv) -> signed {
   for (auto& i : t) {
     i.join();
   }
-  std::chrono::steady_clock::time_point all_end =
+  [[maybe_unused]] std::chrono::steady_clock::time_point all_end =
       std::chrono::steady_clock::now();
   LOG_CERR(
       "all write kv pairs: ", 750000000, "time:",
