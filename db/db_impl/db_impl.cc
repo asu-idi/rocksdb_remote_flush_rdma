@@ -347,7 +347,9 @@ void DBImpl::BackgroundCallRemoteFlush(int sockfd,
   const char* bye = "byebyemessage";
   void* end_msg = malloc(strlen(bye));
   transfer_service.receive(&end_msg, strlen(bye));
-  LOG("worker received MsgEnd: ", reinterpret_cast<char*>(end_msg));
+  LOG("worker received MsgEnd: ",
+      std::string(reinterpret_cast<char*>(end_msg), strlen(bye)));
+  free(end_msg);
 #endif
 
 #ifdef ROCKSDB_RDMA
@@ -395,6 +397,7 @@ void DBImpl::BackgroundCallRemoteFlush(int sockfd,
   delete worker_node;
 #endif
 
+  free(local_handler);
   bg_flush_scheduled_--;
   bg_cv_.SignalAll();
   TEST_SYNC_POINT("DBImpl::BackgroundCallRemoteFlush:Finish");
@@ -472,13 +475,6 @@ Status DBImpl::ListenAndScheduleFlushJob(int port) {
                              (socklen_t*)&addrlen)) < 0) {
       LOG("accept failed");
       return Status::IOError("accept failed");
-    }
-    {
-      char client_ip[INET_ADDRSTRLEN];
-      inet_ntop(AF_INET, &address.sin_addr, client_ip, INET_ADDRSTRLEN);
-      int client_port = ntohs(address.sin_port);
-      LOG_CERR("remote flush worker receive package from memnode: ", client_ip,
-               ':', client_port);
     }
 #endif
     mutex_.Lock();
