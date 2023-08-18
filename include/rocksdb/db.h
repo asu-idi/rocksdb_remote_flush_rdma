@@ -1891,7 +1891,7 @@ class DB {
     return Status::NotSupported("Supported only by secondary instance");
   }
 
-  virtual void register_memnode(const std::string&, size_t) { assert(false); }
+  virtual void register_memnode(const std::string&, size_t, int = 1) { assert(false); }
   virtual void unregister_memnode(const std::string&, size_t) { assert(false); }
   virtual void register_local_ip(const std::string&) { assert(false); }
 };
