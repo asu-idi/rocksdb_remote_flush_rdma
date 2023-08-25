@@ -45,7 +45,7 @@ signed main(signed argc, char** argv) {
   DB::Open(opt, db_name, &db);
   assert(db != nullptr);
 
-  db->register_memnode(memnode_ip, memnode_port);
+  db->register_memnode(memnode_ip, memnode_port, 0);
   Status ret = db->ListenAndScheduleFlushJob(local_listen_port);
   assert(ret.ok());
   db->Close();

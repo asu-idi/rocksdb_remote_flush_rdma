@@ -275,7 +275,7 @@ RDMANode::RDMANode() {
       "",    // dev_name
       1,     // ib_port
       -1, // gid_idx
-      10, 5, 5
+      100, 100, 100
   };
   res = new resources();
   mtx = std::make_unique<std::mutex>();
@@ -964,22 +964,23 @@ void RDMAServer::modify_mem_service(struct rdma_connection* conn) {
       fprintf(stderr, "Memory node cannot find memory segment\n");
     } else if (input[2] == 0 && iter->second == 2) {
       for (auto &it : executors_) {
-        if (!it.second.status && it.second.current_job == iter->first) {
+        if (it.second.current_job == iter->first) {
           ret = true;
           mem_seg.erase(iter);
-          it.second.status = true;
+          it.second.status--;
           break;
         }
       }
     } else if ((input[2] == 2 && iter->second == 1)) {
-      for (auto &it : executors_) {
-        if (it.second.status) {
-          ret = true;
-          iter->second = input[2];
-          it.second.status = false;
-          it.second.flush_job_queue.push(iter->first);
-          break;
-        }
+      executor_info* executor = nullptr;
+      for (auto it = executors_.begin(); it != executors_.end(); it++)
+        if(executor == nullptr || it->second.status < executor->status)
+          executor = &(it->second);
+      if(executor != nullptr) {
+        ret = true;
+        iter->second = input[2];
+        executor->status++;
+        executor->flush_job_queue.push(iter->first);
       }
     } else {
       ret = false;
