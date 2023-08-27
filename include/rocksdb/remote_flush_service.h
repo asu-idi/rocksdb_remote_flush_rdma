@@ -254,7 +254,7 @@ class RDMANode {
 
 class RDMAServer : public RDMANode {
   struct executor_info{
-    bool status;
+    int status;
     std::queue<std::pair<size_t, size_t>> flush_job_queue;
     std::pair<size_t, size_t> current_job;
   };
