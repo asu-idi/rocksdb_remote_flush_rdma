@@ -668,7 +668,6 @@ Status RemoteFlushJob::RunRemote(
     // s = WriteLevel0Table();
     // assert(s == Status::OK());
 
-#ifndef ROCKSDB_RDMA
     // We receive some metadata directly from remote worker
     // Or maybe we could receive from memnode
     assert(MatchRemoteWorker(port) == Status::OK());
@@ -691,7 +690,6 @@ Status RemoteFlushJob::RunRemote(
         /*allow_unprepared_value*/ false));
     // close connection with remote worker
     assert(QuitRemoteWorker() == Status::OK());
-#endif
     db_mutex_->Lock();
 
     LOG("Run job: write l0table done");
@@ -1597,3 +1595,4 @@ std::unique_ptr<FlushJobInfo> RemoteFlushJob::GetFlushJobInfo() const {
 }
 
 }  // namespace ROCKSDB_NAMESPACE
+
