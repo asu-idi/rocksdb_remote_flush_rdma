@@ -2086,9 +2086,10 @@ class DBImpl : public DB {
   static void UnscheduleRemoteFlushCallback(void* arg);
   static void UnscheduleCompactionCallback(void* arg);
   static void UnscheduleFlushCallback(void* arg);
-  void BackgroundCallRemoteFlush(int sockfd,
-    RDMAClient* rdma_client, struct RDMANode::rdma_connection* conn, std::pair<long long, long long> remote_seg,
-    Env::Priority thread_pri);
+  void BackgroundCallRemoteFlush(int sockfd, RDMAClient* rdma_client,
+                                 struct RDMANode::rdma_connection* conn,
+                                 std::pair<long long, long long> remote_seg,
+                                 Env::Priority thread_pri);
   void BackgroundCallCompaction(PrepickedCompaction* prepicked_compaction,
                                 Env::Priority thread_pri);
   void BackgroundCallFlush(Env::Priority thread_pri);
@@ -2742,11 +2743,11 @@ class DBImpl : public DB {
   inline void register_local_ip(const std::string& ip) override {
     local_ip_ = ip;
   }
-  inline void register_memnode(const std::string& ip, size_t port, int conn_cnt) override {
+  inline void register_memnode(const std::string& ip, size_t port,
+                               int conn_cnt) override {
     std::lock_guard<std::mutex> lock(transfer_mutex_);
     memnodes_ip_port_.push_back(std::make_pair(ip, port));
-    for(int i = 0; i < conn_cnt; i++)
-      rdma_client_->sock_connect(ip, port);
+    for (int i = 0; i < conn_cnt; i++) rdma_client_->sock_connect(ip, port);
   }
 
   inline void unregister_memnode(const std::string& ip, size_t port) override {

@@ -271,39 +271,38 @@ TCPNode *RemoteFlushJobPD::choose_flush_job_executor() {
 }
 
 RDMANode::RDMANode() {
-  config = (config_t){
-      "",    // dev_name
-      1,     // ib_port
-      -1, // gid_idx
-      100, 100, 100
-  };
+  config = (config_t){"",  // dev_name
+                      1,   // ib_port
+                      -1,  // gid_idx
+                      100, 100, 100};
   res = new resources();
   mtx = std::make_unique<std::mutex>();
 }
 
-RDMANode::~RDMANode(){
-	resources_destroy();
-	delete res;
+RDMANode::~RDMANode() {
+  resources_destroy();
+  delete res;
 }
-RDMAServer::~RDMAServer(){
-	resources_destroy();
-	delete res;
+RDMAServer::~RDMAServer() {
+  resources_destroy();
+  delete res;
 }
-RDMAClient::~RDMAClient(){
-	resources_destroy();
-	delete res;
+RDMAClient::~RDMAClient() {
+  resources_destroy();
+  delete res;
 }
 
-std::vector<struct RDMANode::rdma_connection*> RDMANode::sock_connect(const std::string& server_name, u_int32_t tcp_port){
-	const char* servername = server_name != "" ? server_name.c_str() : nullptr;
-	int port = tcp_port;
+std::vector<struct RDMANode::rdma_connection *> RDMANode::sock_connect(
+    const std::string &server_name, u_int32_t tcp_port) {
+  const char *servername = server_name != "" ? server_name.c_str() : nullptr;
+  int port = tcp_port;
   struct addrinfo *resolved_addr = nullptr;
   struct addrinfo *iterator;
   char service[6];
   int sockfd = -1;
   int listenfd = 0;
   int tmp;
-  std::vector<struct rdma_connection*> successful_conn;
+  std::vector<struct rdma_connection *> successful_conn;
   struct addrinfo hints = {
       .ai_flags = AI_PASSIVE, .ai_family = AF_INET, .ai_socktype = SOCK_STREAM};
   if (sprintf(service, "%d", port) < 0) goto sock_connect_exit;
@@ -326,9 +325,8 @@ std::vector<struct RDMANode::rdma_connection*> RDMANode::sock_connect(const std:
           sockfd = -1;
         } else {
           auto conn = connect_qp(sockfd);
-          if(conn)
-            successful_conn.push_back(conn);
-				}
+          if (conn) successful_conn.push_back(conn);
+        }
       } else {
         // Server mode. Set up listening socket an accept a connection
         listenfd = sockfd;
@@ -336,13 +334,12 @@ std::vector<struct RDMANode::rdma_connection*> RDMANode::sock_connect(const std:
         if (bind(listenfd, iterator->ai_addr, iterator->ai_addrlen))
           goto sock_connect_exit;
         listen(listenfd, 1);
-				while(true){
-					sockfd = accept(listenfd, nullptr, 0);
-					if(sockfd >= 0){
+        while (true) {
+          sockfd = accept(listenfd, nullptr, 0);
+          if (sockfd >= 0) {
             auto conn = connect_qp(sockfd);
-            if(conn)
-              successful_conn.push_back(conn);
-					}
+            if (conn) successful_conn.push_back(conn);
+          }
         }
       }
     }
@@ -350,14 +347,14 @@ std::vector<struct RDMANode::rdma_connection*> RDMANode::sock_connect(const std:
 sock_connect_exit:
   if (listenfd) close(listenfd);
   if (resolved_addr) freeaddrinfo(resolved_addr);
-	if (successful_conn.size() <= 0)
-		if (servername)
-			fprintf(stderr, "Couldn't connect to %s:%d\n", servername, port);
-		else {
-			perror("server accept");
-			fprintf(stderr, "accept() failed\n");
-		}
-	return successful_conn;
+  if (successful_conn.size() <= 0)
+    if (servername)
+      fprintf(stderr, "Couldn't connect to %s:%d\n", servername, port);
+    else {
+      perror("server accept");
+      fprintf(stderr, "accept() failed\n");
+    }
+  return successful_conn;
 }
 
 int RDMANode::sock_sync_data(int sock, int xfer_size, const char *local_data,
@@ -382,7 +379,7 @@ int RDMANode::sock_sync_data(int sock, int xfer_size, const char *local_data,
   return rc;
 }
 
-int RDMANode::poll_completion(struct rdma_connection* conn) {
+int RDMANode::poll_completion(struct rdma_connection *conn) {
   struct ibv_wc wc;
   unsigned long start_time_msec;
   unsigned long cur_time_msec;
@@ -419,8 +416,9 @@ int RDMANode::poll_completion(struct rdma_connection* conn) {
   }
   return rc;
 }
-int RDMANode::post_send(struct rdma_connection* conn, size_t msg_size, ibv_wr_opcode opcode,
-                        long long local_offset, long long remote_offset) {
+int RDMANode::post_send(struct rdma_connection *conn, size_t msg_size,
+                        ibv_wr_opcode opcode, long long local_offset,
+                        long long remote_offset) {
   struct ibv_send_wr sr;
   struct ibv_sge sge;
   struct ibv_send_wr *bad_wr = nullptr;
@@ -466,7 +464,8 @@ int RDMANode::post_send(struct rdma_connection* conn, size_t msg_size, ibv_wr_op
   return rc;
 }
 
-int RDMANode::post_receive(struct rdma_connection* conn, size_t msg_size, long long local_offset) {
+int RDMANode::post_receive(struct rdma_connection *conn, size_t msg_size,
+                           long long local_offset) {
   struct ibv_recv_wr rr;
   struct ibv_sge sge;
   struct ibv_recv_wr *bad_wr;
@@ -490,14 +489,14 @@ int RDMANode::post_receive(struct rdma_connection* conn, size_t msg_size, long l
   return rc;
 }
 
-int RDMANode::resources_create(size_t size){
-	struct ibv_device **dev_list = nullptr;
-	struct ibv_device *ib_dev = nullptr;
-	int i;
-	int mr_flags = 0;
-	int num_devices;
-	int rc = 0;
-	// LOG("TCP connection was established\n");
+int RDMANode::resources_create(size_t size) {
+  struct ibv_device **dev_list = nullptr;
+  struct ibv_device *ib_dev = nullptr;
+  int i;
+  int mr_flags = 0;
+  int num_devices;
+  int rc = 0;
+  // LOG("TCP connection was established\n");
   // LOG("searching for IB devices in host\n");
   // get device names in the system
   dev_list = ibv_get_device_list(&num_devices);
@@ -596,37 +595,37 @@ resources_create_exit:
   return rc;
 }
 
-struct RDMANode::rdma_connection* RDMANode::connect_qp(int sock){
-	int rc = 0;
+struct RDMANode::rdma_connection *RDMANode::connect_qp(int sock) {
+  int rc = 0;
   auto conn = new struct rdma_connection();
   conn->cq = nullptr;
   conn->qp = nullptr;
   conn->sock = sock;
-	struct ibv_qp_init_attr qp_init_attr;
-	// each side will send only one WR, so Completion Queue with 1 entry is enough
-	conn->cq = ibv_create_cq(res->ib_ctx, config.max_cqe, nullptr, nullptr, 0);
-	if (!conn->cq) {
-		fprintf(stderr, "failed to create CQ with %u entries\n", config.max_cqe);
-		rc = 1;
-		goto connect_qp_exit;
-	}
-	// create the Queue Pair
-	memset(&qp_init_attr, 0, sizeof(qp_init_attr));
-	qp_init_attr.qp_type = IBV_QPT_RC;
-	qp_init_attr.sq_sig_all = 1;
-	qp_init_attr.send_cq = conn->cq;
-	qp_init_attr.recv_cq = conn->cq;
-	qp_init_attr.cap.max_send_wr = config.max_send_wr;
-	qp_init_attr.cap.max_recv_wr = config.max_recv_wr;
-	qp_init_attr.cap.max_send_sge = 1;
-	qp_init_attr.cap.max_recv_sge = 1;
-	conn->qp = ibv_create_qp(res->pd, &qp_init_attr);
-	if (!conn->qp) {
-		fprintf(stderr, "failed to create QP\n");
-		rc = 1;
-		goto connect_qp_exit;
-	}
-	// LOG("QP was created, QP number=0x%x\n", res->qp->qp_num);
+  struct ibv_qp_init_attr qp_init_attr;
+  // each side will send only one WR, so Completion Queue with 1 entry is enough
+  conn->cq = ibv_create_cq(res->ib_ctx, config.max_cqe, nullptr, nullptr, 0);
+  if (!conn->cq) {
+    fprintf(stderr, "failed to create CQ with %u entries\n", config.max_cqe);
+    rc = 1;
+    goto connect_qp_exit;
+  }
+  // create the Queue Pair
+  memset(&qp_init_attr, 0, sizeof(qp_init_attr));
+  qp_init_attr.qp_type = IBV_QPT_RC;
+  qp_init_attr.sq_sig_all = 1;
+  qp_init_attr.send_cq = conn->cq;
+  qp_init_attr.recv_cq = conn->cq;
+  qp_init_attr.cap.max_send_wr = config.max_send_wr;
+  qp_init_attr.cap.max_recv_wr = config.max_recv_wr;
+  qp_init_attr.cap.max_send_sge = 1;
+  qp_init_attr.cap.max_recv_sge = 1;
+  conn->qp = ibv_create_qp(res->pd, &qp_init_attr);
+  if (!conn->qp) {
+    fprintf(stderr, "failed to create QP\n");
+    rc = 1;
+    goto connect_qp_exit;
+  }
+  // LOG("QP was created, QP number=0x%x\n", res->qp->qp_num);
 
   struct cm_con_data_t local_con_data;
   struct cm_con_data_t remote_con_data;
@@ -638,14 +637,14 @@ struct RDMANode::rdma_connection* RDMANode::connect_qp(int sock){
     if (rc) {
       fprintf(stderr, "could not get gid for port %d, index %d\n",
               config.ib_port, config.gid_idx);
-			goto connect_qp_exit;
+      goto connect_qp_exit;
     }
   } else
     memset(&my_gid, 0, sizeof my_gid);
   // exchange using TCP sockets info required to connect QPs
   local_con_data.addr = htonll((uintptr_t)res->buf);
   local_con_data.rkey = htonl(res->mr->rkey);
-	local_con_data.qp_num = htonl(conn->qp->qp_num);
+  local_con_data.qp_num = htonl(conn->qp->qp_num);
   local_con_data.lid = htons(res->port_attr.lid);
   memcpy(local_con_data.gid, &my_gid, 16);
   // LOG("\nLocal LID = 0x%x\n", res->port_attr.lid);
@@ -677,14 +676,14 @@ struct RDMANode::rdma_connection* RDMANode::connect_qp(int sock){
     // ":", p[15], "\n");
   }
   // modify the QP to init
-	rc = modify_qp_to_init(conn->qp);
+  rc = modify_qp_to_init(conn->qp);
   if (rc) {
     fprintf(stderr, "change QP state to INIT failed\n");
     goto connect_qp_exit;
   }
   // modify the QP to RTR
-  rc = modify_qp_to_rtr(conn->qp, remote_con_data.qp_num,
-                        remote_con_data.lid, remote_con_data.gid);
+  rc = modify_qp_to_rtr(conn->qp, remote_con_data.qp_num, remote_con_data.lid,
+                        remote_con_data.gid);
   if (rc) {
     fprintf(stderr, "failed to modify QP state to RTR\n");
     goto connect_qp_exit;
@@ -703,18 +702,15 @@ struct RDMANode::rdma_connection* RDMANode::connect_qp(int sock){
     rc = 1;
   }
 connect_qp_exit:
-	if (rc) {
-		if (conn->qp)
-			ibv_destroy_qp(conn->qp);
-		if (conn->cq)
-			ibv_destroy_cq(conn->cq);
+  if (rc) {
+    if (conn->qp) ibv_destroy_qp(conn->qp);
+    if (conn->cq) ibv_destroy_cq(conn->cq);
     if (conn->sock >= 0) {
       if (close(conn->sock)) fprintf(stderr, "failed to close socket\n");
     }
     delete conn;
     return nullptr;
-	}
-  else {
+  } else {
     res->conns.push_back(conn);
     after_connect_qp(conn);
   }
@@ -723,7 +719,7 @@ connect_qp_exit:
 
 int RDMANode::resources_destroy() {
   int rc = 0;
-  for (auto &conn : res->conns){
+  for (auto &conn : res->conns) {
     if (conn->qp)
       if (ibv_destroy_qp(conn->qp)) {
         fprintf(stderr, "failed to destroy QP\n");
@@ -828,8 +824,8 @@ int RDMANode::modify_qp_to_rts(struct ibv_qp *qp) {
 
 RDMAServer::RDMAServer() : RDMANode() {}
 RDMAClient::RDMAClient() : RDMANode() {}
-std::pair<long long, long long> RDMAClient::allocate_mem_request(struct rdma_connection* conn,
-                                                                 size_t size) {
+std::pair<long long, long long> RDMAClient::allocate_mem_request(
+    struct rdma_connection *conn, size_t size) {
   char req_type = 1;
   long long ret[2];
   int local_size = sizeof(size_t), remote_size = sizeof(long long) * 2;
@@ -857,7 +853,7 @@ std::pair<long long, long long> RDMAClient::allocate_mem_request(struct rdma_con
   }
   return std::make_pair(ret[0], ret[1]);
 }
-void RDMAServer::allocate_mem_service(struct rdma_connection* conn) {
+void RDMAServer::allocate_mem_service(struct rdma_connection *conn) {
   size_t size;
   long long ret[2];
   int remote_size = sizeof(size_t), local_size = sizeof(long long) * 2;
@@ -909,7 +905,7 @@ void RDMAServer::allocate_mem_service(struct rdma_connection* conn) {
   else
     rc = 0;
 }
-bool RDMAClient::modify_mem_request(struct rdma_connection* conn,
+bool RDMAClient::modify_mem_request(struct rdma_connection *conn,
                                     std::pair<long long, long long> offset,
                                     int type) {
   char req_type = 2;
@@ -940,7 +936,7 @@ bool RDMAClient::modify_mem_request(struct rdma_connection* conn,
   }
   return ret;
 }
-void RDMAServer::modify_mem_service(struct rdma_connection* conn) {
+void RDMAServer::modify_mem_service(struct rdma_connection *conn) {
   long long input[3];
   bool ret = false;
   int remote_size = sizeof(long long) * 3, local_size = sizeof(bool);
@@ -972,11 +968,11 @@ void RDMAServer::modify_mem_service(struct rdma_connection* conn) {
         }
       }
     } else if ((input[2] == 2 && iter->second == 1)) {
-      executor_info* executor = nullptr;
+      executor_info *executor = nullptr;
       for (auto it = executors_.begin(); it != executors_.end(); it++)
-        if(executor == nullptr || it->second.status < executor->status)
+        if (executor == nullptr || it->second.status < executor->status)
           executor = &(it->second);
-      if(executor != nullptr) {
+      if (executor != nullptr) {
         ret = true;
         iter->second = input[2];
         executor->status++;
@@ -993,7 +989,7 @@ void RDMAServer::modify_mem_service(struct rdma_connection* conn) {
   else
     rc = 0;
 }
-bool RDMAClient::disconnect_request(struct rdma_connection* conn) {
+bool RDMAClient::disconnect_request(struct rdma_connection *conn) {
   char req_type = 0;
   bool ret = false;
   int remote_size = sizeof(bool);
@@ -1015,27 +1011,25 @@ bool RDMAClient::disconnect_request(struct rdma_connection* conn) {
       rc = read_bytes;
   }
   if (ret) {
-		if (conn->qp)
-			ibv_destroy_qp(conn->qp);
-		conn->qp = nullptr;
-		if (conn->cq)
-			ibv_destroy_cq(conn->cq);
-		conn->cq = nullptr;
+    if (conn->qp) ibv_destroy_qp(conn->qp);
+    conn->qp = nullptr;
+    if (conn->cq) ibv_destroy_cq(conn->cq);
+    conn->cq = nullptr;
     if (conn->sock >= 0) {
       if (close(conn->sock)) fprintf(stderr, "failed to close socket\n");
       conn->sock = -1;
     }
     delete conn;
     std::lock_guard<std::mutex> lk(*mtx);
-    for(auto iter = res->conns.begin(); iter != res->conns.end(); iter++)
-      if(*iter == conn){
+    for (auto iter = res->conns.begin(); iter != res->conns.end(); iter++)
+      if (*iter == conn) {
         res->conns.erase(iter);
         break;
       }
   }
   return ret;
 }
-void RDMAServer::disconnect_service(struct rdma_connection* conn) {
+void RDMAServer::disconnect_service(struct rdma_connection *conn) {
   bool ret = true;
   int local_size = sizeof(bool);
   int rc = 0;
@@ -1044,11 +1038,9 @@ void RDMAServer::disconnect_service(struct rdma_connection* conn) {
     fprintf(stderr, "Failed writing data during disconnect_service\n");
   else
     rc = 0;
-  if (conn->qp)
-    ibv_destroy_qp(conn->qp);
+  if (conn->qp) ibv_destroy_qp(conn->qp);
   conn->qp = nullptr;
-  if (conn->cq)
-    ibv_destroy_cq(conn->cq);
+  if (conn->cq) ibv_destroy_cq(conn->cq);
   conn->cq = nullptr;
   if (conn->sock >= 0) {
     if (close(conn->sock)) fprintf(stderr, "failed to close socket\n");
@@ -1056,13 +1048,13 @@ void RDMAServer::disconnect_service(struct rdma_connection* conn) {
   }
   delete conn;
   std::lock_guard<std::mutex> lk(*mtx);
-  for(auto iter = res->conns.begin(); iter != res->conns.end(); iter++)
-    if(*iter == conn){
+  for (auto iter = res->conns.begin(); iter != res->conns.end(); iter++)
+    if (*iter == conn) {
       res->conns.erase(iter);
       break;
     }
 }
-bool RDMAClient::register_executor_request(struct rdma_connection* conn) {
+bool RDMAClient::register_executor_request(struct rdma_connection *conn) {
   char req_type = 3;
   bool ret = false;
   int remote_size = sizeof(bool);
@@ -1085,7 +1077,7 @@ bool RDMAClient::register_executor_request(struct rdma_connection* conn) {
   }
   return ret;
 }
-void RDMAServer::register_executor_service(struct rdma_connection* conn) {
+void RDMAServer::register_executor_service(struct rdma_connection *conn) {
   bool ret = true;
   int local_size = sizeof(bool);
   int rc = 0;
@@ -1097,7 +1089,8 @@ void RDMAServer::register_executor_service(struct rdma_connection* conn) {
   else
     rc = 0;
 }
-std::pair<long long, long long> RDMAClient::wait_for_job_request(struct rdma_connection* conn) {
+std::pair<long long, long long> RDMAClient::wait_for_job_request(
+    struct rdma_connection *conn) {
   char req_type = 4;
   long long ret[2];
   int remote_size = sizeof(long long) * 2;
@@ -1120,13 +1113,13 @@ std::pair<long long, long long> RDMAClient::wait_for_job_request(struct rdma_con
   }
   return std::make_pair(ret[0], ret[1]);
 }
-void RDMAServer::wait_for_job_service(struct rdma_connection* conn) {
+void RDMAServer::wait_for_job_service(struct rdma_connection *conn) {
   long long ret[2];
   int local_size = sizeof(long long) * 2;
   int rc = 0;
-  while(true){
+  while (true) {
     std::lock_guard<std::mutex> lk(*mtx);
-    if(!executors_[conn].flush_job_queue.empty()){
+    if (!executors_[conn].flush_job_queue.empty()) {
       ret[0] = executors_[conn].flush_job_queue.front().first;
       ret[1] = executors_[conn].flush_job_queue.front().second;
       executors_[conn].current_job = executors_[conn].flush_job_queue.front();
@@ -1140,16 +1133,16 @@ void RDMAServer::wait_for_job_service(struct rdma_connection* conn) {
   else
     rc = 0;
 }
-bool RDMAServer::service(struct rdma_connection* conn) {
+bool RDMAServer::service(struct rdma_connection *conn) {
   char req_type;
   int remote_size = sizeof(char);
   int rc = 0;
   int read_bytes = 0;
   int total_read_bytes = 0;
   while (!rc && total_read_bytes < remote_size) {
-    read_bytes = read(conn->sock,
-                      reinterpret_cast<char *>(&req_type) + total_read_bytes,
-                      remote_size - total_read_bytes);
+    read_bytes =
+        read(conn->sock, reinterpret_cast<char *>(&req_type) + total_read_bytes,
+             remote_size - total_read_bytes);
     if (read_bytes > 0)
       total_read_bytes += read_bytes;
     else
@@ -1172,8 +1165,7 @@ bool RDMAServer::service(struct rdma_connection* conn) {
       wait_for_job_service(conn);
       break;
     default:
-      fprintf(stderr, "Unknown request type from client: %d\n",
-              req_type);
+      fprintf(stderr, "Unknown request type from client: %d\n", req_type);
   }
   return true;
 }

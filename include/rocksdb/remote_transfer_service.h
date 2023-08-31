@@ -95,7 +95,9 @@ class RDMATransferService : public TransferService {
     current_ptr += package_size;
     return true;
   }
-  size_t get_size() { return current_ptr - (service_provider_->get_buf() + offset_);}
+  size_t get_size() {
+    return current_ptr - (service_provider_->get_buf() + offset_);
+  }
 
  private:
   RDMAClient *service_provider_;

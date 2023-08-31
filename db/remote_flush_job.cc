@@ -102,9 +102,9 @@ RemoteFlushJob::RemoteFlushJob(
     Statistics* stats, EventLogger* event_logger, bool measure_io_stats,
     const bool sync_output_directory, const bool write_manifest,
     Env::Priority thread_pri, const std::shared_ptr<IOTracer>& io_tracer,
-    const SeqnoToTimeMapping& seqno_time_mapping, RDMAClient* rdma_client, const std::string& db_id,
-    const std::string& db_session_id, std::string full_history_ts_low,
-    BlobFileCompletionCallback* blob_callback)
+    const SeqnoToTimeMapping& seqno_time_mapping, RDMAClient* rdma_client,
+    const std::string& db_id, const std::string& db_session_id,
+    std::string full_history_ts_low, BlobFileCompletionCallback* blob_callback)
     : local_generator_node(sockaddr_in{}, 0),
       local_generator_rdma_client(rdma_client),
       dbname_(dbname),
@@ -482,8 +482,9 @@ std::shared_ptr<RemoteFlushJob> RemoteFlushJob::CreateRemoteFlushJob(
     Statistics* stats, EventLogger* event_logger, bool measure_io_stats,
     const bool sync_output_directory, const bool write_manifest,
     Env::Priority thread_pri, const std::shared_ptr<IOTracer>& io_tracer,
-    const SeqnoToTimeMapping& seqno_time_mapping, RDMAClient* rdma_client, const std::string& db_id,
-    const std::string& db_session_id, std::string full_history_ts_low,
+    const SeqnoToTimeMapping& seqno_time_mapping, RDMAClient* rdma_client,
+    const std::string& db_id, const std::string& db_session_id,
+    std::string full_history_ts_low,
     BlobFileCompletionCallback* blob_callback) {
   auto mem = new RemoteFlushJob(
       dbname, cfd, db_options, mutable_cf_options, max_memtable_id,
@@ -655,11 +656,14 @@ Status RemoteFlushJob::RunRemote(
     assert(local_ip.size());
     transfer_service.send(local_ip.c_str(), local_ip.size());
 #ifdef ROCKSDB_RDMA
-    auto remote_seg = local_generator_rdma_client->allocate_mem_request(rdma_conn, transfer_service.get_size());
-    local_generator_rdma_client->rdma_write(rdma_conn, transfer_service.get_size(), offset, remote_seg.first);
+    auto remote_seg = local_generator_rdma_client->allocate_mem_request(
+        rdma_conn, transfer_service.get_size());
+    local_generator_rdma_client->rdma_write(
+        rdma_conn, transfer_service.get_size(), offset, remote_seg.first);
     assert(local_generator_rdma_client->poll_completion(rdma_conn) == 0);
     local_generator_rdma_client->rdma_mem_.free(offset);
-    assert(local_generator_rdma_client->modify_mem_request(rdma_conn, remote_seg, 2));
+    assert(local_generator_rdma_client->modify_mem_request(rdma_conn,
+                                                           remote_seg, 2));
 #endif
 
     // close connection with memnode
@@ -778,15 +782,15 @@ Status RemoteFlushJob::MatchRemoteWorker(int port) {
 
 Status RemoteFlushJob::QuitMemNode() {
 #ifndef ROCKSDB_RDMA
-    const char* bye = "byebyemessage";
-    local_generator_node.send(bye, strlen(bye));
-    LOG("server sent: ", strlen(bye), ' ', bye);
-    close(local_generator_node.connection_info_.client_sockfd);
-    local_generator_node.connection_info_.client_sockfd = 0;
-    return Status::OK();
+  const char* bye = "byebyemessage";
+  local_generator_node.send(bye, strlen(bye));
+  LOG("server sent: ", strlen(bye), ' ', bye);
+  close(local_generator_node.connection_info_.client_sockfd);
+  local_generator_node.connection_info_.client_sockfd = 0;
+  return Status::OK();
 #else
-    local_generator_rdma_client->conn_mtx_[rdma_conn].unlock();
-    return Status::OK();
+  local_generator_rdma_client->conn_mtx_[rdma_conn].unlock();
+  return Status::OK();
 #endif
 }
 Status RemoteFlushJob::MatchMemNode(
@@ -795,10 +799,11 @@ Status RemoteFlushJob::MatchMemNode(
   int choosen = (int)(rand() % ip_port_list->size());
 #ifdef ROCKSDB_RDMA
   int chosen = (int)(rand() % local_generator_rdma_client->res->conns.size());
-  for(int i = 0; ; i++){
-    rdma_conn = local_generator_rdma_client->res->conns[
-      (chosen + i) % local_generator_rdma_client->res->conns.size()];
-    if(local_generator_rdma_client->conn_mtx_[rdma_conn].try_lock())
+  for (int i = 0;; i++) {
+    rdma_conn = local_generator_rdma_client->res
+                    ->conns[(chosen + i) %
+                            local_generator_rdma_client->res->conns.size()];
+    if (local_generator_rdma_client->conn_mtx_[rdma_conn].try_lock())
       return Status::OK();
   }
 #else
@@ -1595,4 +1600,3 @@ std::unique_ptr<FlushJobInfo> RemoteFlushJob::GetFlushJobInfo() const {
 }
 
 }  // namespace ROCKSDB_NAMESPACE
-
