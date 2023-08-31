@@ -9,6 +9,7 @@
 #include <time.h>
 
 #include <algorithm>
+#include <chrono>
 #include <iostream>
 #include <sstream>
 
@@ -200,14 +201,17 @@ class HdfsWritableFile : public FSWritableFile {
   hdfsFS fileSys_;
   std::string filename_;
   hdfsFile hfile_;
+  FileSystem::SlidingWindow& writeWindow_;
 
  public:
   HdfsWritableFile(hdfsFS fileSys, const std::string& fname,
-                   const FileOptions& options)
+                   const FileOptions& options,
+                   FileSystem::SlidingWindow& window_)
       : FSWritableFile(options),
         fileSys_(fileSys),
         filename_(fname),
-        hfile_(nullptr) {
+        hfile_(nullptr),
+        writeWindow_(window_) {
     ROCKS_LOG_DEBUG(mylog, "[hdfs] HdfsWritableFile opening %s\n",
                     filename_.c_str());
     hfile_ = hdfsOpenFile(fileSys_, filename_.c_str(), O_WRONLY, 0, 0, 0);
@@ -247,6 +251,9 @@ class HdfsWritableFile : public FSWritableFile {
     if (ret != left) {
       return IOError(filename_, errno);
     }
+    writeWindow_.write(
+        std::chrono::time_point<std::chrono::system_clock>::clock::now(),
+        data.size());
     return IOStatus::OK();
   }
 
@@ -256,6 +263,8 @@ class HdfsWritableFile : public FSWritableFile {
         static_cast<tSize>(size)) {
       return IOError(filename_, errno);
     }
+    writeWindow_.write(
+        std::chrono::time_point<std::chrono::system_clock>::clock::now(), size);
     return IOStatus::OK();
   }
 
@@ -471,7 +480,8 @@ IOStatus HdfsFileSystem::NewWritableFile(
     const std::string& fname, const FileOptions& options,
     std::unique_ptr<FSWritableFile>* result, IODebugContext* /*dbg*/) {
   result->reset();
-  HdfsWritableFile* f = new HdfsWritableFile(fileSys_, fname, options);
+  HdfsWritableFile* f =
+      new HdfsWritableFile(fileSys_, fname, options, writeWindow_);
   if (f == nullptr || !f->isValid()) {
     delete f;
     return IOError(fname, errno);
@@ -639,7 +649,8 @@ IOStatus HdfsFileSystem::NewLogger(const std::string& fname,
   // the logger.
   EnvOptions options;
   options.strict_bytes_per_sync = false;
-  HdfsWritableFile* f = new HdfsWritableFile(fileSys_, fname, options);
+  HdfsWritableFile* f =
+      new HdfsWritableFile(fileSys_, fname, options, writeWindow_);
   if (f == nullptr || !f->isValid()) {
     delete f;
     *result = nullptr;

@@ -7,6 +7,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 #include <cassert>
+#include <chrono>
 #include <cinttypes>
 #include <cstddef>
 #include <functional>
@@ -2195,8 +2196,21 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
     delete impl;
     *dbptr = nullptr;
   }
+#ifdef ROCKSDB_RDMA
   if (s.ok()) {
     s = impl->InitRDMAClient();
+  }
+#endif  // ROCKSDB_RDMA
+  if (s.ok()) {
+    s = impl->MatchMemnodeForHeartBeat();
+    assert(s.ok());
+    std::thread heartbeat_thread([impl]() {
+      while (true) {
+        impl->SendHeartBeat();
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      }
+    });
+    heartbeat_thread.detach();
   }
 
   return s;

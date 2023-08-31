@@ -314,6 +314,40 @@ class FileSystem : public Customizable {
 
   virtual ~FileSystem();
 
+  virtual size_t get_writein_speed() {
+    printf("get_writein_speed is not implemented in this FileSystem\n");
+    assert(false);
+    return 0;
+  }
+  struct SlidingWindow {
+   private:
+    struct Entry {
+      std::chrono::time_point<std::chrono::system_clock> time;
+      int size;
+    };
+    std::deque<Entry> window;
+    int totalSize;
+    mutable std::mutex wmtx_;
+
+   public:
+    SlidingWindow() : totalSize(0) {}
+    void write(const std::chrono::time_point<std::chrono::system_clock>& time,
+               int size) {
+      std::lock_guard<std::mutex> lock(wmtx_);
+      window.push_back({time, size});
+      totalSize += size;
+      auto expireTime = time - std::chrono::seconds(1);
+      while (!window.empty() && window.front().time < expireTime) {
+        totalSize -= window.front().size;
+        window.pop_front();
+      }
+    }
+    int get() const {
+      std::lock_guard<std::mutex> lock(wmtx_);
+      return totalSize;
+    }
+  };
+
   static const char* Type() { return "FileSystem"; }
   static const char* kDefaultName() { return "DefaultFileSystem"; }
 
@@ -1572,6 +1606,9 @@ class FileSystemWrapper : public FileSystem {
   }
 
   virtual bool use_async_io() override { return target_->use_async_io(); }
+  virtual size_t get_writein_speed() override {
+    return target_->get_writein_speed();
+  }
 
  protected:
   std::shared_ptr<FileSystem> target_;

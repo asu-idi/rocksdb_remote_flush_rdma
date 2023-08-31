@@ -40,7 +40,10 @@ int main(int argc, char** argv) {
   rocksdb::RemoteFlushJobPD& memnode = rocksdb::RemoteFlushJobPD::Instance();
   // TODO(rdma): change this on your machine
   memnode.register_flush_job_executor("127.0.0.1", 9092);
-  memnode.register_flush_job_executor("127.0.0.1", 9093);
+
+  memnode.pd_add_generator("127.0.0.1", 10086);
+  memnode.pd_add_worker("executor's ip", 10086);
+
   memnode.opentcp(port);
   while (true) {
     std::string command;

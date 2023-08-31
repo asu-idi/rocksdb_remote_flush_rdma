@@ -307,6 +307,26 @@ class RDMAClient : public RDMANode {
   void after_connect_qp(struct rdma_connection *idx) override {}
 };
 
+struct placement_info {
+  size_t current_background_job_num_ = 0;
+  size_t current_hdfs_io_ = 0;
+};
+
+// PD listen on port 10086, receive FlushRequest from generator, receive
+// HeartBeat from worker
+struct PlacementDriver {
+  const int max_background_job_num_{16};
+  const int max_hdfs_io_{200};  // MB/s
+  std::queue<TCPNode *> available_workers_;
+  std::vector<TCPNode *> workers_;
+  std::vector<TCPNode *> generators_;
+  std::unordered_map<TCPNode *, placement_info> peers_;
+  TCPNode *connect_peers(const std::string &ip, int port);
+  TCPNode *choose_worker(const placement_info &);
+  void step(bool, size_t, placement_info);
+  void listen();
+};
+
 // register_workers then opentcp
 class RemoteFlushJobPD {
  public:
@@ -356,6 +376,20 @@ class RemoteFlushJobPD {
     assert(node->connection_info_.client_sockfd <= 0);
     delete node;
   }
+  void pd_add_worker(const std::string &ip, int port) {
+    TCPNode *node = pd_.connect_peers(ip, port);
+    assert(node != nullptr);
+    size_t size = pd_.workers_.size() + 1;
+    node->send(&size, sizeof(size_t));
+    pd_.workers_.push_back(node);
+  }
+  void pd_add_generator(const std::string &ip, int port) {
+    TCPNode *node = pd_.connect_peers(ip, port);
+    assert(node != nullptr);
+    size_t size = pd_.generators_.size() + 1;
+    node->send(&size, sizeof(size_t));
+    pd_.generators_.push_back(node);
+  }
 
  private:
   struct flushjob_package {
@@ -370,6 +404,7 @@ class RemoteFlushJobPD {
   std::unordered_map<int, TCPNode *> flush_job_executors_in_use_;
   std::unordered_map<TCPNode *, bool> flush_job_executors_status_;
   std::unordered_map<int, TCPNode *> flush_job_generators_;
+  PlacementDriver pd_;
   struct tcp_server_info {
     int tcp_server_sockfd_;
     struct sockaddr_in server_address;

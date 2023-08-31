@@ -7,6 +7,7 @@
 #include <infiniband/verbs.h>
 #include <inttypes.h>
 #include <netdb.h>
+#include <poll.h>
 #include <stdint.h>
 #include <sys/select.h>
 #include <sys/socket.h>
@@ -140,6 +141,8 @@ bool RemoteFlushJobPD::closetcp() {
 }
 
 bool RemoteFlushJobPD::opentcp(int port) {
+  std::thread listen_thread{[this]() { pd_.listen(); }};
+  listen_thread.detach();
   if (server_info_.tcp_server_sockfd_ != -1) {
     LOG("tcp server already opened");
     return false;
@@ -238,6 +241,34 @@ void RemoteFlushJobPD::setfree_flush_job_executor(TCPNode *worker_node) {
 }
 TCPNode *RemoteFlushJobPD::choose_flush_job_executor() {
   std::lock_guard<std::mutex> lock(mtx_);
+  if (!pd_.available_workers_.empty()) {
+    TCPNode *choose_by_policy = nullptr;
+    choose_by_policy = pd_.available_workers_.front();
+    pd_.available_workers_.pop();
+    int client_sockfd = socket(AF_INET, SOCK_STREAM, 0);
+    assert(client_sockfd != -1);
+    char choose_client_ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &choose_by_policy->connection_info_.sin_addr.sin_addr,
+              choose_client_ip, INET_ADDRSTRLEN);
+    LOG_CERR("MemNode send package to worker: ", client_ip);
+
+    // find TCPNode by ip
+    for (auto &it : flush_job_executors_status_) {
+      char client_ip[INET_ADDRSTRLEN];
+      inet_ntop(AF_INET, &it.first->connection_info_.sin_addr.sin_addr,
+                client_ip, INET_ADDRSTRLEN);
+      if (strcmp(client_ip, choose_client_ip) == 0 && it.second == true) {
+        it.second = false;
+        it.first->connection_info_.client_sockfd = client_sockfd;
+        flush_job_executors_in_use_.insert(
+            std::make_pair(client_sockfd, it.first));
+        return it.first;
+      }
+    }
+    // not found
+    printf("chosen worker not found, fallback to default\n");
+  }
+
   int client_sockfd = socket(AF_INET, SOCK_STREAM, 0);
   assert(client_sockfd != -1);
   for (auto &it : flush_job_executors_status_) {
@@ -347,13 +378,14 @@ std::vector<struct RDMANode::rdma_connection *> RDMANode::sock_connect(
 sock_connect_exit:
   if (listenfd) close(listenfd);
   if (resolved_addr) freeaddrinfo(resolved_addr);
-  if (successful_conn.size() <= 0)
-    if (servername)
+  if (successful_conn.size() <= 0) {
+    if (servername) {
       fprintf(stderr, "Couldn't connect to %s:%d\n", servername, port);
-    else {
+    } else {
       perror("server accept");
       fprintf(stderr, "accept() failed\n");
     }
+  }
   return successful_conn;
 }
 
@@ -513,7 +545,7 @@ int RDMANode::resources_create(size_t size) {
   }
   // LOG("found %d device(s)\n", num_devices);
   // search for the specific device we want to work with
-  for (i = 0; i < (size_t)num_devices; i++) {
+  for (i = 0; i < num_devices; i++) {
     if (config.dev_name == "") {
       config.dev_name = std::string(strdup(ibv_get_device_name(dev_list[i])));
       // LOG("device not specified, using first one found: %s\n",
@@ -1168,6 +1200,120 @@ bool RDMAServer::service(struct rdma_connection *conn) {
       fprintf(stderr, "Unknown request type from client: %d\n", req_type);
   }
   return true;
+}
+
+TCPNode *PlacementDriver::choose_worker(const placement_info &info) {
+  double base =
+      1.0 * info.current_background_job_num_ / max_background_job_num_ +
+      1.0 * info.current_hdfs_io_ / max_hdfs_io_;
+  TCPNode *choose = nullptr;
+  for (auto &worker : workers_) {
+    auto val = peers_.at(worker);
+    double cal =
+        1.0 * val.current_background_job_num_ / max_background_job_num_ +
+        1.0 * val.current_hdfs_io_ / max_hdfs_io_;
+    if (cal < base) {
+      base = cal;
+      choose = worker;
+    }
+  }
+  return choose;
+}
+
+void PlacementDriver::step(bool from_generator, size_t id,
+                           placement_info info) {
+  if (from_generator) {
+    // handle MsgFlushRequest
+    assert(peers_.find(generators_[id - 1]) != peers_.end());
+    peers_.at(generators_[id - 1]) = info;
+    TCPNode *worker = choose_worker(info);
+    if (worker == nullptr) {
+      // fallback to local flush
+      bool admit = false;
+      generators_[id - 1]->send(&admit, sizeof(bool));
+    } else {
+      bool admit = true;
+      generators_[id - 1]->send(&admit, sizeof(bool));
+      available_workers_.push(worker);
+      peers_.at(worker).current_background_job_num_++;
+    }
+  } else {
+    // handle MsgHeartBeat
+    assert(peers_.find(workers_[id - 1]) != peers_.end());
+    peers_.at(workers_[id - 1]) = info;
+  }
+}
+void PlacementDriver::listen() {
+  std::vector<struct pollfd> pollfds;
+  for (auto &node : workers_) {
+    pollfds.push_back({});
+    pollfds.back().fd = node->connection_info_.client_sockfd;
+    pollfds.back().events = POLLIN;
+  }
+  for (auto &node : generators_) {
+    pollfds.push_back({});
+    pollfds.back().fd = node->connection_info_.client_sockfd;
+    pollfds.back().events = POLLIN;
+  }
+
+  while (true) {
+    int ret = poll(pollfds.data(), pollfds.size(), -1);
+    if (ret < 0) {
+      fprintf(stderr, "Poll error\n");
+      return;
+    }
+    for (int i = 0; i < (int)pollfds.size(); i++) {
+      if (pollfds[i].revents & POLLIN) {
+        if (i < (int)workers_.size()) {
+          placement_info val;
+          ssize_t bytesRead = recv(pollfds[i].fd, &val, sizeof(val), 0);
+          if (bytesRead == -1) {
+            printf("recv");
+            assert(false);
+          } else if (bytesRead == 0) {
+            printf("Connection closed by remote peer.\n");
+            assert(false);
+          }
+          std::thread thread([this, i, val]() { step(false, i + 1, val); });
+          thread.detach();
+        } else {
+          placement_info val;
+          ssize_t bytesRead = recv(pollfds[i].fd, &val, sizeof(val), 0);
+          if (bytesRead == -1) {
+            printf("recv failed.\n");
+            assert(false);
+          } else if (bytesRead == 0) {
+            printf("Connection closed by remote peer.\n");
+            assert(false);
+          }
+          std::thread thread(
+              [this, i, val]() { step(true, i - workers_.size() + 1, val); });
+          thread.detach();
+        }
+      }
+    }
+  }
+}
+
+TCPNode *PlacementDriver::connect_peers(const std::string &ip, int port) {
+  int sock = socket(AF_INET, SOCK_STREAM, 0);
+  if (sock < 0) {
+    fprintf(stderr, "Failed creating socket\n");
+    return nullptr;
+  }
+  struct sockaddr_in serv_addr;
+  serv_addr.sin_family = AF_INET;
+  serv_addr.sin_port = htons(port);
+  if (inet_pton(AF_INET, ip.c_str(), &serv_addr.sin_addr) <= 0) {
+    fprintf(stderr, "Invalid address\n");
+    return nullptr;
+  }
+  if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+    fprintf(stderr, "Failed connecting to server\n");
+    return nullptr;
+  }
+  auto node = new TCPNode(serv_addr, sock);
+  return node;
 }
 
 }  // namespace ROCKSDB_NAMESPACE

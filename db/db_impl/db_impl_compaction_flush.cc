@@ -216,7 +216,16 @@ Status DBImpl::FlushMemTableToOutputFile(
   // To address this, we make sure NotifyOnFlushBegin() executes after memtable
   // picking so that no new snapshot can be taken between the two functions.
   LOG("Construct flush job");
+
+  bool admit = false;
   if (cfd->GetLatestCFOptions().server_use_remote_flush) {
+    std::lock_guard<std::mutex> lck(pd_mutex_);
+    placement_info pinfo = CollectPlacementInfo();
+    pd_connection_->send(&pinfo, sizeof(placement_info));
+    pd_connection_->receive(&admit, sizeof(bool));
+  }
+
+  if (cfd->GetLatestCFOptions().server_use_remote_flush && admit) {
     LOG("Construct remote flush job");
     std::shared_ptr<RemoteFlushJob> flush_job =
         RemoteFlushJob::CreateRemoteFlushJob(

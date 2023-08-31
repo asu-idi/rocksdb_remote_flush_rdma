@@ -1593,7 +1593,7 @@ if(WITH_DEV)
   endforeach(sourcefile ${DEVELOP})
 endif()
 
-set(WITH_RDMA_SUPPORT true)
+set(WITH_RDMA_SUPPORT false)
 if(WITH_RDMA_SUPPORT)
   message(STATUS "RDMA support is enabled")
   add_definitions(-DROCKSDB_RDMA)

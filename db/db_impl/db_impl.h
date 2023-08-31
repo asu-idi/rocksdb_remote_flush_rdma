@@ -8,6 +8,10 @@
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 #pragma once
 
+#include <asm-generic/socket.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+
 #include <atomic>
 #include <deque>
 #include <functional>
@@ -2731,12 +2735,70 @@ class DBImpl : public DB {
   std::vector<std::pair<std::string, size_t>> memnodes_ip_port_;
   std::string local_ip_;
 
+  std::mutex pd_mutex_;
+  TCPNode* pd_connection_;
+  size_t peer_id_{0};
+
   RDMAClient* rdma_client_;
   inline Status InitRDMAClient() {
     rdma_client_ = new RDMAClient();
     rdma_client_->resources_create(1ull << 28);
     rdma_client_->rdma_mem_.init(rdma_client_->buf_size);
     return Status::OK();
+  }
+
+  inline Status MatchMemnodeForHeartBeat() {
+    int sock = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock < 0) {
+      return Status::IOError("socket error");
+    }
+    sockaddr_in addr_;
+    addr_.sin_family = AF_INET;
+    addr_.sin_port = htons(10086);
+    addr_.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    assert(bind(sock, (sockaddr*)&addr_, sizeof(addr_)) >= 0);
+    assert(listen(sock, 1) >= 0);
+
+    struct sockaddr_in client_address;
+    socklen_t client_address_len = sizeof(client_address);
+    int client_sockfd =
+        accept(sock, (struct sockaddr*)&client_address, &client_address_len);
+    if (client_sockfd < 0) {
+      return Status::IOError("accept error");
+    }
+    {
+      char client_ip[INET_ADDRSTRLEN];
+      inet_ntop(AF_INET, &client_address.sin_addr, client_ip, INET_ADDRSTRLEN);
+      int client_port = ntohs(client_address.sin_port);
+      LOG_CERR("Rocksdb Instance create connection with memnode: ", client_ip,
+               ':', client_port);
+    }
+    auto* node = new TCPNode(client_address, client_sockfd);
+    pd_connection_ = node;
+    pd_connection_->receive(&peer_id_, sizeof(size_t));
+    return Status::OK();
+  }
+
+  inline Status SendHeartBeat() {
+    if (pd_connection_ == nullptr) {
+      return Status::IOError("pd_connection_ is nullptr");
+    }
+    {
+      std::lock_guard<std::mutex> lock(pd_mutex_);
+      placement_info pinfo = CollectPlacementInfo();
+      pd_connection_->send(&pinfo, sizeof(placement_info));
+    }
+    return Status::OK();
+  }
+  inline placement_info CollectPlacementInfo() {
+    placement_info pinfo;
+    pinfo.current_background_job_num_ = bg_bottom_compaction_scheduled_ +
+                                        bg_compaction_scheduled_ +
+                                        bg_flush_scheduled_;
+    pinfo.current_hdfs_io_ =
+        Env::Default()->GetFileSystem()->get_writein_speed();
+    return pinfo;
   }
 
  public:
