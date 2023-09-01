@@ -238,8 +238,12 @@ Status DBImpl::FlushMemTableToOutputFile(
             GetCompressionFlush(*cfd->ioptions(), mutable_cf_options), stats_,
             &event_logger_, mutable_cf_options.report_bg_io_stats,
             true /* sync_output_directory */, true /* write_manifest */,
-            thread_pri, io_tracer_, seqno_time_mapping_, rdma_client_, db_id_,
-            db_session_id_, cfd->GetFullHistoryTsLow(), &blob_callback_);
+            thread_pri, io_tracer_, seqno_time_mapping_,
+#ifdef ROCKSDB_RDMA
+            rdma_client_,
+#endif  // ROCKSDB_RDMA
+            db_id_, db_session_id_, cfd->GetFullHistoryTsLow(),
+            &blob_callback_);
     FileMetaData file_meta;
     LOG("RemoteFlushJob::CreateRemoteFlushJob thread_id:",
         std::this_thread::get_id(),

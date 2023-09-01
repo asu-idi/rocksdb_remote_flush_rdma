@@ -66,10 +66,12 @@ class Arena;
 class RemoteFlushJob {
  public:
   TCPNode local_generator_node;
+#ifdef ROCKSDB_RDMA
   RDMAClient* local_generator_rdma_client;
 
  private:
   RDMANode::rdma_connection* rdma_conn;
+#endif
 
  public:
   static std::shared_ptr<RemoteFlushJob> CreateRemoteFlushJob(
@@ -87,7 +89,10 @@ class RemoteFlushJob {
       EventLogger* event_logger, bool measure_io_stats,
       const bool sync_output_directory, const bool write_manifest,
       Env::Priority thread_pri, const std::shared_ptr<IOTracer>& io_tracer,
-      const SeqnoToTimeMapping& seq_time_mapping, RDMAClient* rdma_client,
+      const SeqnoToTimeMapping& seq_time_mapping,
+#ifdef ROCKSDB_RDMA
+      RDMAClient* rdma_client,
+#endif
       const std::string& db_id = "", const std::string& db_session_id = "",
       std::string full_history_ts_low = "",
       BlobFileCompletionCallback* blob_callback = nullptr);
@@ -117,7 +122,10 @@ class RemoteFlushJob {
                  Env::Priority thread_pri,
                  const std::shared_ptr<IOTracer>& io_tracer,
                  const SeqnoToTimeMapping& seq_time_mapping,
-                 RDMAClient* rdma_client, const std::string& db_id = "",
+#ifdef ROCKSDB_RDMA
+                 RDMAClient* rdma_client,
+#endif
+                 const std::string& db_id = "",
                  const std::string& db_session_id = "",
                  std::string full_history_ts_low = "",
                  BlobFileCompletionCallback* blob_callback = nullptr);

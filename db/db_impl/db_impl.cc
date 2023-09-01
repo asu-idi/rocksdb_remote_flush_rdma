@@ -315,9 +315,12 @@ DBImpl::DBImpl(const DBOptions& options, const std::string& dbname,
 }
 
 void DBImpl::BackgroundCallRemoteFlush(
-    int sockfd, RDMAClient* rdma_client,
-    struct RDMANode::rdma_connection* rdma_conn,
-    std::pair<long long, long long> remote_seg, Env::Priority thread_pri) {
+    int sockfd,
+#ifdef ROCKSDB_RDMA
+    RDMAClient* rdma_client, struct RDMANode::rdma_connection* rdma_conn,
+    std::pair<long long, long long> remote_seg,
+#endif  // ROCKSDB_RDMA
+    Env::Priority thread_pri) {
   TEST_SYNC_POINT("DBImpl::BackgroundCallRemoteFlush:Start");
 #ifdef ROCKSDB_RDMA
   // TODO(rdma): fix this. non-zero index is not supported. We need
@@ -418,7 +421,10 @@ void DBImpl::BGWorkRemoteFlush(void* arg) {
   TEST_SYNC_POINT("DBImpl::BGWorkRemoteFlush:Start");
   LOG("Remote flush job started: ", fta.sockfd_);
   static_cast_with_check<DBImpl>(fta.db_)->BackgroundCallRemoteFlush(
-      fta.sockfd_, fta.rdma_client_, fta.rdma_conn_, fta.remote_seg_,
+      fta.sockfd_,
+#ifdef ROCKSDB_RDMA
+      fta.rdma_client_, fta.rdma_conn_, fta.remote_seg_,
+#endif  // ROCKSDB_RDMA
       fta.thread_pri_);
   LOG("Remote flush job finished: ", fta.sockfd_);
   TEST_SYNC_POINT("DBImpl::BGWorkRemoteFlush:Finish");

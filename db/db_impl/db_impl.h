@@ -1716,9 +1716,11 @@ class DBImpl : public DB {
     DBImpl* db_;
     Env::Priority thread_pri_;
     int sockfd_;
+#ifdef ROCKSDB_RDMA
     RDMAClient* rdma_client_;
     struct RDMANode::rdma_connection* rdma_conn_;
     std::pair<long long, long long> remote_seg_;
+#endif
   };
 
   // Information for a manual compaction
@@ -2090,9 +2092,13 @@ class DBImpl : public DB {
   static void UnscheduleRemoteFlushCallback(void* arg);
   static void UnscheduleCompactionCallback(void* arg);
   static void UnscheduleFlushCallback(void* arg);
-  void BackgroundCallRemoteFlush(int sockfd, RDMAClient* rdma_client,
+  void BackgroundCallRemoteFlush(int sockfd,
+#ifdef ROCKSDB_RDMA
+
+                                 RDMAClient* rdma_client,
                                  struct RDMANode::rdma_connection* conn,
                                  std::pair<long long, long long> remote_seg,
+#endif  // ROCKSDB_RDMA
                                  Env::Priority thread_pri);
   void BackgroundCallCompaction(PrepickedCompaction* prepicked_compaction,
                                 Env::Priority thread_pri);
@@ -2739,6 +2745,7 @@ class DBImpl : public DB {
   TCPNode* pd_connection_;
   size_t peer_id_{0};
 
+#ifdef ROCKSDB_RDMA
   RDMAClient* rdma_client_;
   inline Status InitRDMAClient() {
     rdma_client_ = new RDMAClient();
@@ -2746,7 +2753,7 @@ class DBImpl : public DB {
     rdma_client_->rdma_mem_.init(rdma_client_->buf_size);
     return Status::OK();
   }
-
+#endif
   inline Status MatchMemnodeForHeartBeat() {
     int sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (sock < 0) {
@@ -2809,7 +2816,9 @@ class DBImpl : public DB {
                                int conn_cnt) override {
     std::lock_guard<std::mutex> lock(transfer_mutex_);
     memnodes_ip_port_.push_back(std::make_pair(ip, port));
+#ifdef ROCKSDB_RDMA
     for (int i = 0; i < conn_cnt; i++) rdma_client_->sock_connect(ip, port);
+#endif
   }
 
   inline void unregister_memnode(const std::string& ip, size_t port) override {
