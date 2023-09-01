@@ -35,6 +35,7 @@
 #include "rocksdb/table_properties.h"
 #include "table/internal_iterator.h"
 #include "util/autovector.h"
+#include "utilities/rf_stats.h"
 
 // for socket API
 #ifdef __linux
@@ -584,6 +585,7 @@ Status RemoteFlushJob::RunRemote(
     std::function<int()>* get_available_port, const std::string& local_ip,
     LogsWithPrepTracker* prep_tracker, FileMetaData* file_meta,
     bool* switched_to_mempurge) {
+  uint64_t start = Env::Default()->NowMicros();
   TEST_SYNC_POINT("RemoteFlushJob::Start");
   db_mutex_->AssertHeld();
   assert(pick_memtable_called);
@@ -743,7 +745,9 @@ Status RemoteFlushJob::RunRemote(
     *file_meta = meta_;
   }
   RecordFlushIOStats();
-
+  uint64_t end = Env::Default()->NowMicros();
+  uint64_t elapsed_micros = end - start;
+  Singleton<rf_stats>::GetInstance()->ReportFlush(start, end, elapsed_micros);
   return s;
 }
 
@@ -880,6 +884,11 @@ Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
                                                             local_flush_begin)
           .count(),
       "ms");
+  std::cout << "RemoteFlushJob::RunLocal local_flush_all_time: "
+            << std::chrono::duration_cast<std::chrono::milliseconds>(
+                   local_flush_end - local_flush_begin)
+                   .count()
+            << "ms" << std::endl;
   LOG("worker calculation finished");
   return Status::OK();
 }
