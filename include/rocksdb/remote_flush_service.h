@@ -117,9 +117,8 @@ class RDMAMemNode {
       }
       if (flag) {
         mempool_.insert(std::make_pair(offset, size));
-        break;
+        return offset;
       }
-      return offset;
     }
   }
   void free(size_t offset) {
