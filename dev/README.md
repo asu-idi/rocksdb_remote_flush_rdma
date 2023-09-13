@@ -146,7 +146,7 @@ JAVA_HOME=....
 - scheduler 计算每个节点的负载，计算公式为：
 
 $$
-val=\frac{current\ HDFS\ output}{max\_hdfs\_io}+\frac{current\ Background\ Thread}{max\_background\_job\_num}
+val=\frac{current\ HDFS\ output}{max \_ hdfs \_ io}+\frac{current\ Background\ Thread}{max \_ background \_ job \_ num}
 $$
 
 选取最小值对应的节点分配flush job。
@@ -165,6 +165,9 @@ $$
 ```
 
 非memnode需要创建一个PDClient{port} ，在本机的port端口等待memnode发起连接。然后rocksdb instance调用match_memnode_for_request()；worker调用match_memnode_for_heartbeat()建立连接。最后调用DBImpl::register_pd_client(client)注册到db实例上。
+
+- **测试的时候，先运行remote-flush-worker和db_bench，再运行tcp-server/rdma-server**
+  
 
 #### TODO
 
