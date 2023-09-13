@@ -30,6 +30,7 @@
 #include "monitoring/thread_status_util.h"
 #include "rocksdb/logger.hpp"
 #include "rocksdb/remote_flush_service.h"
+#include "rocksdb/status.h"
 #include "test_util/sync_point.h"
 #include "util/cast_util.h"
 #include "util/concurrent_task_limiter_impl.h"
@@ -219,14 +220,14 @@ Status DBImpl::FlushMemTableToOutputFile(
 
   bool admit = false;
   if (cfd->GetLatestCFOptions().server_use_remote_flush) {
-    std::lock_guard<std::mutex> lck(pd_mutex_);
+    std::lock_guard<std::mutex> lck(pd_connection_client_->get_mutex());
     placement_info pinfo = CollectPlacementInfo();
-    pd_connection_->send(&pinfo, sizeof(placement_info));
-    pd_connection_->receive(&admit, sizeof(bool));
+    pd_connection_client_->pd_connection_->send(&pinfo, sizeof(placement_info));
+    pd_connection_client_->pd_connection_->receive(&admit, sizeof(bool));
   }
 
   if (cfd->GetLatestCFOptions().server_use_remote_flush && admit) {
-    LOG("Construct remote flush job");
+    LOG_CERR("Construct remote flush job");
     std::shared_ptr<RemoteFlushJob> flush_job =
         RemoteFlushJob::CreateRemoteFlushJob(
             dbname_, cfd, immutable_db_options_, mutable_cf_options,
@@ -401,7 +402,7 @@ Status DBImpl::FlushMemTableToOutputFile(
     TEST_SYNC_POINT("DBImpl::FlushMemTableToOutputFile:Finish");
     return s;
   } else {
-    LOG("Construct traditional flush job");
+    LOG_CERR("Construct traditional flush job");
     FlushJob flush_job(
         dbname_, cfd, immutable_db_options_, mutable_cf_options,
         max_memtable_id, file_options_for_compaction_, versions_.get(), &mutex_,

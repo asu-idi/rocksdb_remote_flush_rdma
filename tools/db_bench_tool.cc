@@ -7,6 +7,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
+#include "rocksdb/remote_flush_service.h"
 #ifdef GFLAGS
 #ifdef NUMA
 #include <numa.h>
@@ -598,6 +599,8 @@ DEFINE_string(compressed_secondary_cache_compression_type, "lz4",
 static enum ROCKSDB_NAMESPACE::CompressionType
     FLAGS_compressed_secondary_cache_compression_type_e =
         ROCKSDB_NAMESPACE::kLZ4Compression;
+static std::once_flag remote_flush_port_once;
+static rocksdb::PDClient* pd_client = nullptr;
 
 DEFINE_uint32(
     compressed_secondary_cache_compress_format_version, 2,
@@ -1245,6 +1248,7 @@ DEFINE_uint32(use_remote_flush,
 DEFINE_string(memnode_ip, "", "memnode ip");
 DEFINE_uint32(memnode_port, 0, "memnode port");
 DEFINE_string(local_ip, "", "local ip");
+DEFINE_int32(heartbeat_local_port, 10086, "local heartbeat port");
 DEFINE_bool(report_fillrandom_latency_and_load, false, "");
 
 static enum ROCKSDB_NAMESPACE::CompressionType StringToCompressionType(
@@ -4798,14 +4802,6 @@ class Benchmark {
       delete iter;
       FLAGS_num = keys_.size();
     }
-
-    if (FLAGS_use_remote_flush) {
-      size_t port = FLAGS_memnode_port;
-      std::string ip = FLAGS_memnode_ip;
-      db_.db->register_memnode(ip, port);
-      std::string local_ip = FLAGS_local_ip;
-      db_.db->register_local_ip(local_ip);
-    }
   }
 
   void Open(Options* opts) {
@@ -4814,6 +4810,20 @@ class Benchmark {
     }
 
     InitializeOptionsGeneral(opts);
+
+    if (FLAGS_use_remote_flush) {
+      size_t port = FLAGS_memnode_port;
+      std::string ip = FLAGS_memnode_ip;
+      int32_t heartbeat_port = FLAGS_heartbeat_local_port;
+      db_.db->register_memnode(ip, port);
+      std::string local_ip = FLAGS_local_ip;
+      db_.db->register_local_ip(local_ip);
+      std::call_once(remote_flush_port_once, []() {
+        pd_client = new PDClient(FLAGS_heartbeat_local_port);
+        pd_client->match_memnode_for_request();
+      });
+      db_.db->register_pd_client(pd_client);
+    }
   }
 
   void OpenDb(Options options, const std::string& db_name,

@@ -13,6 +13,7 @@
 #include <sys/socket.h>
 
 #include <atomic>
+#include <cassert>
 #include <deque>
 #include <functional>
 #include <limits>
@@ -2740,10 +2741,7 @@ class DBImpl : public DB {
   std::atomic<int> port_index_ = {0};
   std::vector<std::pair<std::string, size_t>> memnodes_ip_port_;
   std::string local_ip_;
-
-  std::mutex pd_mutex_;
-  TCPNode* pd_connection_;
-  size_t peer_id_{0};
+  PDClient* pd_connection_client_{nullptr};
 
 #ifdef ROCKSDB_RDMA
   RDMAClient* rdma_client_;
@@ -2754,64 +2752,23 @@ class DBImpl : public DB {
     return Status::OK();
   }
 #endif
-  inline Status MatchMemnodeForHeartBeat() {
-    int sock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (sock < 0) {
-      return Status::IOError("socket error");
-    }
-    sockaddr_in addr_;
-    addr_.sin_family = AF_INET;
-    addr_.sin_port = htons(10086);
-    addr_.sin_addr.s_addr = htonl(INADDR_ANY);
 
-    assert(bind(sock, (sockaddr*)&addr_, sizeof(addr_)) >= 0);
-    assert(listen(sock, 1) >= 0);
-
-    struct sockaddr_in client_address;
-    socklen_t client_address_len = sizeof(client_address);
-    int client_sockfd =
-        accept(sock, (struct sockaddr*)&client_address, &client_address_len);
-    if (client_sockfd < 0) {
-      return Status::IOError("accept error");
-    }
-    {
-      char client_ip[INET_ADDRSTRLEN];
-      inet_ntop(AF_INET, &client_address.sin_addr, client_ip, INET_ADDRSTRLEN);
-      int client_port = ntohs(client_address.sin_port);
-      LOG_CERR("Rocksdb Instance create connection with memnode: ", client_ip,
-               ':', client_port);
-    }
-    auto* node = new TCPNode(client_address, client_sockfd);
-    pd_connection_ = node;
-    pd_connection_->receive(&peer_id_, sizeof(size_t));
-    return Status::OK();
-  }
-
-  inline Status SendHeartBeat() {
-    if (pd_connection_ == nullptr) {
-      return Status::IOError("pd_connection_ is nullptr");
-    }
-    {
-      std::lock_guard<std::mutex> lock(pd_mutex_);
-      placement_info pinfo = CollectPlacementInfo();
-      pd_connection_->send(&pinfo, sizeof(placement_info));
-    }
-    return Status::OK();
-  }
+ public:
   inline placement_info CollectPlacementInfo() {
     placement_info pinfo;
     pinfo.current_background_job_num_ = bg_bottom_compaction_scheduled_ +
                                         bg_compaction_scheduled_ +
                                         bg_flush_scheduled_;
-    pinfo.current_hdfs_io_ =
-        Env::Default()->GetFileSystem()->get_writein_speed();
+    pinfo.current_hdfs_io_ = fs_->get_writein_speed();
+    LOG_CERR("CollectPlacementInfo: bgjob:", pinfo.current_background_job_num_,
+             " io:", pinfo.current_hdfs_io_);
     return pinfo;
   }
 
- public:
   inline void register_local_ip(const std::string& ip) override {
     local_ip_ = ip;
   }
+
   inline void register_memnode(const std::string& ip, size_t port,
                                int conn_cnt) override {
     std::lock_guard<std::mutex> lock(transfer_mutex_);
@@ -2830,6 +2787,21 @@ class DBImpl : public DB {
         break;
       }
     }
+  }
+  inline void register_pd_client(const PDClient* pd_client) override {
+    assert(pd_connection_client_ == nullptr);
+    std::lock_guard<std::mutex> lck(pd_client->get_mutex());
+    pd_connection_client_ = const_cast<PDClient*>(pd_client);
+    pd_connection_client_->set_get_placement_info(
+        std::bind(&DBImpl::CollectPlacementInfo, this));
+  }
+  inline void unregister_pd_client() override {
+    assert(pd_connection_client_ != nullptr);
+    std::lock_guard<std::mutex> lck(pd_connection_client_->get_mutex());
+    pd_connection_client_->set_get_placement_info([]() -> placement_info {
+      return {0, 0};
+    });
+    pd_connection_client_ = nullptr;
   }
 };
 

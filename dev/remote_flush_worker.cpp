@@ -5,32 +5,39 @@
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
+#include <functional>
 #include <ios>
 #include <iostream>
 #include <thread>
 
+#include "db/db_impl/db_impl.h"
 #include "db/memtable.h"
 #include "rocksdb/db.h"
 #include "rocksdb/listener.h"
 #include "rocksdb/logger.hpp"
 #include "rocksdb/options.h"
+#include "rocksdb/remote_flush_service.h"
 #include "rocksdb/slice_transform.h"
 #include "rocksdb/status.h"
 #include "rocksdb/utilities/options_type.h"
+#include "util/cast_util.h"
 #include "utilities/merge_operators.h"
 #define ROOT_DIR "/root/code/rocksdb_remote_flush/"
 using namespace std;
 using namespace rocksdb;
 
 signed main(signed argc, char** argv) {
-  if (argc != 4) {
+  if (argc != 4 && argc != 5) {
     std::cout << "Usage: " << argv[0]
-              << "[memnode_ip] [memnode_port] [local_listen_port]" << std::endl;
+              << "[memnode_ip] [memnode_port] [local_listen_port] "
+                 "[local_heartbeat_port (default 10086)]"
+              << std::endl;
     return -1;
   }
   std::string memnode_ip = argv[1];
   int memnode_port = std::atoi(argv[2]);
   int local_listen_port = std::atoi(argv[3]);
+  int local_heartbeat_port = (argc == 5) ? std::atoi(argv[4]) : 10086;
   rocksdb::Env* env = rocksdb::Env::Default();
   EnvOptions env_options;
   DB* db = nullptr;
@@ -46,6 +53,13 @@ signed main(signed argc, char** argv) {
   assert(db != nullptr);
 
   db->register_memnode(memnode_ip, memnode_port, 0);
+
+  PDClient pd_client{local_heartbeat_port};
+  pd_client.set_get_placement_info([&db]() {
+    return reinterpret_cast<DBImpl*>(db)->CollectPlacementInfo();
+  });
+  pd_client.match_memnode_for_heartbeat();  // waiting for any memnode to match
+
   Status ret = db->ListenAndScheduleFlushJob(local_listen_port);
   assert(ret.ok());
   db->Close();

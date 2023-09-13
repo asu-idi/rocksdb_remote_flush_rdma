@@ -8,17 +8,20 @@
 #include <cstdlib>
 #include <ctime>
 #include <fstream>
+#include <functional>
 #include <ios>
 #include <iostream>
 #include <random>
 #include <string>
 #include <thread>
 
+#include "db/db_impl/db_impl.h"
 #include "db/memtable.h"
 #include "rocksdb/db.h"
 #include "rocksdb/listener.h"
 #include "rocksdb/logger.hpp"
 #include "rocksdb/options.h"
+#include "rocksdb/remote_flush_service.h"
 #include "rocksdb/slice_transform.h"
 #include "rocksdb/status.h"
 #include "rocksdb/utilities/options_type.h"
@@ -70,15 +73,12 @@ auto main(int argc, char** argv) -> signed {
   opt.prefix_extractor.reset(NewFixedPrefixTransform(3));
   opt.create_if_missing = true;
   // opt.merge_operator = MergeOperators::CreateStringAppendOperator();
-  opt.max_background_jobs = 32;
-  opt.max_background_flushes = 32;
-  opt.max_background_compactions = 1;
+  opt.max_background_jobs = 16;
+  opt.max_background_flushes = 3;
+  opt.max_background_compactions = 12;
   opt.max_compaction_bytes = 1 << 30;
   opt.server_remote_flush = use_remote_flush;
-  opt.write_buffer_size = 64 << 20;
-
-  opt.max_background_compactions = 0;
-  opt.disable_auto_compactions = true;
+  opt.write_buffer_size = 1 << 20;
 
   opt.max_write_buffer_number = 4;
   opt.delayed_write_rate = 1 << 30;
@@ -88,13 +88,16 @@ auto main(int argc, char** argv) -> signed {
 
   // TODO(rdma): register memnodes ip&port, or other information that rdma needs
   // here
-  if (opt.server_remote_flush) {
-    db->register_memnode("127.0.0.1", 9091);
-    // db->register_memnode("127.0.0.1", 9092);
-  }
   std::string local_ip = find_local_ip();
   db->register_local_ip(local_ip);
   LOG("local_ip: ", local_ip);
+  if (opt.server_remote_flush) {
+    db->register_memnode("127.0.0.1", 9091);
+    auto* pd_client = new PDClient{10089};
+    pd_client->match_memnode_for_request();
+    db->register_pd_client(pd_client);
+    printf("pd_client registered\n");
+  }
 
   [[maybe_unused]] std::chrono::steady_clock::time_point all_begin =
       std::chrono::steady_clock::now();

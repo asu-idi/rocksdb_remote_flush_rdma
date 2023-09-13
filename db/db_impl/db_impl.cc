@@ -368,7 +368,7 @@ void DBImpl::BackgroundCallRemoteFlush(
 
   local_handler->RunLocal();
 
-#ifndef ROCKSDB_RDMA
+#ifndef ROCKSDB_RDMA  // NEED FIX!!
   TCPNode unpack_tcp_node({}, 0);
   if ((unpack_tcp_node.connection_info_.client_sockfd =
            socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -4881,6 +4881,14 @@ Status DBImpl::Close() {
   InstrumentedMutexLock closing_lock_guard(&closing_mutex_);
   if (closed_) {
     return closing_status_;
+  }
+  {
+    if (pd_connection_client_ != nullptr) {
+      std::lock_guard<std::mutex> lck(pd_connection_client_->get_mutex());
+      pd_connection_client_->set_get_placement_info(
+          []() { return placement_info{}; });
+    }
+    pd_connection_client_ = nullptr;
   }
 
   {

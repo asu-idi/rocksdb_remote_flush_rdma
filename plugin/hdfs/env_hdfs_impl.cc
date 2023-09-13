@@ -201,12 +201,12 @@ class HdfsWritableFile : public FSWritableFile {
   hdfsFS fileSys_;
   std::string filename_;
   hdfsFile hfile_;
-  FileSystem::SlidingWindow& writeWindow_;
+  FileSystem::SlidingWindow* writeWindow_;
 
  public:
   HdfsWritableFile(hdfsFS fileSys, const std::string& fname,
                    const FileOptions& options,
-                   FileSystem::SlidingWindow& window_)
+                   FileSystem::SlidingWindow* window_)
       : FSWritableFile(options),
         fileSys_(fileSys),
         filename_(fname),
@@ -251,9 +251,9 @@ class HdfsWritableFile : public FSWritableFile {
     if (ret != left) {
       return IOError(filename_, errno);
     }
-    writeWindow_.write(
+    writeWindow_->write(
         std::chrono::time_point<std::chrono::system_clock>::clock::now(),
-        data.size());
+        static_cast<tSize>(left));
     return IOStatus::OK();
   }
 
@@ -263,8 +263,9 @@ class HdfsWritableFile : public FSWritableFile {
         static_cast<tSize>(size)) {
       return IOError(filename_, errno);
     }
-    writeWindow_.write(
-        std::chrono::time_point<std::chrono::system_clock>::clock::now(), size);
+    writeWindow_->write(
+        std::chrono::time_point<std::chrono::system_clock>::clock::now(),
+        static_cast<tSize>(size));
     return IOStatus::OK();
   }
 
@@ -413,6 +414,7 @@ class HdfsDirectory : public FSDirectory {
 
 }  // namespace
 
+// static FileSystem::SlidingWindow writeWindow_;
 // Finally, the HdfsFileSystem
 HdfsFileSystem::HdfsFileSystem(const std::shared_ptr<FileSystem>& base,
                                const std::string& fsname, hdfsFS fileSys)
@@ -481,7 +483,7 @@ IOStatus HdfsFileSystem::NewWritableFile(
     std::unique_ptr<FSWritableFile>* result, IODebugContext* /*dbg*/) {
   result->reset();
   HdfsWritableFile* f =
-      new HdfsWritableFile(fileSys_, fname, options, writeWindow_);
+      new HdfsWritableFile(fileSys_, fname, options, get_sliding_window());
   if (f == nullptr || !f->isValid()) {
     delete f;
     return IOError(fname, errno);
@@ -650,7 +652,7 @@ IOStatus HdfsFileSystem::NewLogger(const std::string& fname,
   EnvOptions options;
   options.strict_bytes_per_sync = false;
   HdfsWritableFile* f =
-      new HdfsWritableFile(fileSys_, fname, options, writeWindow_);
+      new HdfsWritableFile(fileSys_, fname, options, get_sliding_window());
   if (f == nullptr || !f->isValid()) {
     delete f;
     *result = nullptr;

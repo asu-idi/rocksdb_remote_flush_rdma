@@ -1272,7 +1272,7 @@ IOStatus PosixMmapFile::Allocate(uint64_t offset, uint64_t len,
 PosixWritableFile::PosixWritableFile(const std::string& fname, int fd,
                                      size_t logical_block_size,
                                      const EnvOptions& options,
-                                     FileSystem::SlidingWindow& window)
+                                     FileSystem::SlidingWindow* window)
     : FSWritableFile(options),
       writeWindow_(window),
       filename_(fname),

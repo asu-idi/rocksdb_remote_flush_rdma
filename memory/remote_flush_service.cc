@@ -27,6 +27,7 @@
 #include <utility>
 
 #include "rocksdb/logger.hpp"
+#include "rocksdb/macro.hpp"
 
 #define MAX_POLL_CQ_TIMEOUT 2000
 #if __BYTE_ORDER == __LITTLE_ENDIAN
@@ -250,7 +251,6 @@ TCPNode *RemoteFlushJobPD::choose_flush_job_executor() {
     char choose_client_ip[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &choose_by_policy->connection_info_.sin_addr.sin_addr,
               choose_client_ip, INET_ADDRSTRLEN);
-    LOG_CERR("MemNode send package to worker: ", client_ip);
 
     // find TCPNode by ip
     for (auto &it : flush_job_executors_status_) {
@@ -258,6 +258,14 @@ TCPNode *RemoteFlushJobPD::choose_flush_job_executor() {
       inet_ntop(AF_INET, &it.first->connection_info_.sin_addr.sin_addr,
                 client_ip, INET_ADDRSTRLEN);
       if (strcmp(client_ip, choose_client_ip) == 0 && it.second == true) {
+        if (connect(client_sockfd,
+                    reinterpret_cast<struct sockaddr *>(
+                        &it.first->connection_info_.sin_addr),
+                    sizeof(it.first->connection_info_.sin_addr)) < 0) {
+          LOG("remote flushjob worker connect error");
+          close(client_sockfd);
+          continue;
+        }
         it.second = false;
         it.first->connection_info_.client_sockfd = client_sockfd;
         flush_job_executors_in_use_.insert(
@@ -1206,9 +1214,13 @@ TCPNode *PlacementDriver::choose_worker(const placement_info &info) {
   double base =
       1.0 * info.current_background_job_num_ / max_background_job_num_ +
       1.0 * info.current_hdfs_io_ / max_hdfs_io_;
+  LOG_CERR("generator: ", info.current_background_job_num_, " ",
+           info.current_hdfs_io_);
   TCPNode *choose = nullptr;
   for (auto &worker : workers_) {
     auto val = peers_.at(worker);
+    LOG_CERR("worker: ", val.current_background_job_num_, " ",
+             val.current_hdfs_io_);
     double cal =
         1.0 * val.current_background_job_num_ / max_background_job_num_ +
         1.0 * val.current_hdfs_io_ / max_hdfs_io_;
@@ -1266,26 +1278,12 @@ void PlacementDriver::listen() {
       if (pollfds[i].revents & POLLIN) {
         if (i < (int)workers_.size()) {
           placement_info val;
-          ssize_t bytesRead = recv(pollfds[i].fd, &val, sizeof(val), 0);
-          if (bytesRead == -1) {
-            printf("recv");
-            assert(false);
-          } else if (bytesRead == 0) {
-            printf("Connection closed by remote peer.\n");
-            assert(false);
-          }
+          workers_[i]->receive(&val, sizeof(val));
           std::thread thread([this, i, val]() { step(false, i + 1, val); });
           thread.detach();
         } else {
           placement_info val;
-          ssize_t bytesRead = recv(pollfds[i].fd, &val, sizeof(val), 0);
-          if (bytesRead == -1) {
-            printf("recv failed.\n");
-            assert(false);
-          } else if (bytesRead == 0) {
-            printf("Connection closed by remote peer.\n");
-            assert(false);
-          }
+          generators_[i - workers_.size()]->receive(&val, sizeof(val));
           std::thread thread(
               [this, i, val]() { step(true, i - workers_.size() + 1, val); });
           thread.detach();
@@ -1313,6 +1311,7 @@ TCPNode *PlacementDriver::connect_peers(const std::string &ip, int port) {
     return nullptr;
   }
   auto node = new TCPNode(serv_addr, sock);
+  peers_.insert(std::make_pair(node, placement_info{0, 0}));
   return node;
 }
 

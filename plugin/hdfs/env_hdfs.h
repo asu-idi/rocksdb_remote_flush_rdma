@@ -91,7 +91,6 @@ class HdfsFileSystem : public FileSystemWrapper {
                        IODebugContext* /*dbg*/) override;
 
  private:
-  FileSystem::SlidingWindow writeWindow_;
   std::string fsname_;  // string of the form "hdfs://hostname:port/dira"
   hdfsFS fileSys_;      // a single hdfsFS object for all files
 };

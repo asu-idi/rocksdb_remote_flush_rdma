@@ -34,6 +34,7 @@
 #include "rocksdb/customizable.h"
 #include "rocksdb/env.h"
 #include "rocksdb/io_status.h"
+#include "rocksdb/macro.hpp"
 #include "rocksdb/options.h"
 #include "rocksdb/remote_flush_service.h"
 #include "rocksdb/table.h"
@@ -313,8 +314,7 @@ class FileSystem : public Customizable {
   FileSystem(const FileSystem&) = delete;
 
   virtual ~FileSystem();
-
-  virtual size_t get_writein_speed() {
+  virtual int get_writein_speed() {
     printf("get_writein_speed is not implemented in this FileSystem\n");
     assert(false);
     return 0;
@@ -342,11 +342,21 @@ class FileSystem : public Customizable {
         window.pop_front();
       }
     }
-    int get() const {
+    int get(const std::chrono::time_point<std::chrono::system_clock>& time) {
       std::lock_guard<std::mutex> lock(wmtx_);
+      auto expireTime = time - std::chrono::seconds(1);
+      while (!window.empty() && window.front().time < expireTime) {
+        totalSize -= window.front().size;
+        window.pop_front();
+      }
       return totalSize;
     }
   };
+  virtual SlidingWindow* get_sliding_window() {
+    printf("get_sliding_window is not implemented in this FileSystem\n");
+    assert(false);
+    return nullptr;
+  }
 
   static const char* Type() { return "FileSystem"; }
   static const char* kDefaultName() { return "DefaultFileSystem"; }
@@ -1405,7 +1415,9 @@ class FileSystemWrapper : public FileSystem {
 
   // Return the target to which this Env forwards all calls
   FileSystem* target() const { return target_.get(); }
-
+  FileSystem::SlidingWindow* get_sliding_window() override {
+    return target_->get_sliding_window();
+  }
   // The following text is boilerplate that forwards all methods to target()
   IOStatus NewSequentialFile(const std::string& f, const FileOptions& file_opts,
                              std::unique_ptr<FSSequentialFile>* r,
@@ -1606,7 +1618,7 @@ class FileSystemWrapper : public FileSystem {
   }
 
   virtual bool use_async_io() override { return target_->use_async_io(); }
-  virtual size_t get_writein_speed() override {
+  virtual int get_writein_speed() override {
     return target_->get_writein_speed();
   }
 
