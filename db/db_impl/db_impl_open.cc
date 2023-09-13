@@ -7,6 +7,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 #include <cassert>
+#include <chrono>
 #include <cinttypes>
 #include <cstddef>
 #include <functional>
@@ -2195,9 +2196,11 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
     delete impl;
     *dbptr = nullptr;
   }
+#ifdef ROCKSDB_RDMA
   if (s.ok()) {
     s = impl->InitRDMAClient();
   }
+#endif  // ROCKSDB_RDMA
 
   return s;
 }

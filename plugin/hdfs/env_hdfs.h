@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <mutex>
+
 #include "hdfs.h"
 #include "rocksdb/env.h"
 #include "rocksdb/file_system.h"

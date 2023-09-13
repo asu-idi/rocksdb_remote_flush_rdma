@@ -1896,6 +1896,8 @@ class DB {
   }
   virtual void unregister_memnode(const std::string&, size_t) { assert(false); }
   virtual void register_local_ip(const std::string&) { assert(false); }
+  virtual void register_pd_client(const PDClient*) { assert(false); }
+  virtual void unregister_pd_client() { assert(false); }
 };
 
 struct WriteStallStatsMapKeys {

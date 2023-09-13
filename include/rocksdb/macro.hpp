@@ -20,12 +20,12 @@ class Noncopyable {
 };
 }  // namespace Noncopyable
 
-namespace Singleton {
+namespace SingletonV2 {
 template <class T>
-class Singleton : public Noncopyable::Noncopyable {
+class SingletonV2 : public Noncopyable::Noncopyable {
  protected:
-  Singleton() = default;
-  ~Singleton() override = default;
+  SingletonV2() = default;
+  ~SingletonV2() override = default;
 
  public:
   static auto Instance() -> T & {
@@ -33,16 +33,14 @@ class Singleton : public Noncopyable::Noncopyable {
     return instance;
   }
 };
-}  // namespace Singleton
+}  // namespace SingletonV2
 #define LOG(...)
 /*                                                     \
-  Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output( \
+  SingletonV2::SingletonV2<LocalLogger::LocalLogger>::Instance().output( \
       std::this_thread::get_id(), __FILE__, __LINE__, __FUNCTION__,  \
       __VA_ARGS__);
 */
-#define LOG_CERR(...)
-/*                                                     \
-  Singleton::Singleton<LocalLogger::LocalLogger>::Instance().output2cerr( \
-      std::this_thread::get_id(), __FILE__, __LINE__, __FUNCTION__,       \
+#define LOG_CERR(...)                                                         \
+  SingletonV2::SingletonV2<LocalLogger::LocalLogger>::Instance().output2cerr( \
+      std::this_thread::get_id(), __FILE__, __LINE__, __FUNCTION__,           \
       __VA_ARGS__);
-*/
