@@ -55,10 +55,8 @@ signed main(signed argc, char** argv) {
   db->register_memnode(memnode_ip, memnode_port, 0);
 
   PDClient pd_client{local_heartbeat_port};
-  pd_client.set_get_placement_info([&db]() {
-    return reinterpret_cast<DBImpl*>(db)->CollectPlacementInfo();
-  });
   pd_client.match_memnode_for_heartbeat();  // waiting for any memnode to match
+  db->register_pd_client(&pd_client);
 
   Status ret = db->ListenAndScheduleFlushJob(local_listen_port);
   assert(ret.ok());

@@ -487,9 +487,16 @@ class PDClient {
     Status s = MatchMemnodeForHeartBeat();
     assert(s.ok());
     std::thread heartbeat_thread([this]() {
+      placement_info lastpinfo;
       while (true) {
-        Status s0 = SendHeartBeat(get_placement_info());
-        if (!s0.ok()) break;
+        placement_info pinfo = get_placement_info();
+        if (lastpinfo.current_background_job_num_ !=
+                pinfo.current_background_job_num_ ||
+            lastpinfo.current_hdfs_io_ != pinfo.current_hdfs_io_) {
+          lastpinfo = pinfo;
+          Status s0 = SendHeartBeat(pinfo);
+          if (!s0.ok()) break;
+        }
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
       }
     });

@@ -368,7 +368,6 @@ void DBImpl::BackgroundCallRemoteFlush(
 
   local_handler->RunLocal();
 
-#ifndef ROCKSDB_RDMA  // NEED FIX!!
   TCPNode unpack_tcp_node({}, 0);
   if ((unpack_tcp_node.connection_info_.client_sockfd =
            socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -401,7 +400,6 @@ void DBImpl::BackgroundCallRemoteFlush(
   close(unpack_tcp_node.connection_info_.client_sockfd);
 
   delete worker_node;
-#endif
 
   free(local_handler);
   bg_flush_scheduled_--;
