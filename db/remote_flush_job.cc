@@ -35,6 +35,7 @@
 #include "rocksdb/table_properties.h"
 #include "table/internal_iterator.h"
 #include "util/autovector.h"
+#include "utilities/rf_stats.h"
 
 // for socket API
 #ifdef __linux
@@ -102,11 +103,16 @@ RemoteFlushJob::RemoteFlushJob(
     Statistics* stats, EventLogger* event_logger, bool measure_io_stats,
     const bool sync_output_directory, const bool write_manifest,
     Env::Priority thread_pri, const std::shared_ptr<IOTracer>& io_tracer,
-    const SeqnoToTimeMapping& seqno_time_mapping, RDMAClient* rdma_client,
+    const SeqnoToTimeMapping& seqno_time_mapping,
+#ifdef ROCKSDB_RDMA
+    RDMAClient* rdma_client,
+#endif
     const std::string& db_id, const std::string& db_session_id,
     std::string full_history_ts_low, BlobFileCompletionCallback* blob_callback)
     : local_generator_node(sockaddr_in{}, 0),
+#ifdef ROCKSDB_RDMA
       local_generator_rdma_client(rdma_client),
+#endif
       dbname_(dbname),
       db_id_(db_id),
       db_session_id_(db_session_id),
@@ -482,7 +488,10 @@ std::shared_ptr<RemoteFlushJob> RemoteFlushJob::CreateRemoteFlushJob(
     Statistics* stats, EventLogger* event_logger, bool measure_io_stats,
     const bool sync_output_directory, const bool write_manifest,
     Env::Priority thread_pri, const std::shared_ptr<IOTracer>& io_tracer,
-    const SeqnoToTimeMapping& seqno_time_mapping, RDMAClient* rdma_client,
+    const SeqnoToTimeMapping& seqno_time_mapping,
+#ifdef ROCKSDB_RDMA
+    RDMAClient* rdma_client,
+#endif
     const std::string& db_id, const std::string& db_session_id,
     std::string full_history_ts_low,
     BlobFileCompletionCallback* blob_callback) {
@@ -493,8 +502,11 @@ std::shared_ptr<RemoteFlushJob> RemoteFlushJob::CreateRemoteFlushJob(
       snapshot_checker, job_context, flush_reason, log_buffer, db_directory,
       output_file_directory, output_compression, stats, event_logger,
       measure_io_stats, sync_output_directory, write_manifest, thread_pri,
-      io_tracer, seqno_time_mapping, rdma_client, db_id, db_session_id,
-      std::move(full_history_ts_low), blob_callback);
+      io_tracer, seqno_time_mapping,
+#ifdef ROCKSDB_RDMA
+      rdma_client,
+#endif
+      db_id, db_session_id, std::move(full_history_ts_low), blob_callback);
   return std::shared_ptr<RemoteFlushJob>(mem);
 }
 RemoteFlushJob::~RemoteFlushJob() { ThreadStatusUtil::ResetThreadStatus(); }
@@ -573,6 +585,7 @@ Status RemoteFlushJob::RunRemote(
     std::function<int()>* get_available_port, const std::string& local_ip,
     LogsWithPrepTracker* prep_tracker, FileMetaData* file_meta,
     bool* switched_to_mempurge) {
+  uint64_t start = Env::Default()->NowMicros();
   TEST_SYNC_POINT("RemoteFlushJob::Start");
   db_mutex_->AssertHeld();
   assert(pick_memtable_called);
@@ -732,7 +745,9 @@ Status RemoteFlushJob::RunRemote(
     *file_meta = meta_;
   }
   RecordFlushIOStats();
-
+  uint64_t end = Env::Default()->NowMicros();
+  uint64_t elapsed_micros = end - start;
+  Singleton<rf_stats>::GetInstance()->ReportFlush(start, end, elapsed_micros);
   return s;
 }
 
@@ -869,6 +884,11 @@ Status RemoteFlushJob::RunLocal(LogsWithPrepTracker* prep_tracker,
                                                             local_flush_begin)
           .count(),
       "ms");
+  std::cout << "RemoteFlushJob::RunLocal local_flush_all_time: "
+            << std::chrono::duration_cast<std::chrono::milliseconds>(
+                   local_flush_end - local_flush_begin)
+                   .count()
+            << "ms" << std::endl;
   LOG("worker calculation finished");
   return Status::OK();
 }

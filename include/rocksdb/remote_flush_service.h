@@ -306,6 +306,26 @@ class RDMAClient : public RDMANode {
   void after_connect_qp(struct rdma_connection *idx) override {}
 };
 
+struct placement_info {
+  int current_background_job_num_ = 0;
+  int current_hdfs_io_ = 0;
+};
+
+// PD listen on port 10086, receive FlushRequest from generator, receive
+// HeartBeat from worker
+struct PlacementDriver {
+  const int max_background_job_num_{32};
+  const int max_hdfs_io_{100 << 20};  // MB/s
+  std::queue<TCPNode *> available_workers_;
+  std::vector<TCPNode *> workers_;
+  std::vector<TCPNode *> generators_;
+  std::unordered_map<TCPNode *, placement_info> peers_;
+  TCPNode *connect_peers(const std::string &ip, int port);
+  TCPNode *choose_worker(const placement_info &);
+  void step(bool, size_t, placement_info);
+  void listen();
+};
+
 // register_workers then opentcp
 class RemoteFlushJobPD {
  public:
@@ -355,6 +375,20 @@ class RemoteFlushJobPD {
     assert(node->connection_info_.client_sockfd <= 0);
     delete node;
   }
+  void pd_add_worker(const std::string &ip, int port) {
+    TCPNode *node = pd_.connect_peers(ip, port);
+    assert(node != nullptr);
+    size_t size = pd_.workers_.size() + 1;
+    node->send(&size, sizeof(size_t));
+    pd_.workers_.push_back(node);
+  }
+  void pd_add_generator(const std::string &ip, int port) {
+    TCPNode *node = pd_.connect_peers(ip, port);
+    assert(node != nullptr);
+    size_t size = pd_.generators_.size() + 1;
+    node->send(&size, sizeof(size_t));
+    pd_.generators_.push_back(node);
+  }
 
  private:
   struct flushjob_package {
@@ -369,6 +403,7 @@ class RemoteFlushJobPD {
   std::unordered_map<int, TCPNode *> flush_job_executors_in_use_;
   std::unordered_map<TCPNode *, bool> flush_job_executors_status_;
   std::unordered_map<int, TCPNode *> flush_job_generators_;
+  PlacementDriver pd_;
   struct tcp_server_info {
     int tcp_server_sockfd_;
     struct sockaddr_in server_address;
@@ -377,6 +412,98 @@ class RemoteFlushJobPD {
  private:
   RemoteFlushJobPD() = default;
   ~RemoteFlushJobPD() {}
+};
+
+class PDClient {
+ public:
+  TCPNode *pd_connection_{nullptr};
+
+ private:
+  mutable std::mutex pd_mutex_;
+  size_t peer_id_{0};
+  int heartbeatport_{10086};
+  std::function<placement_info()> get_placement_info{
+      []() { return placement_info(); }};
+
+ public:
+  explicit PDClient(int heartbeatport) : heartbeatport_(heartbeatport) {}
+  inline std::mutex &get_mutex() const { return pd_mutex_; }
+  inline void set_get_placement_info(
+      const std::function<placement_info()> &func) {
+    get_placement_info = func;
+  }
+  inline Status MatchMemnodeForHeartBeat() {
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) {
+      return Status::IOError("socket error");
+    }
+    sockaddr_in addr_;
+    addr_.sin_family = AF_INET;
+    addr_.sin_port = htons(heartbeatport_);
+    addr_.sin_addr.s_addr = INADDR_ANY;
+    printf("rocksdb local_heartbeatport_ %d\n", heartbeatport_);
+
+    assert(bind(sock, (sockaddr *)&addr_, sizeof(addr_)) >= 0);
+    assert(listen(sock, 1) >= 0);
+
+    struct sockaddr_in client_address;
+    socklen_t client_address_len = sizeof(client_address);
+    printf("rocksdb before accept\n");
+    int client_sockfd =
+        accept(sock, (struct sockaddr *)&client_address, &client_address_len);
+    printf("rocksdb accept\n");
+    if (client_sockfd < 0) {
+      return Status::IOError("accept error");
+    }
+    {
+      char client_ip[INET_ADDRSTRLEN];
+      inet_ntop(AF_INET, &client_address.sin_addr, client_ip, INET_ADDRSTRLEN);
+      int client_port = ntohs(client_address.sin_port);
+      LOG_CERR("Rocksdb Instance create connection with memnode: ", client_ip,
+               ':', client_port);
+    }
+    auto *node = new TCPNode(client_address, client_sockfd);
+    pd_connection_ = node;
+    pd_connection_->receive(&peer_id_, sizeof(size_t));
+    return Status::OK();
+  }
+  inline Status SendHeartBeat(const placement_info &pinfo) {
+    {
+      std::lock_guard<std::mutex> lock(pd_mutex_);
+      if (pd_connection_ == nullptr) {
+        assert(false);
+        return Status::IOError("pd_connection_ is nullptr");
+      }
+      pd_connection_->send(&pinfo, sizeof(placement_info));
+    }
+    return Status::OK();
+  }
+  inline void match_memnode_for_request() {
+    Status s = MatchMemnodeForHeartBeat();
+    assert(s.ok());
+  }
+  inline void match_memnode_for_heartbeat() {
+    Status s = MatchMemnodeForHeartBeat();
+    assert(s.ok());
+    std::thread heartbeat_thread([this]() {
+      placement_info lastpinfo;
+      while (true) {
+        placement_info pinfo = get_placement_info();
+        if (lastpinfo.current_background_job_num_ !=
+                pinfo.current_background_job_num_ ||
+            lastpinfo.current_hdfs_io_ != pinfo.current_hdfs_io_) {
+          lastpinfo = pinfo;
+          Status s0 = SendHeartBeat(pinfo);
+          if (!s0.ok()) break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+      }
+    });
+    heartbeat_thread.detach();
+  }
+  inline void register_local_heartbeat_port(int port = 10086) {
+    heartbeatport_ = port;
+  }
 };
 
 }  // namespace ROCKSDB_NAMESPACE

@@ -30,6 +30,7 @@
 #include "monitoring/thread_status_util.h"
 #include "rocksdb/logger.hpp"
 #include "rocksdb/remote_flush_service.h"
+#include "rocksdb/status.h"
 #include "test_util/sync_point.h"
 #include "util/cast_util.h"
 #include "util/concurrent_task_limiter_impl.h"
@@ -216,8 +217,17 @@ Status DBImpl::FlushMemTableToOutputFile(
   // To address this, we make sure NotifyOnFlushBegin() executes after memtable
   // picking so that no new snapshot can be taken between the two functions.
   LOG("Construct flush job");
+
+  bool admit = false;
   if (cfd->GetLatestCFOptions().server_use_remote_flush) {
-    LOG("Construct remote flush job");
+    std::lock_guard<std::mutex> lck(pd_connection_client_->get_mutex());
+    placement_info pinfo = CollectPlacementInfo();
+    pd_connection_client_->pd_connection_->send(&pinfo, sizeof(placement_info));
+    pd_connection_client_->pd_connection_->receive(&admit, sizeof(bool));
+  }
+
+  if (cfd->GetLatestCFOptions().server_use_remote_flush && admit) {
+    LOG_CERR("Construct remote flush job");
     std::shared_ptr<RemoteFlushJob> flush_job =
         RemoteFlushJob::CreateRemoteFlushJob(
             dbname_, cfd, immutable_db_options_, mutable_cf_options,
@@ -229,8 +239,12 @@ Status DBImpl::FlushMemTableToOutputFile(
             GetCompressionFlush(*cfd->ioptions(), mutable_cf_options), stats_,
             &event_logger_, mutable_cf_options.report_bg_io_stats,
             true /* sync_output_directory */, true /* write_manifest */,
-            thread_pri, io_tracer_, seqno_time_mapping_, rdma_client_, db_id_,
-            db_session_id_, cfd->GetFullHistoryTsLow(), &blob_callback_);
+            thread_pri, io_tracer_, seqno_time_mapping_,
+#ifdef ROCKSDB_RDMA
+            rdma_client_,
+#endif  // ROCKSDB_RDMA
+            db_id_, db_session_id_, cfd->GetFullHistoryTsLow(),
+            &blob_callback_);
     FileMetaData file_meta;
     LOG("RemoteFlushJob::CreateRemoteFlushJob thread_id:",
         std::this_thread::get_id(),
@@ -388,7 +402,7 @@ Status DBImpl::FlushMemTableToOutputFile(
     TEST_SYNC_POINT("DBImpl::FlushMemTableToOutputFile:Finish");
     return s;
   } else {
-    LOG("Construct traditional flush job");
+    LOG_CERR("Construct traditional flush job");
     FlushJob flush_job(
         dbname_, cfd, immutable_db_options_, mutable_cf_options,
         max_memtable_id, file_options_for_compaction_, versions_.get(), &mutex_,

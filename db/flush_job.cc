@@ -11,7 +11,9 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cinttypes>
+#include <cstdint>
 #include <vector>
 
 #include "db/builder.h"
@@ -48,6 +50,7 @@
 #include "util/coding.h"
 #include "util/mutexlock.h"
 #include "util/stop_watch.h"
+#include "utilities/rf_stats.h"
 
 namespace ROCKSDB_NAMESPACE {
 
@@ -178,6 +181,7 @@ void FlushJob::PickMemTable() {
 
 Status FlushJob::Run(LogsWithPrepTracker* prep_tracker, FileMetaData* file_meta,
                      bool* switched_to_mempurge) {
+  uint64_t start = clock_->NowMicros();
   TEST_SYNC_POINT("FlushJob::Start");
   db_mutex_->AssertHeld();
   assert(pick_memtable_called);
@@ -325,7 +329,9 @@ Status FlushJob::Run(LogsWithPrepTracker* prep_tracker, FileMetaData* file_meta,
     stream << "file_cpu_read_nanos"
            << (IOSTATS(cpu_read_nanos) - prev_cpu_read_nanos);
   }
-
+  uint64_t end = clock_->NowMicros();
+  uint64_t elapsed_micros = end - start;
+  Singleton<rf_stats>::GetInstance()->ReportFlush(start, end, elapsed_micros);
   return s;
 }
 
