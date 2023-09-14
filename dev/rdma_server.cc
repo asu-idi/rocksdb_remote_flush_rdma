@@ -25,6 +25,8 @@ int main(int argc, char** argv) {
   size_t mem_size = argc >= 2 ? std::atoll(argv[1]) : 1ull << 28;
   rocksdb::RDMAServer server;
   // if(argc >= 3) server.config.tcp_port = std::atoi(argv[2]);
+  server.pd_add_generator("10.145.21.36", 10089);
+  server.pd_add_worker("10.145.21.34", 10087);
   server.resources_create(mem_size);
   server.sock_connect();
   while (true) {

@@ -167,6 +167,26 @@ class TCPNode {
   RegularMemNode memory_;
 };
 
+struct placement_info {
+  int current_background_job_num_ = 0;
+  int current_hdfs_io_ = 0;
+};
+
+// PD listen on port 10086, receive FlushRequest from generator, receive
+// HeartBeat from worker
+struct PlacementDriver {
+  const int max_background_job_num_{32};
+  const int max_hdfs_io_{100 << 20};  // MB/s
+  std::queue<TCPNode *> available_workers_;
+  std::vector<TCPNode *> workers_;
+  std::vector<TCPNode *> generators_;
+  std::unordered_map<TCPNode *, placement_info> peers_;
+  TCPNode *connect_peers(const std::string &ip, int port);
+  TCPNode *choose_worker(const placement_info &);
+  void step(bool, size_t, placement_info);
+  void listen();
+};
+
 class RDMANode {
   friend class RDMAServer;
   friend class RDMAClient;
@@ -263,6 +283,20 @@ class RDMAServer : public RDMANode {
   RDMAServer();
   ~RDMAServer();
   bool service(struct rdma_connection *idx);
+  void pd_add_worker(const std::string &ip, int port) {
+    TCPNode *node = pd_.connect_peers(ip, port);
+    assert(node != nullptr);
+    size_t size = pd_.workers_.size() + 1;
+    node->send(&size, sizeof(size_t));
+    pd_.workers_.push_back(node);
+  }
+  void pd_add_generator(const std::string &ip, int port) {
+    TCPNode *node = pd_.connect_peers(ip, port);
+    assert(node != nullptr);
+    size_t size = pd_.generators_.size() + 1;
+    node->send(&size, sizeof(size_t));
+    pd_.generators_.push_back(node);
+  }
 
  private:
   void allocate_mem_service(struct rdma_connection *idx);
@@ -281,6 +315,7 @@ class RDMAServer : public RDMANode {
     threads.push_back(new std::thread(ser));
     threads.back()->detach();
   }
+  PlacementDriver pd_;
 };
 
 class RDMAClient : public RDMANode {
@@ -304,26 +339,6 @@ class RDMAClient : public RDMANode {
 
  private:
   void after_connect_qp(struct rdma_connection *idx) override {}
-};
-
-struct placement_info {
-  int current_background_job_num_ = 0;
-  int current_hdfs_io_ = 0;
-};
-
-// PD listen on port 10086, receive FlushRequest from generator, receive
-// HeartBeat from worker
-struct PlacementDriver {
-  const int max_background_job_num_{32};
-  const int max_hdfs_io_{100 << 20};  // MB/s
-  std::queue<TCPNode *> available_workers_;
-  std::vector<TCPNode *> workers_;
-  std::vector<TCPNode *> generators_;
-  std::unordered_map<TCPNode *, placement_info> peers_;
-  TCPNode *connect_peers(const std::string &ip, int port);
-  TCPNode *choose_worker(const placement_info &);
-  void step(bool, size_t, placement_info);
-  void listen();
 };
 
 // register_workers then opentcp
