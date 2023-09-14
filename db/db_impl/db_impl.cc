@@ -401,6 +401,7 @@ void DBImpl::BackgroundCallRemoteFlush(
 
 #ifndef ROCKSDB_RDMA
   delete worker_node;
+#endif
 
   free(local_handler);
   bg_flush_scheduled_--;
