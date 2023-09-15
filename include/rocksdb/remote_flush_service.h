@@ -297,6 +297,10 @@ class RDMAServer : public RDMANode {
     node->send(&size, sizeof(size_t));
     pd_.generators_.push_back(node);
   }
+  void connect_clients(){
+  std::thread listen_thread{[this]() { pd_.listen(); }};
+  listen_thread.detach();
+}
 
  private:
   void allocate_mem_service(struct rdma_connection *idx);
