@@ -49,13 +49,13 @@ signed main(signed argc, char** argv) {
   opt.merge_operator = MergeOperators::CreateStringAppendOperator();
   opt.max_background_flushes = 1000;
   opt.max_background_jobs = 1000;
+
+  PDClient pd_client{local_heartbeat_port};
+  pd_client.match_memnode_for_heartbeat();  // waiting for any memnode to match
   DB::Open(opt, db_name, &db);
   assert(db != nullptr);
 
   db->register_memnode(memnode_ip, memnode_port, 0);
-
-  PDClient pd_client{local_heartbeat_port};
-  pd_client.match_memnode_for_heartbeat();  // waiting for any memnode to match
   db->register_pd_client(&pd_client);
 
   Status ret = db->ListenAndScheduleFlushJob(local_listen_port);

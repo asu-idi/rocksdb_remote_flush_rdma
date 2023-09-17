@@ -299,7 +299,7 @@ Status DBImpl::FlushMemTableToOutputFile(
       LOG("flush job run remote: ptr = ", std::hex, flush_job.get(), std::dec);
       std::function<int()> get_available_port = [&]() -> int {
         int32_t port = port_index_.fetch_add(1);
-        return port % 500 + 5000;
+        return port % 100 + 11000;
       };
       s = flush_job->RunRemote(&memnodes_ip_port_, &get_available_port,
                                local_ip_, &logs_with_prep_tracker_, &file_meta,

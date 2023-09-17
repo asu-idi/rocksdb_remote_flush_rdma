@@ -83,6 +83,8 @@ auto main(int argc, char** argv) -> signed {
   opt.max_write_buffer_number = 4;
   opt.delayed_write_rate = 1 << 30;
   // opt.min_write_buffer_number_to_merge = 2;
+  auto* pd_client = new PDClient{10089};
+  pd_client->match_memnode_for_request();
   DB::Open(opt, db_name, &db);
   assert(db != nullptr);
 
@@ -93,8 +95,6 @@ auto main(int argc, char** argv) -> signed {
   LOG("local_ip: ", local_ip);
   if (opt.server_remote_flush) {
     db->register_memnode("127.0.0.1", 9091);
-    auto* pd_client = new PDClient{10089};
-    pd_client->match_memnode_for_request();
     db->register_pd_client(pd_client);
     printf("pd_client registered\n");
   }

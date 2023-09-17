@@ -753,10 +753,7 @@ Status RemoteFlushJob::RunRemote(
 
 Status RemoteFlushJob::MatchRemoteWorker(int port) {
   LOG_CERR("waiting to connect with remote flush worker on localhost:", port);
-#ifdef ROCKSDB_RDMA
-#else
   local_generator_node.~TCPNode();
-#endif
   memset(reinterpret_cast<void*>(&local_generator_node), 0, sizeof(TCPNode));
   if ((local_generator_node.connection_info_.listen_sockfd =
            socket(AF_INET, SOCK_STREAM, 0)) < 0) {

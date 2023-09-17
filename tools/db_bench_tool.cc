@@ -4805,6 +4805,12 @@ class Benchmark {
   }
 
   void Open(Options* opts) {
+    if (FLAGS_use_remote_flush) {
+      std::call_once(remote_flush_port_once, []() {
+        pd_client = new PDClient(FLAGS_heartbeat_local_port);
+        pd_client->match_memnode_for_request();
+      });
+    }
     if (!InitializeOptionsFromFile(opts)) {
       InitializeOptionsFromFlags(opts);
     }
@@ -4818,10 +4824,6 @@ class Benchmark {
       db_.db->register_memnode(ip, port);
       std::string local_ip = FLAGS_local_ip;
       db_.db->register_local_ip(local_ip);
-      std::call_once(remote_flush_port_once, []() {
-        pd_client = new PDClient(FLAGS_heartbeat_local_port);
-        pd_client->match_memnode_for_request();
-      });
       db_.db->register_pd_client(pd_client);
     }
   }
