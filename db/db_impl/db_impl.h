@@ -2761,7 +2761,7 @@ class DBImpl : public DB {
                                         bg_flush_scheduled_;
     pinfo.current_hdfs_io_ = fs_->get_writein_speed();
     LOG_CERR("CollectPlacementInfo: bgjob:", pinfo.current_background_job_num_,
-             " io:", pinfo.current_hdfs_io_);
+             ' ', bg_flush_scheduled_, " io:", pinfo.current_hdfs_io_);
     return pinfo;
   }
 

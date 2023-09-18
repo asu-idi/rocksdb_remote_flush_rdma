@@ -181,10 +181,9 @@ struct PlacementDriver {
   std::vector<TCPNode *> workers_;
   std::vector<TCPNode *> generators_;
   std::unordered_map<TCPNode *, placement_info> peers_;
-  TCPNode *connect_peers(const std::string &ip, int port);
   TCPNode *choose_worker(const placement_info &);
   void step(bool, size_t, placement_info);
-  void listen();
+  void poll_events(int port);
 };
 
 class RDMANode {
@@ -283,24 +282,10 @@ class RDMAServer : public RDMANode {
   RDMAServer();
   ~RDMAServer();
   bool service(struct rdma_connection *idx);
-  void pd_add_worker(const std::string &ip, int port) {
-    TCPNode *node = pd_.connect_peers(ip, port);
-    assert(node != nullptr);
-    size_t size = pd_.workers_.size() + 1;
-    node->send(&size, sizeof(size_t));
-    pd_.workers_.push_back(node);
+  void connect_clients(int port) {
+    std::thread listen_thread{[this, port]() { pd_.poll_events(port); }};
+    listen_thread.detach();
   }
-  void pd_add_generator(const std::string &ip, int port) {
-    TCPNode *node = pd_.connect_peers(ip, port);
-    assert(node != nullptr);
-    size_t size = pd_.generators_.size() + 1;
-    node->send(&size, sizeof(size_t));
-    pd_.generators_.push_back(node);
-  }
-  void connect_clients(){
-  std::thread listen_thread{[this]() { pd_.listen(); }};
-  listen_thread.detach();
-}
 
  private:
   void allocate_mem_service(struct rdma_connection *idx);
@@ -356,7 +341,7 @@ class RemoteFlushJobPD {
   }
 
  public:
-  bool opentcp(int port);
+  bool opentcp(int port, int heartbeat_port);
   bool closetcp();
   void register_flush_job_generator(int fd, const TCPNode *node) {
     std::lock_guard<std::mutex> lock(mtx_);
@@ -394,20 +379,7 @@ class RemoteFlushJobPD {
     assert(node->connection_info_.client_sockfd <= 0);
     delete node;
   }
-  void pd_add_worker(const std::string &ip, int port) {
-    TCPNode *node = pd_.connect_peers(ip, port);
-    assert(node != nullptr);
-    size_t size = pd_.workers_.size() + 1;
-    node->send(&size, sizeof(size_t));
-    pd_.workers_.push_back(node);
-  }
-  void pd_add_generator(const std::string &ip, int port) {
-    TCPNode *node = pd_.connect_peers(ip, port);
-    assert(node != nullptr);
-    size_t size = pd_.generators_.size() + 1;
-    node->send(&size, sizeof(size_t));
-    pd_.generators_.push_back(node);
-  }
+  void poll_events(int port) { pd_.poll_events(port); }
 
  private:
   struct flushjob_package {
@@ -451,28 +423,34 @@ class PDClient {
       const std::function<placement_info()> &func) {
     get_placement_info = func;
   }
-  inline Status MatchMemnodeForHeartBeat() {
+  inline Status MatchMemnodeForHeartBeat(const std::string &ip,
+                                         bool is_worker) {
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
+      assert(false);
       return Status::IOError("socket error");
     }
     sockaddr_in addr_;
     addr_.sin_family = AF_INET;
     addr_.sin_port = htons(heartbeatport_);
-    addr_.sin_addr.s_addr = INADDR_ANY;
+    addr_.sin_addr.s_addr = inet_addr(ip.data());
     printf("rocksdb local_heartbeatport_ %d\n", heartbeatport_);
 
-    assert(bind(sock, (sockaddr *)&addr_, sizeof(addr_)) >= 0);
-    assert(listen(sock, 1) >= 0);
+    if (connect(sock, (struct sockaddr *)&addr_, sizeof(addr_)) < 0) {
+      fprintf(stderr, "connect error\n");
+      close(sock);
+      return Status::IOError("connect error");
+    }
 
     struct sockaddr_in client_address;
     socklen_t client_address_len = sizeof(client_address);
-    printf("rocksdb before accept\n");
-    int client_sockfd =
-        accept(sock, (struct sockaddr *)&client_address, &client_address_len);
-    printf("rocksdb accept\n");
-    if (client_sockfd < 0) {
-      return Status::IOError("accept error");
+    if (getsockname(sock, reinterpret_cast<sockaddr *>(&client_address),
+                    &client_address_len) == -1) {
+      std::cerr << "Failed to get local address." << std::endl;
+      return Status::IOError("getsockname error");
+    } else {
+      unsigned short port = ntohs(client_address.sin_port);
+      std::cerr << "Connected to memnode. Local port: " << port << std::endl;
     }
     {
       char client_ip[INET_ADDRSTRLEN];
@@ -481,9 +459,13 @@ class PDClient {
       LOG_CERR("Rocksdb Instance create connection with memnode: ", client_ip,
                ':', client_port);
     }
-    auto *node = new TCPNode(client_address, client_sockfd);
+    auto *node = new TCPNode(client_address, sock);
     pd_connection_ = node;
+    std::cout << "send is_worker" << std::endl;
+    pd_connection_->send(&is_worker, sizeof(bool));
+    std::cout << "send is_worker  done" << std::endl;
     pd_connection_->receive(&peer_id_, sizeof(size_t));
+    std::cout << "send is_worker  done  done " << std::endl;
     return Status::OK();
   }
   inline Status SendHeartBeat(const placement_info &pinfo) {
@@ -497,30 +479,34 @@ class PDClient {
     }
     return Status::OK();
   }
-  inline void match_memnode_for_request() {
-    Status s = MatchMemnodeForHeartBeat();
+  inline void match_memnode_for_request(const std::string &ip) {
+    Status s = MatchMemnodeForHeartBeat(ip, false);
     assert(s.ok());
   }
-  inline void match_memnode_for_heartbeat() {
-    Status s = MatchMemnodeForHeartBeat();
+  inline void match_memnode_for_heartbeat(const std::string &ip) {
+    Status s = MatchMemnodeForHeartBeat(ip, true);
     assert(s.ok());
     std::thread heartbeat_thread([this]() {
       placement_info lastpinfo;
+      int cnt = 0;
       while (true) {
         placement_info pinfo = get_placement_info();
         if (lastpinfo.current_background_job_num_ !=
                 pinfo.current_background_job_num_ ||
-            lastpinfo.current_hdfs_io_ != pinfo.current_hdfs_io_) {
+            lastpinfo.current_hdfs_io_ != pinfo.current_hdfs_io_ || cnt >= 5) {
           lastpinfo = pinfo;
+          cnt = 0;
           Status s0 = SendHeartBeat(pinfo);
           if (!s0.ok()) break;
+        } else {
+          cnt++;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
       }
     });
     heartbeat_thread.detach();
   }
-  inline void register_local_heartbeat_port(int port = 10086) {
+  inline void register_memnode_heartbeat_port(int port = 10086) {
     heartbeatport_ = port;
   }
 };
