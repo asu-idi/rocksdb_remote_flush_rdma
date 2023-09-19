@@ -30,14 +30,14 @@ signed main(signed argc, char** argv) {
   if (argc != 4 && argc != 5) {
     std::cout << "Usage: " << argv[0]
               << "[memnode_ip] [memnode_port] [local_listen_port] "
-                 "[local_heartbeat_port (default 10086)]"
+                 "[memnode_heartbeat_port (default 10086)]"
               << std::endl;
     return -1;
   }
   std::string memnode_ip = argv[1];
   int memnode_port = std::atoi(argv[2]);
   int local_listen_port = std::atoi(argv[3]);
-  int local_heartbeat_port = (argc == 5) ? std::atoi(argv[4]) : 10086;
+  int memnode_heartbeat_port = (argc == 5) ? std::atoi(argv[4]) : 10086;
   rocksdb::Env* env = rocksdb::Env::Default();
   EnvOptions env_options;
   DB* db = nullptr;
@@ -47,15 +47,17 @@ signed main(signed argc, char** argv) {
   opt.prefix_extractor.reset(NewFixedPrefixTransform(3));
   opt.create_if_missing = true;
   opt.merge_operator = MergeOperators::CreateStringAppendOperator();
-  opt.max_background_flushes = 1000;
-  opt.max_background_jobs = 1000;
+  opt.max_background_flushes = 32;
+  opt.max_background_jobs = 32;
+
   DB::Open(opt, db_name, &db);
   assert(db != nullptr);
 
   db->register_memnode(memnode_ip, memnode_port, 0);
 
-  PDClient pd_client{local_heartbeat_port};
-  pd_client.match_memnode_for_heartbeat();  // waiting for any memnode to match
+  PDClient pd_client{memnode_heartbeat_port};
+  pd_client.match_memnode_for_heartbeat(
+      memnode_ip);  // waiting for any memnode to match
   db->register_pd_client(&pd_client);
 
   Status ret = db->ListenAndScheduleFlushJob(local_listen_port);

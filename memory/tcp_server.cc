@@ -32,20 +32,17 @@
 #include "util/string_util.h"
 
 int main(int argc, char** argv) {
-  if (argc != 2) {
-    std::cout << "Usage: " << argv[0] << " [port]" << std::endl;
+  if (argc < 2) {
+    std::cout << "Usage: " << argv[0]
+              << " [port] [heartbeatport(default 10086)]" << std::endl;
     return -1;
   }
   int port = std::atoi(argv[1]);
+  int heartbeatport = (argc == 3) ? std::atoi(argv[2]) : 10086;
   rocksdb::RemoteFlushJobPD& memnode = rocksdb::RemoteFlushJobPD::Instance();
   // TODO(rdma): change this on your machine
   memnode.register_flush_job_executor("127.0.0.1", 9092);
-
-  memnode.pd_add_generator("127.0.0.1", 10089);
-  // memnode.pd_add_worker("127.0.0.1", 10088);
-  memnode.pd_add_worker("127.0.0.1", 10087);
-
-  memnode.opentcp(port);
+  memnode.opentcp(port, heartbeatport);
   while (true) {
     std::string command;
     std::cin >> command;

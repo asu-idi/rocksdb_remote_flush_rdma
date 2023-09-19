@@ -7,14 +7,17 @@
 #include <infiniband/verbs.h>
 #include <inttypes.h>
 #include <netdb.h>
+#include <netinet/in.h>
 #include <poll.h>
 #include <stdint.h>
+#include <sys/poll.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <array>
 #include <cassert>
 #include <chrono>
 #include <cstddef>
@@ -70,6 +73,7 @@ bool TCPNode::send(const void *buf, size_t size) {
       assert(false);
     } else if (n == 0) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      LOG_CERR("TCPNode::send: write 0 bytes");
       continue;
     }
     total += n;
@@ -141,8 +145,9 @@ bool RemoteFlushJobPD::closetcp() {
   return true;
 }
 
-bool RemoteFlushJobPD::opentcp(int port) {
-  std::thread listen_thread{[this]() { pd_.listen(); }};
+bool RemoteFlushJobPD::opentcp(int port, int heartbeat_port) {
+  std::thread listen_thread{
+      [this, heartbeat_port]() { pd_.poll_events(heartbeat_port); }};
   listen_thread.detach();
   if (server_info_.tcp_server_sockfd_ != -1) {
     LOG("tcp server already opened");
@@ -1255,64 +1260,99 @@ void PlacementDriver::step(bool from_generator, size_t id,
     peers_.at(workers_[id - 1]) = info;
   }
 }
-void PlacementDriver::listen() {
-  std::vector<struct pollfd> pollfds;
-  for (auto &node : workers_) {
-    pollfds.push_back({});
-    pollfds.back().fd = node->connection_info_.client_sockfd;
-    pollfds.back().events = POLLIN;
+
+void PlacementDriver::poll_events(int port) {
+  int sock = socket(AF_INET, SOCK_STREAM, 0);
+  if (sock < 0) {
+    fprintf(stderr, "Failed creating socket\n");
+    assert(false);
+    return;
   }
-  for (auto &node : generators_) {
-    pollfds.push_back({});
-    pollfds.back().fd = node->connection_info_.client_sockfd;
-    pollfds.back().events = POLLIN;
+  struct sockaddr_in serv_addr;
+  serv_addr.sin_family = AF_INET;
+  serv_addr.sin_addr.s_addr = INADDR_ANY;
+  serv_addr.sin_port = htons(port);
+
+  if (bind(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
+    close(sock);
+    fprintf(stderr, "Failed binding socket\n");
+    assert(false);
+    return;
+  }
+  if (::listen(sock, 10) < 0) {
+    close(sock);
+    fprintf(stderr, "Failed listening socket\n");
+    assert(false);
+    return;
   }
 
   while (true) {
+    std::vector<struct pollfd> pollfds;
+    pollfds.push_back({});
+    pollfds.back().fd = sock;
+    pollfds.back().events = POLLIN;
+    for (auto &node : workers_) {
+      pollfds.push_back({});
+      pollfds.back().fd = node->connection_info_.client_sockfd;
+      pollfds.back().events = POLLIN;
+    }
+    for (auto &node : generators_) {
+      pollfds.push_back({});
+      pollfds.back().fd = node->connection_info_.client_sockfd;
+      pollfds.back().events = POLLIN;
+    }
+
     int ret = poll(pollfds.data(), pollfds.size(), -1);
     if (ret < 0) {
       fprintf(stderr, "Poll error\n");
       return;
     }
-    for (int i = 0; i < (int)pollfds.size(); i++) {
+    assert(pollfds.size() == workers_.size() + generators_.size() + 1);
+    std::vector<std::thread> all_threads;
+    for (int i = 1; i < (int)pollfds.size(); i++) {
       if (pollfds[i].revents & POLLIN) {
-        if (i < (int)workers_.size()) {
+        if (i <= (int)workers_.size()) {
           placement_info val;
-          workers_[i]->receive(&val, sizeof(val));
-          std::thread thread([this, i, val]() { step(false, i + 1, val); });
-          thread.detach();
+          workers_[i - 1]->receive(&val, sizeof(val));
+          LOG_CERR("workerid:", i, " info:", val.current_background_job_num_,
+                   " ", val.current_hdfs_io_);
+          all_threads.emplace_back([this, i, val]() { step(false, i, val); });
         } else {
           placement_info val;
-          generators_[i - workers_.size()]->receive(&val, sizeof(val));
-          std::thread thread(
-              [this, i, val]() { step(true, i - workers_.size() + 1, val); });
-          thread.detach();
+          generators_[i - 1 - workers_.size()]->receive(&val, sizeof(val));
+          all_threads.emplace_back(
+              [this, i, val]() { step(true, i - workers_.size(), val); });
         }
       }
     }
+    for (auto &all_thread : all_threads) all_thread.join();
+    if (pollfds[0].revents & POLLIN) {
+      sockaddr_in client_addr;
+      socklen_t client_addr_len = sizeof(client_addr);
+      int client_sockfd =
+          accept(sock, (struct sockaddr *)&client_addr, &client_addr_len);
+      if (client_sockfd < 0) {
+        fprintf(stderr, "Failed accepting socket\n");
+        close(sock);
+        return;
+      }
+      auto node = new TCPNode(client_addr, client_sockfd);
+      assert(node != nullptr);
+      bool is_worker = false;
+      node->receive(&is_worker, sizeof(bool));
+      if (is_worker) {
+        size_t size = workers_.size() + 1;
+        node->send(&size, sizeof(size_t));
+        peers_.insert(std::make_pair(node, placement_info{0, 0}));
+        workers_.push_back(node);
+      } else {
+        size_t size = generators_.size() + 1;
+        node->send(&size, sizeof(size_t));
+        peers_.insert(std::make_pair(node, placement_info{0, 0}));
+        generators_.push_back(node);
+      }
+    }
   }
-}
-
-TCPNode *PlacementDriver::connect_peers(const std::string &ip, int port) {
-  int sock = socket(AF_INET, SOCK_STREAM, 0);
-  if (sock < 0) {
-    fprintf(stderr, "Failed creating socket\n");
-    return nullptr;
-  }
-  struct sockaddr_in serv_addr;
-  serv_addr.sin_family = AF_INET;
-  serv_addr.sin_port = htons(port);
-  if (inet_pton(AF_INET, ip.c_str(), &serv_addr.sin_addr) <= 0) {
-    fprintf(stderr, "Invalid address\n");
-    return nullptr;
-  }
-  if (connect(sock, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0) {
-    fprintf(stderr, "Failed connecting to server\n");
-    return nullptr;
-  }
-  auto node = new TCPNode(serv_addr, sock);
-  peers_.insert(std::make_pair(node, placement_info{0, 0}));
-  return node;
 }
 
 }  // namespace ROCKSDB_NAMESPACE

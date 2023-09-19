@@ -399,7 +399,9 @@ void DBImpl::BackgroundCallRemoteFlush(
 
   close(unpack_tcp_node.connection_info_.client_sockfd);
 
+#ifndef ROCKSDB_RDMA
   delete worker_node;
+#endif
 
   free(local_handler);
   bg_flush_scheduled_--;

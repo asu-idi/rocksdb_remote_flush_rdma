@@ -1248,7 +1248,7 @@ DEFINE_uint32(use_remote_flush,
 DEFINE_string(memnode_ip, "", "memnode ip");
 DEFINE_uint32(memnode_port, 0, "memnode port");
 DEFINE_string(local_ip, "", "local ip");
-DEFINE_int32(heartbeat_local_port, 10086, "local heartbeat port");
+DEFINE_int32(memnode_heartbeat_port, 10086, "memnode heartbeat port");
 DEFINE_bool(report_fillrandom_latency_and_load, false, "");
 
 static enum ROCKSDB_NAMESPACE::CompressionType StringToCompressionType(
@@ -4814,13 +4814,13 @@ class Benchmark {
     if (FLAGS_use_remote_flush) {
       size_t port = FLAGS_memnode_port;
       std::string ip = FLAGS_memnode_ip;
-      int32_t heartbeat_port = FLAGS_heartbeat_local_port;
+      int32_t heartbeat_port = FLAGS_memnode_heartbeat_port;
       db_.db->register_memnode(ip, port);
       std::string local_ip = FLAGS_local_ip;
       db_.db->register_local_ip(local_ip);
       std::call_once(remote_flush_port_once, []() {
-        pd_client = new PDClient(FLAGS_heartbeat_local_port);
-        pd_client->match_memnode_for_request();
+        pd_client = new PDClient(FLAGS_memnode_heartbeat_port);
+        pd_client->match_memnode_for_request(FLAGS_memnode_ip);
       });
       db_.db->register_pd_client(pd_client);
     }

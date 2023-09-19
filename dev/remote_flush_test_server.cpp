@@ -94,7 +94,7 @@ auto main(int argc, char** argv) -> signed {
   if (opt.server_remote_flush) {
     db->register_memnode("127.0.0.1", 9091);
     auto* pd_client = new PDClient{10089};
-    pd_client->match_memnode_for_request();
+    pd_client->match_memnode_for_request("127.0.0.1");
     db->register_pd_client(pd_client);
     printf("pd_client registered\n");
   }
