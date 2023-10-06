@@ -13,12 +13,14 @@
 #include <unistd.h>
 
 #include <cassert>
+#include <chrono>
 #include <cinttypes>
 #include <cstdint>
 #include <fstream>
 #include <functional>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <random>
 #include <sstream>
 
@@ -144,6 +146,8 @@ ColumnFamilyOptions::ColumnFamilyOptions(const Options& options)
     : ColumnFamilyOptions(*static_cast<const ColumnFamilyOptions*>(&options)) {}
 
 void ColumnFamilyOptions::PackLocal(TransferService* node) const {
+  std::chrono::time_point<std::chrono::system_clock> now =
+      std::chrono::system_clock::now();
   std::function<std::string()> gen = []() {
     std::string ret = "/tmp/ColumnFamilyOptions-";
     for (int i = 0; i < 10; i++) {
@@ -173,6 +177,11 @@ void ColumnFamilyOptions::PackLocal(TransferService* node) const {
     node->send(&path_len, sizeof(path_len));
     node->send(cf_path.path.c_str(), path_len);
   }
+  LOG_CERR("Options_file_::PackLocal time: ",
+           std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now() - now)
+               .count(),
+           "ms");
   // table_factory
   table_factory->PackLocal(node);
   LOG("Packaging ColumnFamilyOptions");

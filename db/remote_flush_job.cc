@@ -165,15 +165,37 @@ void RemoteFlushJob::PackLocal(TransferService* node) const {
   //   read_data(server_socket_fd, &msg, sizeof(size_t));
   // }
   // Pack clock
+  std::chrono::time_point<std::chrono::system_clock> now =
+      std::chrono::system_clock::now();
   clock_->PackLocal(node);
+  LOG_CERR("clock_::PackLocal time:",
+           std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now() - now)
+               .count());
+  now = std::chrono::system_clock::now();
   // Pack mems_
   size_t mem_size = mems_.size();
   node->send(&mem_size, sizeof(size_t));
   for (auto& memtable : mems_) {
     memtable->PackLocal(node);
   }
+  LOG_CERR("mems_::PackLocal time:",
+           std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now() - now)
+               .count());
+  now = std::chrono::system_clock::now();
   versions_->PackLocal(node);
+  LOG_CERR("verisons_::PackLocal time:",
+           std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now() - now)
+               .count());
+  now = std::chrono::system_clock::now();
   edit_->PackLocal(node);
+  LOG_CERR("edit_::PackLocal time:",
+           std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now() - now)
+               .count());
+  now = std::chrono::system_clock::now();
   if (job_context_ != nullptr) {
     LOG("jobcontext not null");
     size_t msg_ = 1;
@@ -184,12 +206,27 @@ void RemoteFlushJob::PackLocal(TransferService* node) const {
     size_t msg_ = 0;
     node->send(&msg_, sizeof(size_t));
   }
+  LOG_CERR("job_context_::PackLocal time:",
+           std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now() - now)
+               .count());
+  now = std::chrono::system_clock::now();
   // Pack db_impl_seqno_time_mapping_
   db_impl_seqno_time_mapping_.PackLocal(node);
   seqno_to_time_mapping_.PackLocal(node);
+  LOG_CERR("mapping_::PackLocal time:",
+           std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now() - now)
+               .count());
+  now = std::chrono::system_clock::now();
   db_mutex_->Lock();
   // Pack cfd_
   cfd_->PackLocal(node);
+  LOG_CERR("cfd_::PackLocal time:",
+           std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now() - now)
+               .count());
+  now = std::chrono::system_clock::now();
   assert(base_ != nullptr && base_->cfd() == cfd_);
   if (base_ != cfd_->current()) {
     size_t msg = 0;
@@ -200,8 +237,23 @@ void RemoteFlushJob::PackLocal(TransferService* node) const {
     node->send(&msg, sizeof(size_t));
   }
   db_mutex_->Unlock();
+  LOG_CERR("base_::PackLocal time:",
+           std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now() - now)
+               .count());
+  now = std::chrono::system_clock::now();
   meta_.PackLocal(node);
+  LOG_CERR("meta_::PackLocal time:",
+           std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now() - now)
+               .count());
+  now = std::chrono::system_clock::now();
   file_options_.PackLocal(node);
+  LOG_CERR("file_options_::PackLocal time:",
+           std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now() - now)
+               .count());
+  now = std::chrono::system_clock::now();
   // db_mutex_->Lock();
   // db_mutex_->Unlock();
   // mutable_cf_options_.PackLocal(server_socket_fd);
@@ -229,7 +281,11 @@ void RemoteFlushJob::PackLocal(TransferService* node) const {
     for (size_t i = 0; i < existing_snapshots_len; i++)
       node->send(&existing_snapshots_[i], sizeof(SequenceNumber));
   }
-
+  LOG_CERR("names_::PackLocal time:",
+           std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now() - now)
+               .count());
+  now = std::chrono::system_clock::now();
   if (snapshot_checker_ == nullptr) {
     size_t msg = 0xff;
     node->send(&msg, sizeof(size_t));
@@ -239,7 +295,17 @@ void RemoteFlushJob::PackLocal(TransferService* node) const {
     snapshot_checker_->PackLocal(node);
   }
   assert(stats_ == cfd_->ioptions()->stats);
+  LOG_CERR("snapshot_checker_::PackLocal time:",
+           std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now() - now)
+               .count());
+  now = std::chrono::system_clock::now();
   node->send(reinterpret_cast<const void*>(this), sizeof(RemoteFlushJob));
+  LOG_CERR("this_::PackLocal time:",
+           std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now() - now)
+               .count());
+  now = std::chrono::system_clock::now();
 }
 
 void* RemoteFlushJob::UnPackLocal(TransferService* node, DBImpl* remote_db) {
@@ -665,8 +731,15 @@ Status RemoteFlushJob::RunRemote(
 #else
     TCPTransferService transfer_service(&local_generator_node);
 #endif
+    LOG_CERR("time trace: start2connection-create:",
+             std::chrono::duration_cast<std::chrono::microseconds>(
+                 std::chrono::steady_clock::now() - start_time)
+                 .count());
     PackLocal(&transfer_service);
-
+    LOG_CERR("time trace: start2packlocal:",
+             std::chrono::duration_cast<std::chrono::microseconds>(
+                 std::chrono::steady_clock::now() - start_time)
+                 .count());
     int port = (*get_available_port)();
     LOG("Get available port from port list: ", port);
     transfer_service.send(&port, sizeof(int));
@@ -683,8 +756,18 @@ Status RemoteFlushJob::RunRemote(
                                                            remote_seg, 2));
 #endif
 
+    LOG_CERR("time trace: start2rdma-send-packlocal:",
+             std::chrono::duration_cast<std::chrono::microseconds>(
+                 std::chrono::steady_clock::now() - start_time)
+                 .count());
+
     // close connection with memnode
     assert(QuitMemNode().ok());
+
+    LOG_CERR("time trace: start2close-connection:",
+             std::chrono::duration_cast<std::chrono::microseconds>(
+                 std::chrono::steady_clock::now() - start_time)
+                 .count());
 
     std::chrono::time_point<std::chrono::steady_clock> end_time =
         std::chrono::steady_clock::now();
