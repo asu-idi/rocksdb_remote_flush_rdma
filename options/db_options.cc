@@ -778,43 +778,33 @@ ImmutableDBOptions::ImmutableDBOptions(const DBOptions& options)
 }
 
 void ImmutableDBOptions::PackLocal(TransferService* node) const {
-  std::function<std::string()> gen = []() {
-    std::string ret = "/tmp/DBOptions-";
-    for (int i = 0; i < 10; i++) {
-      std::random_device rd;
-      std::mt19937 generator(rd());
-      ret += std::to_string(generator() % 10);
-    }
-    return ret;
-  };
-  std::string file_name = gen();
   DBOptions dboptions = BuildDBOptions(*this, MutableDBOptions());
   std::vector<std::string> cf_names_;
   std::vector<ColumnFamilyOptions> cf_opts_;
   cf_names_.push_back("default");
   cf_opts_.push_back(ColumnFamilyOptions());
-  Status ret = PersistRocksDBOptions(dboptions, cf_names_, cf_opts_, file_name,
-                                     Env::Default()->GetFileSystem().get());
+  std::string db_options_data_;
+  Status ret = MemPersistRocksDBOptions(dboptions, cf_names_, cf_opts_,
+                                        db_options_data_);
   assert(ret.ok());
-  node->send(file_name.c_str(), file_name.length());
-  LOG("Packaging ImmutableDBOptions to file:", file_name.c_str());
+  size_t len = db_options_data_.length();
+  node->send(&len, sizeof(size_t));
+  node->send(db_options_data_.data(), db_options_data_.length());
 }
 
 void* ImmutableDBOptions::UnPackLocal(TransferService* node) {
-  size_t recv_length = std::string("/tmp/DBOptions-").length() + 10;
-  void* mem = malloc(recv_length);
-  node->receive(&mem, recv_length);
-  std::string file_name =
-      std::string(reinterpret_cast<char*>(mem), recv_length);
-  free(mem);
-  LOG("UnPackaging ImmutableDBOptions from file:", file_name.c_str());
+  size_t len = 0;
+  node->receive(&len, sizeof(size_t));
+  std::string mem;
+  mem.resize(len);
+  node->receive(mem.data(), len);
   DBOptions db_options = DBOptions();
   ConfigOptions config_options;
   std::vector<ColumnFamilyDescriptor> loaded_cf_descs;
   Status ret = Status::Busy();
   while (!ret.ok()) {
-    ret = LoadOptionsFromFile(config_options, file_name, &db_options,
-                              &loaded_cf_descs);
+    ret =
+        LoadOptionsFromMem(config_options, mem, &db_options, &loaded_cf_descs);
   }
   auto* immutable_dboptions = new ImmutableDBOptions();
   *immutable_dboptions = BuildImmutableDBOptions(db_options);

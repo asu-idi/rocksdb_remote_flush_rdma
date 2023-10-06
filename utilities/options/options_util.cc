@@ -41,6 +41,34 @@ Status LoadOptionsFromFile(const ConfigOptions& config_options,
   return Status::OK();
 }
 
+Status LoadOptionsFromMem(const ConfigOptions& config_options,
+                          const std::string& data, DBOptions* db_options,
+                          std::vector<ColumnFamilyDescriptor>* cf_descs,
+                          std::shared_ptr<Cache>* cache) {
+  RocksDBOptionsParser parser;
+  Status s = parser.MemParse(config_options, data);
+  if (!s.ok()) {
+    return s;
+  }
+  *db_options = *parser.db_opt();
+  const std::vector<std::string>& cf_names = *parser.cf_names();
+  const std::vector<ColumnFamilyOptions>& cf_opts = *parser.cf_opts();
+  cf_descs->clear();
+  for (size_t i = 0; i < cf_opts.size(); ++i) {
+    cf_descs->push_back({cf_names[i], cf_opts[i]});
+    if (cache != nullptr) {
+      TableFactory* tf = cf_opts[i].table_factory.get();
+      if (tf != nullptr) {
+        auto* opts = tf->GetOptions<BlockBasedTableOptions>();
+        if (opts != nullptr) {
+          opts->block_cache = *cache;
+        }
+      }
+    }
+  }
+  return Status::OK();
+}
+
 Status GetLatestOptionsFileName(const std::string& dbpath, Env* env,
                                 std::string* options_file_name) {
   Status s;

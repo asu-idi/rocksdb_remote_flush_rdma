@@ -144,26 +144,18 @@ ColumnFamilyOptions::ColumnFamilyOptions(const Options& options)
     : ColumnFamilyOptions(*static_cast<const ColumnFamilyOptions*>(&options)) {}
 
 void ColumnFamilyOptions::PackLocal(TransferService* node) const {
-  std::function<std::string()> gen = []() {
-    std::string ret = "/tmp/ColumnFamilyOptions-";
-    for (int i = 0; i < 10; i++) {
-      std::random_device rd;
-      std::mt19937 generator(rd());
-      ret += std::to_string(generator() % 10);
-    }
-    return ret;
-  };
-  std::string file_name = gen();
   DBOptions db_options = DBOptions();
   std::vector<std::string> cf_names_;
   std::vector<ColumnFamilyOptions> cf_options_;
   cf_names_.push_back("default");
   cf_options_.push_back(*this);
+  std::string data;
   Status ret =
-      PersistRocksDBOptions(db_options, cf_names_, cf_options_, file_name,
-                            Env::Default()->GetFileSystem().get());
+      MemPersistRocksDBOptions(db_options, cf_names_, cf_options_, data);
   assert(ret.ok());
-  node->send(file_name.c_str(), file_name.length());
+  size_t len = data.length();
+  node->send(&len, sizeof(len));
+  node->send(data.c_str(), len);
   LOG("Packaging ColumnFamilyOptions to file:", file_name.c_str());
   size_t cf_path_size = cf_paths.size();
   node->send(&cf_path_size, sizeof(cf_path_size));
@@ -179,20 +171,19 @@ void ColumnFamilyOptions::PackLocal(TransferService* node) const {
 }
 
 void* ColumnFamilyOptions::UnPackLocal(TransferService* node) {
-  size_t recv_length = std::string("/tmp/ColumnFamilyOptions-").length() + 10;
-  void* mem = malloc(recv_length);
-  node->receive(mem, recv_length);
-  std::string file_name = std::string(static_cast<char*>(mem), recv_length);
-  free(mem);
-  LOG("Unpackaging ColumnFamilyOptions from file:", file_name.c_str());
+  size_t len = 0;
+  node->receive(&len, sizeof(size_t));
+  std::string mem;
+  mem.resize(len);
+  node->receive(mem.data(), len);
   DBOptions db_options = DBOptions();
   ConfigOptions config_options;
   std::vector<ColumnFamilyDescriptor> loaded_cf_descs;
 
   Status ret = Status::Busy();
   while (!ret.ok()) {
-    ret = LoadOptionsFromFile(config_options, file_name, &db_options,
-                              &loaded_cf_descs);
+    ret =
+        LoadOptionsFromMem(config_options, mem, &db_options, &loaded_cf_descs);
   }
   auto* options = new ColumnFamilyOptions();
   LOG("Unpackaging ColumnFamilyOptions");
