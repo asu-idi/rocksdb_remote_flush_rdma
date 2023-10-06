@@ -244,6 +244,8 @@ ReadOnlyInlineSkipList<Comparator>::ReadOnlyInlineSkipList(
     const InlineSkipList<Comparator>& raw_skip_list_, const Comparator cmp,
     size_t protection_bytes_per_key) {
   LOG("construct ReadOnlyInlineSkipList");
+  std::chrono::steady_clock::time_point start =
+      std::chrono::steady_clock::now();
   typename InlineSkipList<Comparator>::Iterator iter(&raw_skip_list_);
   int64_t total_len = 0;
   iter.SeekToFirst();
@@ -271,6 +273,12 @@ ReadOnlyInlineSkipList<Comparator>::ReadOnlyInlineSkipList(
     iter.Next();
   }
   memcpy(data_ptr, &magic, sizeof(size_t));
+  std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+  LOG_CERR("ReadOnlyInlineSkipList::ReadOnlyInlineSkipList: time: ",
+           std::chrono::duration_cast<std::chrono::microseconds>(end - start)
+                   .count() /
+               1000.0,
+           "ms, total_len:", total_len_);
   LOG("construct ReadOnlyInlineSkipList done");
 }
 
