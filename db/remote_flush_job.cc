@@ -642,6 +642,10 @@ Status RemoteFlushJob::RunRemote(
     LOG(table_properties_.ToString());
     db_mutex_->Unlock();
     // We create connection with one memnode and send package to it
+
+    std::chrono::time_point<std::chrono::steady_clock> start_time =
+        std::chrono::steady_clock::now();
+
     assert(MatchMemNode(memnodes_) == Status::OK());
     // TODO(rdma): create a rdma connection with memnode, choose from memnodes_
     // and store it in RemoteFlushJob::local_generator_rdma_client
@@ -682,12 +686,18 @@ Status RemoteFlushJob::RunRemote(
     // close connection with memnode
     assert(QuitMemNode().ok());
 
+    std::chrono::time_point<std::chrono::steady_clock> end_time =
+        std::chrono::steady_clock::now();
+
     // s = WriteLevel0Table();
     // assert(s == Status::OK());
 
     // We receive some metadata directly from remote worker
     // Or maybe we could receive from memnode
     assert(MatchRemoteWorker(port) == Status::OK());
+
+    std::chrono::time_point<std::chrono::steady_clock> end_time2 =
+        std::chrono::steady_clock::now();
 
     TCPTransferService transfer_service2(&local_generator_node);
     UnPackRemote(&transfer_service2);
@@ -707,7 +717,23 @@ Status RemoteFlushJob::RunRemote(
         /*allow_unprepared_value*/ false));
     // close connection with remote worker
     assert(QuitRemoteWorker() == Status::OK());
+
+    std::chrono::time_point<std::chrono::steady_clock> end_time3 =
+        std::chrono::steady_clock::now();
+
     db_mutex_->Lock();
+    LOG_CERR("time trace: send-data:",
+             std::chrono::duration_cast<std::chrono::microseconds>(end_time -
+                                                                   start_time)
+                 .count(),
+             " sleep-wait:",
+             std::chrono::duration_cast<std::chrono::microseconds>(end_time2 -
+                                                                   end_time)
+                 .count(),
+             " recv-meta:",
+             std::chrono::duration_cast<std::chrono::microseconds>(end_time3 -
+                                                                   end_time2)
+                 .count());
 
     LOG("Run job: write l0table done");
     LOG(edit_->DebugString());

@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
   int heartbeatport = (argc == 3) ? std::atoi(argv[2]) : 10086;
   rocksdb::RemoteFlushJobPD& memnode = rocksdb::RemoteFlushJobPD::Instance();
   // TODO(rdma): change this on your machine
-  memnode.register_flush_job_executor("127.0.0.1", 9092);
+  memnode.register_flush_job_executor("10.10.1.4", 9092);
   memnode.opentcp(port, heartbeatport);
   while (true) {
     std::string command;
