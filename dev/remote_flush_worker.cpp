@@ -23,9 +23,8 @@
 #include "util/cast_util.h"
 #include "utilities/merge_operators.h"
 #define ROOT_DIR "/root/code/rocksdb_remote_flush/"
-using namespace std;
-using namespace rocksdb;
 
+namespace ROCKSDB_NAMESPACE {
 signed main(signed argc, char** argv) {
   if (argc != 4 && argc != 5) {
     std::cout << "Usage: " << argv[0]
@@ -66,3 +65,4 @@ signed main(signed argc, char** argv) {
   delete db;
   return 0;
 }
+}  // namespace ROCKSDB_NAMESPACE
