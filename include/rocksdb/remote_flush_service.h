@@ -174,19 +174,10 @@ struct placement_info {
 
 // PD listen on port 10086, receive FlushRequest from generator, receive
 // HeartBeat from worker
-struct PlacementDriver {
-  const int max_background_job_num_{32};
-  const int max_hdfs_io_{100 << 20};  // MB/s
-  std::queue<TCPNode *> available_workers_;
-  std::vector<TCPNode *> workers_;
-  std::vector<TCPNode *> generators_;
-  std::unordered_map<TCPNode *, placement_info> peers_;
-  TCPNode *choose_worker(const placement_info &);
-  void step(bool, size_t, placement_info);
-  void poll_events(int port);
-};
 
+struct PlacementDriver;
 class RDMANode {
+  friend class PlacementDriver;
   friend class RDMAServer;
   friend class RDMAClient;
   friend class RemoteFlushJob;
@@ -210,6 +201,7 @@ class RDMANode {
     struct ibv_cq *cq;  // CQ handle
     struct ibv_qp *qp;  // QP handle
     int sock;           // TCP socket file descriptor
+    sockaddr_in addr;   // tcp connection address for name resolution
   };
   // structure of system resources
   struct resources {
@@ -238,7 +230,8 @@ class RDMANode {
   int modify_qp_to_rts(struct ibv_qp *qp);
   int resources_destroy();
   virtual void after_connect_qp(struct rdma_connection *idx) = 0;
-  std::unique_ptr<std::mutex> mtx;
+  std::unique_ptr<std::mutex> conns_mtx;
+  std::unique_ptr<std::mutex> executor_table_mtx;
 
  public:
   RDMANode();
@@ -270,12 +263,24 @@ class RDMANode {
   size_t buf_size;
   struct config_t config;
 };
+struct PlacementDriver {
+  const int max_background_job_num_{32};
+  const int max_hdfs_io_{100 << 20};  // MB/s
+  std::queue<TCPNode *> available_workers_;
+  std::vector<TCPNode *> workers_;
+  std::vector<TCPNode *> generators_;
+  std::unordered_map<TCPNode *, placement_info> peers_;
+  TCPNode *choose_worker(const placement_info &);
+  struct RDMANode::rdma_connection *choose_worker_rdma(const placement_info &);
+  void step(bool, size_t, placement_info);
+  void poll_events(int port);
+};
 
 class RDMAServer : public RDMANode {
   struct executor_info {
     int status;
-    std::queue<std::pair<size_t, size_t>> flush_job_queue;
-    std::pair<size_t, size_t> current_job;
+    std::queue<std::pair<long long, long long>> flush_job_queue;
+    std::pair<long long, long long> current_job;
   };
 
  public:
@@ -293,18 +298,49 @@ class RDMAServer : public RDMANode {
   void disconnect_service(struct rdma_connection *idx);
   void register_executor_service(struct rdma_connection *idx);
   void wait_for_job_service(struct rdma_connection *idx);
-  std::map<std::pair<size_t, size_t>, int> mem_seg;
+  std::unique_ptr<std::mutex> mempool_mtx;
+  std::set<std::pair<long long /*offset*/, long long /*len*/>> pinned_mem;
+  inline long long pin_mem(long long size) {
+    std::lock_guard<std::mutex> lck(*mempool_mtx);
+    long long last_end = 0;
+    for (auto iter : pinned_mem) {
+      long long front_len = iter.first - last_end;
+      if (front_len >= size) {
+        pinned_mem.insert(std::make_pair(last_end, size));
+        return last_end;
+      } else {
+        last_end = iter.first + iter.second;
+      }
+    }
+    if (buf_size - last_end >= size) {
+      pinned_mem.insert(std::make_pair(last_end, size));
+      return last_end;
+    }
+    return -1;
+  }
+  inline bool unpin_mem(long long offset, long long size) {
+    std::lock_guard<std::mutex> lck(*mempool_mtx);
+    auto iter = pinned_mem.find(std::make_pair(offset, size));
+    if (iter != pinned_mem.end()) {
+      pinned_mem.erase(iter);
+      return true;
+    }
+    return false;
+  }
+
   std::vector<std::thread *> threads;
   std::unordered_map<struct rdma_connection *, executor_info> executors_;
   void after_connect_qp(struct rdma_connection *idx) override {
     auto ser = [this, idx] {
       while (true)
-        if (!this->service(idx)) break;
+        if (!service(idx)) break;
     };
     threads.push_back(new std::thread(ser));
     threads.back()->detach();
   }
   PlacementDriver pd_;
+  struct rdma_connection *choose_flush_job_executor(
+      const std::pair<long long, long long> &job_mem_tobe_registered);
 };
 
 class RDMAClient : public RDMANode {
@@ -313,8 +349,17 @@ class RDMAClient : public RDMANode {
   ~RDMAClient();
   std::pair<long long, long long> allocate_mem_request(
       struct rdma_connection *idx, size_t size);
-  // type == 0: free; type == 1: accessible to generator; type == 2: accessible
-  // to worker.
+  // qry_type:
+  // type == 0 client_request_disconnect
+  // type == 1 client_send_memtable
+  // type == 2 client_send_metadata_for_remote_flush
+  // type == 3 client_recv_memtable_for_local_flush
+  // type == 4 client_send_request_for_memtable_read
+  // type == 5 memnode_send_package_for_remote_flush
+  // type == fd memnode_recv_installinfo_from_worker
+  // type == fe client_recv_installinfo_for_remote_flush
+  // type == ff client_send_sgn_flush_calculation
+
   bool modify_mem_request(struct rdma_connection *idx,
                           std::pair<long long, long long> offset, int type);
   bool disconnect_request(struct rdma_connection *idx);

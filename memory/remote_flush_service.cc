@@ -22,6 +22,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
@@ -320,7 +321,8 @@ RDMANode::RDMANode() {
                       -1,  // gid_idx
                       100, 100, 100};
   res = new resources();
-  mtx = std::make_unique<std::mutex>();
+  conns_mtx = std::make_unique<std::mutex>();
+  executor_table_mtx = std::make_unique<std::mutex>();
 }
 
 RDMANode::~RDMANode() {
@@ -377,12 +379,18 @@ std::vector<struct RDMANode::rdma_connection *> RDMANode::sock_connect(
         sockfd = -1;
         if (bind(listenfd, iterator->ai_addr, iterator->ai_addrlen))
           goto sock_connect_exit;
-        listen(listenfd, 1);
+        listen(listenfd, 5);
         while (true) {
-          sockfd = accept(listenfd, nullptr, 0);
+          struct sockaddr_in client_address;
+          socklen_t client_address_len = sizeof(client_address);
+          sockfd = accept(listenfd, (struct sockaddr *)&client_address,
+                          &client_address_len);
           if (sockfd >= 0) {
             auto conn = connect_qp(sockfd);
-            if (conn) successful_conn.push_back(conn);
+            if (conn) {
+              conn->addr = client_address;
+              successful_conn.push_back(conn);
+            }
           }
         }
       }
@@ -756,7 +764,10 @@ connect_qp_exit:
     delete conn;
     return nullptr;
   } else {
-    res->conns.push_back(conn);
+    {
+      std::lock_guard<std::mutex> lk(*conns_mtx);
+      res->conns.push_back(conn);
+    }
     after_connect_qp(conn);
   }
   return conn;
@@ -764,25 +775,28 @@ connect_qp_exit:
 
 int RDMANode::resources_destroy() {
   int rc = 0;
-  for (auto &conn : res->conns) {
-    if (conn->qp)
-      if (ibv_destroy_qp(conn->qp)) {
-        fprintf(stderr, "failed to destroy QP\n");
-        rc = 1;
-      }
-    if (conn->cq)
-      if (ibv_destroy_cq(conn->cq)) {
-        fprintf(stderr, "failed to destroy CQ\n");
-        rc = 1;
-      }
-    if (conn->sock >= 0)
-      if (close(conn->sock)) {
-        fprintf(stderr, "failed to close socket\n");
-        rc = 1;
-      }
-    delete conn;
+  {
+    std::lock_guard<std::mutex> lk(*conns_mtx);
+    for (auto &conn : res->conns) {
+      if (conn->qp)
+        if (ibv_destroy_qp(conn->qp)) {
+          fprintf(stderr, "failed to destroy QP\n");
+          rc = 1;
+        }
+      if (conn->cq)
+        if (ibv_destroy_cq(conn->cq)) {
+          fprintf(stderr, "failed to destroy CQ\n");
+          rc = 1;
+        }
+      if (conn->sock >= 0)
+        if (close(conn->sock)) {
+          fprintf(stderr, "failed to close socket\n");
+          rc = 1;
+        }
+      delete conn;
+    }
+    res->conns.clear();
   }
-  res->conns.clear();
   if (res->mr)
     if (ibv_dereg_mr(res->mr)) {
       fprintf(stderr, "failed to deregister MR\n");
@@ -867,7 +881,9 @@ int RDMANode::modify_qp_to_rts(struct ibv_qp *qp) {
   return rc;
 }
 
-RDMAServer::RDMAServer() : RDMANode() {}
+RDMAServer::RDMAServer() : RDMANode() {
+  mempool_mtx = std::make_unique<std::mutex>();
+}
 RDMAClient::RDMAClient() : RDMANode() {}
 std::pair<long long, long long> RDMAClient::allocate_mem_request(
     struct rdma_connection *conn, size_t size) {
@@ -914,33 +930,16 @@ void RDMAServer::allocate_mem_service(struct rdma_connection *conn) {
     else
       rc = read_bytes;
   }
+
+  int failed_try = 1;
   while (true) {
-    std::lock_guard<std::mutex> lk(*mtx);
-    bool flag = false;
-    if (mem_seg.empty()) {
-      if (size <= buf_size)
-        ret[0] = 0, ret[1] = size, flag = true;
-      else {
-        fprintf(stderr, "Memory node does not have enough capacity\n");
-        return;
-      }
+    long long pin_begin = pin_mem(size);
+    if (pin_begin == -1) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100 * failed_try));
+      fprintf(stderr, "Failed to pin MR memory, retrying\n");
     } else {
-      if (size <= mem_seg.begin()->first.first)
-        ret[0] = 0, ret[1] = size, flag = true;
-      else
-        for (auto i = mem_seg.begin(); i != mem_seg.end(); i++) {
-          auto j = i;
-          j++;
-          if (i->first.second + size <=
-              (j != mem_seg.end() ? j->first.first : buf_size)) {
-            ret[0] = i->first.second, ret[1] = i->first.second + size,
-            flag = true;
-            break;
-          }
-        }
-    }
-    if (flag) {
-      mem_seg[std::make_pair(ret[0], ret[1])] = 1;
+      ret[0] = pin_begin;
+      ret[1] = pin_begin + (long long)size;
       break;
     }
   }
@@ -983,7 +982,7 @@ bool RDMAClient::modify_mem_request(struct rdma_connection *conn,
 }
 void RDMAServer::modify_mem_service(struct rdma_connection *conn) {
   long long input[3];
-  bool ret = false;
+  bool ret = true;
   int remote_size = sizeof(long long) * 3, local_size = sizeof(bool);
   int rc = 0;
   int read_bytes = 0;
@@ -998,32 +997,32 @@ void RDMAServer::modify_mem_service(struct rdma_connection *conn) {
       rc = read_bytes;
   }
   {
-    std::lock_guard<std::mutex> lk(*mtx);
-    auto iter = mem_seg.find(std::make_pair(input[0], input[1]));
-    if (iter == mem_seg.end()) {
+    mempool_mtx->lock();
+    auto iter = pinned_mem.find(std::make_pair(input[0], input[1]));
+    if (iter == pinned_mem.end()) {
+      // not found in mempool, this should not happen
       ret = false;
       fprintf(stderr, "Memory node cannot find memory segment\n");
-    } else if (input[2] == 0 && iter->second == 2) {
+      mempool_mtx->unlock();
+    } else if (input[2] == 0) {
+      // free meta on memnode's pinned mem
+      std::lock_guard<std::mutex> lk2(*executor_table_mtx);
+      ret = true;
+      mempool_mtx->unlock();
+      unpin_mem(input[0], input[1] - input[0]);
       for (auto &it : executors_) {
-        if (it.second.current_job == iter->first) {
+        if (it.second.current_job == *iter) {
           ret = true;
-          mem_seg.erase(iter);
           it.second.status--;
           break;
         }
       }
-    } else if ((input[2] == 2 && iter->second == 1)) {
-      executor_info *executor = nullptr;
-      for (auto it = executors_.begin(); it != executors_.end(); it++)
-        if (executor == nullptr || it->second.status < executor->status)
-          executor = &(it->second);
-      if (executor != nullptr) {
-        ret = true;
-        iter->second = input[2];
-        executor->status++;
-        executor->flush_job_queue.push(iter->first);
-      }
+    } else if (input[2] == 2) {
+      mempool_mtx->unlock();
+      // choose an execcutor to flush, decided by pd_ before.
+      if (choose_flush_job_executor(*iter) == nullptr) ret = false;
     } else {
+      mempool_mtx->unlock();
       ret = false;
       fprintf(stderr, "Unexpected memory segment state\n");
     }
@@ -1034,6 +1033,32 @@ void RDMAServer::modify_mem_service(struct rdma_connection *conn) {
   else
     rc = 0;
 }
+
+struct RDMANode::rdma_connection *RDMAServer::choose_flush_job_executor(
+    const std::pair<long long, long long> &job_mem_tobe_registered) {
+  std::lock_guard<std::mutex> lk2(*executor_table_mtx);
+  bool ret = true;
+  if (!pd_.available_workers_.empty()) {
+    TCPNode *choose_by_policy = pd_.available_workers_.front();
+    pd_.available_workers_.pop();
+    char choose_client_ip[INET_ADDRSTRLEN];
+    inet_ntop(AF_INET, &choose_by_policy->connection_info_.sin_addr.sin_addr,
+              choose_client_ip, INET_ADDRSTRLEN);
+    // find executor by ip
+    for (auto &it : executors_) {
+      char client_ip[INET_ADDRSTRLEN];
+      inet_ntop(AF_INET, &it.first->addr.sin_addr, client_ip, INET_ADDRSTRLEN);
+      if (strcmp(client_ip, choose_client_ip) == 0) {
+        it.second.status++;
+        it.second.flush_job_queue.push(job_mem_tobe_registered);
+        return it.first;
+      }
+    }
+  } else {
+  }
+  return nullptr;
+}
+
 bool RDMAClient::disconnect_request(struct rdma_connection *conn) {
   char req_type = 0;
   bool ret = false;
@@ -1065,7 +1090,7 @@ bool RDMAClient::disconnect_request(struct rdma_connection *conn) {
       conn->sock = -1;
     }
     delete conn;
-    std::lock_guard<std::mutex> lk(*mtx);
+    std::lock_guard<std::mutex> lk(*conns_mtx);
     for (auto iter = res->conns.begin(); iter != res->conns.end(); iter++)
       if (*iter == conn) {
         res->conns.erase(iter);
@@ -1092,7 +1117,7 @@ void RDMAServer::disconnect_service(struct rdma_connection *conn) {
     conn->sock = -1;
   }
   delete conn;
-  std::lock_guard<std::mutex> lk(*mtx);
+  std::lock_guard<std::mutex> lk(*conns_mtx);
   for (auto iter = res->conns.begin(); iter != res->conns.end(); iter++)
     if (*iter == conn) {
       res->conns.erase(iter);
@@ -1126,7 +1151,7 @@ void RDMAServer::register_executor_service(struct rdma_connection *conn) {
   bool ret = true;
   int local_size = sizeof(bool);
   int rc = 0;
-  std::lock_guard<std::mutex> lk(*mtx);
+  std::lock_guard<std::mutex> lk(*executor_table_mtx);
   executors_[conn].status = true;
   rc = write(conn->sock, reinterpret_cast<void *>(&ret), local_size);
   if (rc < local_size)
@@ -1163,7 +1188,7 @@ void RDMAServer::wait_for_job_service(struct rdma_connection *conn) {
   int local_size = sizeof(long long) * 2;
   int rc = 0;
   while (true) {
-    std::lock_guard<std::mutex> lk(*mtx);
+    std::lock_guard<std::mutex> lk(*executor_table_mtx);
     if (!executors_[conn].flush_job_queue.empty()) {
       ret[0] = executors_[conn].flush_job_queue.front().first;
       ret[1] = executors_[conn].flush_job_queue.front().second;
