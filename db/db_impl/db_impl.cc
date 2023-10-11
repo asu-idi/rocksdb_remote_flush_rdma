@@ -442,23 +442,17 @@ Status DBImpl::ListenAndScheduleFlushJob(int port) {
   mutex_.Unlock();
 
 #ifdef ROCKSDB_RDMA
-  RDMAClient *worker_node = new RDMAClient(), *listen_node = new RDMAClient();
+  auto *worker_node = new RDMAClient(), *listen_node = new RDMAClient();
   worker_node->resources_create(1ull << 27);
   worker_node->rdma_mem_.init(worker_node->buf_size);
   listen_node->resources_create(1ull << 20);
   listen_node->rdma_mem_.init(listen_node->buf_size);
   std::vector<std::thread*> threads;
-  for (int i = 0; i < memnodes_ip_port_.size(); i++) {
-    auto worker_conn = worker_node
-                           ->sock_connect(memnodes_ip_port_[i].first,
-                                          memnodes_ip_port_[i].second)
-                           .front();
-    auto listen_conn = listen_node
-                           ->sock_connect(memnodes_ip_port_[i].first,
-                                          memnodes_ip_port_[i].second)
-                           .front();
+  for (auto& i : memnodes_ip_port_) {
+    auto worker_conn = worker_node->sock_connect(i.first, i.second);
+    auto listen_conn = listen_node->sock_connect(i.first, i.second);
     listen_node->register_executor_request(listen_conn);
-    auto wait_for_jobs = [this, worker_node, listen_node, i, worker_conn,
+    auto wait_for_jobs = [this, worker_node, listen_node, &i, worker_conn,
                           listen_conn] {
       while (true) {
         auto remote_seg = listen_node->wait_for_job_request(listen_conn);

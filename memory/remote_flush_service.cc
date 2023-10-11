@@ -338,7 +338,7 @@ RDMAClient::~RDMAClient() {
   delete res;
 }
 
-std::vector<struct RDMANode::rdma_connection *> RDMANode::sock_connect(
+struct RDMANode::rdma_connection *RDMANode::sock_connect(
     const std::string &server_name, u_int32_t tcp_port) {
   const char *servername = server_name != "" ? server_name.c_str() : nullptr;
   int port = tcp_port;
@@ -369,9 +369,6 @@ std::vector<struct RDMANode::rdma_connection *> RDMANode::sock_connect(
           // LOG("failed connect \n");
           close(sockfd);
           sockfd = -1;
-        } else {
-          auto conn = connect_qp(sockfd);
-          if (conn) successful_conn.push_back(conn);
         }
       } else {
         // Server mode. Set up listening socket an accept a connection
@@ -399,15 +396,24 @@ std::vector<struct RDMANode::rdma_connection *> RDMANode::sock_connect(
 sock_connect_exit:
   if (listenfd) close(listenfd);
   if (resolved_addr) freeaddrinfo(resolved_addr);
-  if (successful_conn.size() <= 0) {
+  if (sockfd < 0) {
     if (servername) {
       fprintf(stderr, "Couldn't connect to %s:%d\n", servername, port);
+      return nullptr;
     } else {
       perror("server accept");
       fprintf(stderr, "accept() failed\n");
+      return nullptr;
+    }
+  } else {
+    if (servername) {
+      auto conn = connect_qp(sockfd);
+      return conn;
+    } else {
+      fprintf(stderr, "server mode quit normally");
+      return nullptr;
     }
   }
-  return successful_conn;
 }
 
 int RDMANode::sock_sync_data(int sock, int xfer_size, const char *local_data,

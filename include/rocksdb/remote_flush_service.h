@@ -237,8 +237,8 @@ class RDMANode {
   RDMANode();
   virtual ~RDMANode() = 0;
   int resources_create(size_t size);
-  std::vector<struct rdma_connection *> sock_connect(
-      const std::string &server_name = "", u_int32_t tcp_port = 9091);
+  struct rdma_connection *sock_connect(const std::string &server_name = "",
+                                       u_int32_t tcp_port = 9091);
   int send(struct rdma_connection *idx, size_t msg_size,
            long long local_offset) {
     return post_send(idx, msg_size, IBV_WR_SEND, local_offset, 0);
@@ -369,7 +369,6 @@ class RDMAClient : public RDMANode {
   size_t port = -1;
   RegularMemNode memory_;
   RDMAMemNode rdma_mem_;
-  std::map<rdma_connection *, std::mutex> conn_mtx_;
 
  private:
   void after_connect_qp(struct rdma_connection *idx) override {}

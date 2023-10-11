@@ -2773,9 +2773,6 @@ class DBImpl : public DB {
                                int conn_cnt) override {
     std::lock_guard<std::mutex> lock(transfer_mutex_);
     memnodes_ip_port_.push_back(std::make_pair(ip, port));
-#ifdef ROCKSDB_RDMA
-    for (int i = 0; i < conn_cnt; i++) rdma_client_->sock_connect(ip, port);
-#endif
   }
 
   inline void unregister_memnode(const std::string& ip, size_t port) override {

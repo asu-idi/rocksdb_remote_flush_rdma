@@ -642,18 +642,7 @@ Status RemoteFlushJob::RunRemote(
     LOG(table_properties_.ToString());
     db_mutex_->Unlock();
     // We create connection with one memnode and send package to it
-    assert(MatchMemNode(memnodes_) == Status::OK());
-    // TODO(rdma): create a rdma connection with memnode, choose from memnodes_
-    // and store it in RemoteFlushJob::local_generator_rdma_client
-
-    // char* buf = rdma->get_buf();
-    // PackLocal(buf);
-    // auto mem_seg = rdma->allocate_mem_request(0, buf - rdma->get_buf());
-    // rdma->rdma_write(0, mem_seg.second - mem_seg.first, 0, mem_seg.first);
-    // assert(rdma->poll_completion(0) == 0);
-    // assert(rdma->modify_mem_request(0, mem_seg, 2));
-    // long long rdma_info[2] = {mem_seg.first, mem_seg.second};
-    // send(server_socket_fd_, rdma_info, 2 * sizeof(long long), 0);
+    assert(MatchMemNode(memnodes_) == Status::OK());  // todo: false tolerant
 
 #ifdef ROCKSDB_RDMA
     auto offset = local_generator_rdma_client->rdma_mem_.allocate(1ull << 27);
@@ -801,8 +790,17 @@ Status RemoteFlushJob::QuitMemNode() {
   local_generator_node.connection_info_.client_sockfd = 0;
   return Status::OK();
 #else
-  local_generator_rdma_client->conn_mtx_[rdma_conn].unlock();
-  return Status::OK();
+  bool freed = true;
+  if (rdma_conn->qp) ibv_destroy_qp(rdma_conn->qp);
+  if (rdma_conn->cq) ibv_destroy_cq(rdma_conn->cq);
+  if (rdma_conn->sock >= 0) {
+    if (close(rdma_conn->sock)) {
+      fprintf(stderr, "failed to close socket\n");
+      freed = false;
+    }
+  }
+  delete rdma_conn;
+  return freed ? Status::OK() : Status::IOError("failed to close socket");
 #endif
 }
 Status RemoteFlushJob::MatchMemNode(
@@ -810,14 +808,14 @@ Status RemoteFlushJob::MatchMemNode(
   assert(ip_port_list->size() != 0);
   int choosen = (int)(rand() % ip_port_list->size());
 #ifdef ROCKSDB_RDMA
-  int chosen = (int)(rand() % local_generator_rdma_client->res->conns.size());
-  for (int i = 0;; i++) {
-    rdma_conn = local_generator_rdma_client->res
-                    ->conns[(chosen + i) %
-                            local_generator_rdma_client->res->conns.size()];
-    if (local_generator_rdma_client->conn_mtx_[rdma_conn].try_lock())
-      return Status::OK();
-  }
+  rdma_conn = local_generator_rdma_client->sock_connect(
+      (*ip_port_list)[choosen].first.c_str(), (*ip_port_list)[choosen].second);
+  if (rdma_conn == nullptr) {
+    LOG_CERR("sock_connect failed");
+    return Status::IOError("sock_connect failed");
+  } else
+    return Status::OK();
+
 #else
   local_generator_node.~TCPNode();
   memset(reinterpret_cast<void*>(&local_generator_node), 0, sizeof(TCPNode));
