@@ -47,6 +47,7 @@
 
 #include "rocksdb/customizable.h"
 #include "rocksdb/logger.hpp"
+#include "rocksdb/macro.hpp"
 #include "rocksdb/remote_flush_service.h"
 #include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/slice.h"
@@ -201,7 +202,9 @@ class MemTableRep {
   // does nothing.  After MarkReadOnly() is called, this table rep will
   // not be written to (ie No more calls to Allocate(), Insert(),
   // or any writes done directly to entries accessed through the iterator.)
-  virtual void MarkReadOnly() { LOG("Default MarkReadOnly"); }
+  virtual void MarkReadOnly(uint64_t, int) {
+    LOG_CERR("MemTableRep MarkReadOnly");
+  }
 
   // Notify this table rep that it has been flushed to stable storage.
   // By default, does nothing.

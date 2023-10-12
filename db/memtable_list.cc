@@ -34,6 +34,8 @@ class Mutex;
 class VersionSet;
 
 void MemTableListVersion::AddMemTable(MemTable* m) {
+  LOG_CERR("MemTableListVersion::AddMemTable: ", m->GetID(), ' ',
+           m->ApproximateMemoryUsage());
   memlist_.push_front(m);
   *parent_memtable_list_memory_usage_ += m->ApproximateMemoryUsage();
 }

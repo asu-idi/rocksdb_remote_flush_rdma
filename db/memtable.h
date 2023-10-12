@@ -492,7 +492,8 @@ class MemTable {
   // After MarkImmutable() is called, you should not attempt to
   // write anything to this MemTable().  (Ie. do not call Add() or Update()).
   void MarkImmutable() {
-    table_->MarkReadOnly();
+    std::thread trans0([this]() { table_->MarkReadOnly(id_, 0); });
+    std::thread trans1([this]() { range_del_table_->MarkReadOnly(id_, 1); });
     mem_tracker_.DoneAllocating();
   }
 

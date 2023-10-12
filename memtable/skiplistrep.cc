@@ -3,6 +3,7 @@
 //  COPYING file in the root directory) and Apache 2.0 License
 //  (found in the LICENSE.Apache file in the root directory).
 //
+#include <atomic>
 #include <cassert>
 #include <cstdint>
 #include <cstdlib>
@@ -38,6 +39,7 @@ class SkipListRep : public MemTableRep {
   const MemTableRep::KeyComparator& cmp_;
   const SliceTransform* transform_;
   const size_t lookahead_;
+  std::atomic<bool> trans_finished_{false};
 
   friend class LookaheadIterator;
 
@@ -95,15 +97,18 @@ class SkipListRep : public MemTableRep {
   }
 
   // Returns true iff an entry that compares equal to key is in the list.
+  // todo: remote support
   bool Contains(const char* key) const override {
     return skip_list_.Contains(key);
   }
 
+  // todo: update this
   size_t ApproximateMemoryUsage() override {
     // All memory is allocated through allocator; nothing to report here
     return 0;
   }
 
+  // todo: remote support
   void Get(const LookupKey& k, void* callback_args,
            bool (*callback_func)(void* arg, const char* entry)) override {
     SkipListRep::Iterator iter(&skip_list_);
@@ -114,6 +119,7 @@ class SkipListRep : public MemTableRep {
     }
   }
 
+  // todo: remote support (low pri)
   uint64_t ApproximateNumEntries(const Slice& start_ikey,
                                  const Slice& end_ikey) override {
     std::string tmp;
@@ -183,8 +189,13 @@ class SkipListRep : public MemTableRep {
     }
   }
 
+  void MarkReadOnly(uint64_t, int) override;
+  void MarkTransAsFinished() { trans_finished_.store(true); }
+
   ~SkipListRep() override {}
 
+  // if we really have to support this (local flush fallback), load the table
+  // back here.
   // Iteration over the contents of a skip list
   class Iterator : public MemTableRep::Iterator {
     InlineSkipList<const MemTableRep::KeyComparator&>::Iterator iter_;
@@ -370,6 +381,14 @@ void SkipListRep::PackLocal(TransferService* node,
       skip_list_.Clone(protection_bytes_per_key);
   ReadOnlySkipListRep::PackLocal(node, ptr);
   LOG("SkipListRep::PackLocal finish");
+}
+
+// caller async
+void SkipListRep::MarkReadOnly(uint64_t memtable_id, int type) {
+  LOG_CERR("SkipListRep MarkReadOnly");
+  // PackLocal(TransferService *node, size_t protection_bytes_per_key)
+  // todo: remote support
+  MarkTransAsFinished();
 }
 
 }  // namespace
