@@ -3412,6 +3412,20 @@ Status DBImpl::CreateColumnFamilyImpl(const ColumnFamilyOptions& cf_options,
       auto* cfd =
           versions_->GetColumnFamilySet()->GetColumnFamily(column_family_name);
       assert(cfd != nullptr);
+      // assume only connect one memnode
+      s = cfd->init_cf_level_rdma_client(memnodes_ip_port_.front().first,
+                                         memnodes_ip_port_.front().second);
+    }
+    if (s.ok()) {
+      auto* cfd =
+          versions_->GetColumnFamilySet()->GetColumnFamily(column_family_name);
+      assert(cfd != nullptr);
+      s = cfd->background_schedule_imm_trans();
+    }
+    if (s.ok()) {
+      auto* cfd =
+          versions_->GetColumnFamilySet()->GetColumnFamily(column_family_name);
+      assert(cfd != nullptr);
       std::map<std::string, std::shared_ptr<FSDirectory>> dummy_created_dirs;
       s = cfd->AddDirectories(&dummy_created_dirs);
     }

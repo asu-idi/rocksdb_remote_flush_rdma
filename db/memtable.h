@@ -108,6 +108,12 @@ using MultiGetRange = MultiGetContext::Range;
 // written to (aka the 'immutable memtables').
 class MemTable {
  public:
+  Status SendToRemote(RDMAClient* client,
+                      RDMANode::rdma_connection* memtable_conn,
+                      const std::pair<size_t, size_t>& remote_meta_reg,
+                      const size_t local_meta_offset,
+                      const std::pair<size_t, size_t>& remote_data_reg,
+                      const size_t local_data_reg);
   void free_remote() {
     flush_job_info_.reset();
     delete arena_;
@@ -492,8 +498,7 @@ class MemTable {
   // After MarkImmutable() is called, you should not attempt to
   // write anything to this MemTable().  (Ie. do not call Add() or Update()).
   void MarkImmutable() {
-    std::thread trans0([this]() { table_->MarkReadOnly(id_, 0); });
-    std::thread trans1([this]() { range_del_table_->MarkReadOnly(id_, 1); });
+    table_->MarkReadOnly();
     mem_tracker_.DoneAllocating();
   }
 
@@ -584,6 +589,19 @@ class MemTable {
   static Status VerifyEntryChecksum(const char* entry,
                                     size_t protection_bytes_per_key,
                                     bool allow_data_in_errors = false);
+
+  inline void TESTContinuous() {
+    LOG_CERR("MemTable TESTContinuous");
+    void* head = reinterpret_cast<void*>(this);
+    LOG_CERR(table_->ApproximateMemoryUsage(), ' ',
+             range_del_table_->ApproximateMemoryUsage(), ' ',
+             arena_->ApproximateMemoryUsage(), ' ',
+             arena_->MemoryAllocatedBytes());
+    table_->TESTContinuous();
+    range_del_table_->TESTContinuous();
+    arena_->TESTContinuous();
+    LOG_CERR("Memtable TESTContinuous finish");
+  }
 
  private:
   enum FlushStateEnum { FLUSH_NOT_REQUESTED, FLUSH_REQUESTED, FLUSH_SCHEDULED };

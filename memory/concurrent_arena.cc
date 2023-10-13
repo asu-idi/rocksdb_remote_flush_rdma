@@ -46,9 +46,8 @@ ConcurrentArena::Shard* ConcurrentArena::Repick() {
 }
 
 void ConcurrentArena::PackLocal(TransferService* node) const {
-  std::string name = "ConcurrentArena";
-  name.resize(15);
-  node->send(name.data(), 15);
+  int msg = 1;
+  node->send(&msg, sizeof(int));
 }
 
 void* ConcurrentArena::UnPackLocal(TransferService*) {

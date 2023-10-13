@@ -7,7 +7,7 @@
 // this source code is governed by a BSD-style license that can be found
 // in the LICENSE file. See the AUTHORS file for names of contributors.
 //
-// InlineSkipList is derived from SkipList (skiplist.h), but it optimizes
+// TransInlineSkipList is derived from SkipList (skiplist.h), but it optimizes
 // the memory layout by requiring that the key storage be allocated through
 // the skip list instance.  For the common case of SkipList<const char*,
 // Cmp> this saves 1 pointer per skip list node and gives better cache
@@ -22,18 +22,18 @@
 // Writes via Insert require external synchronization, most likely a mutex.
 // InsertConcurrently can be safely called concurrently with reads and
 // with other concurrent inserts.  Reads require a guarantee that the
-// InlineSkipList will not be destroyed while the read is in progress.
+// TransInlineSkipList will not be destroyed while the read is in progress.
 // Apart from that, reads progress without any internal locking or
 // synchronization.
 //
 // Invariants:
 //
-// (1) Allocated nodes are never deleted until the InlineSkipList is
+// (1) Allocated nodes are never deleted until the TransInlineSkipList is
 // destroyed.  This is trivially guaranteed by the code since we never
 // delete any skip list nodes.
 //
 // (2) The contents of a Node except for the next/prev pointers are
-// immutable after the Node has been linked into the InlineSkipList.
+// immutable after the Node has been linked into the TransInlineSkipList.
 // Only Insert() modifies the list, and it is careful to initialize a
 // node and use release-stores to publish the nodes in one or more lists.
 //
@@ -69,235 +69,32 @@
 namespace ROCKSDB_NAMESPACE {
 
 template <class Comparator>
-class InlineSkipList;
-
-template <class Comparator>
-class ReadOnlyInlineSkipList {
- public:
-  void PackLocal(TransferService* node) const;
-  static void* UnPackLocal(TransferService* node);
-  void check_data() const;
+class TransInlineSkipList {
+  using Offset = int32_t;
 
  public:
-  using DecodedKey =
-      typename std::remove_reference<Comparator>::type::DecodedType;
-  explicit ReadOnlyInlineSkipList(const InlineSkipList<Comparator>&,
-                                  const Comparator cmp,
-                                  size_t protection_bytes_per_key);
-  ReadOnlyInlineSkipList() = default;
-  ~ReadOnlyInlineSkipList() {
-    if (data_ != nullptr) {
-      LOG("destruct ReadOnlyInlineSkipList");
-      free(data_);
-    }
-  }
-  ReadOnlyInlineSkipList(const ReadOnlyInlineSkipList&) = delete;
-  ReadOnlyInlineSkipList& operator=(const ReadOnlyInlineSkipList&) = delete;
-
-  class Iterator {
-   public:
-    explicit Iterator(const ReadOnlyInlineSkipList* list);
-    void SetList(const ReadOnlyInlineSkipList* list);
-    bool Valid() const;
-    const char* key() const;
-    void Next();
-    void Prev();
-    void Seek(const char* target);
-    void SeekToFirst();
-
-   private:
-    const ReadOnlyInlineSkipList* list_;
-    void* now_;
-  };
-
- private:
-  inline static const size_t magic = 0xdeadbeef;
-  // Comparator const compare_;
-  void* data_ = nullptr;
-  int64_t total_len_ = 0;
-};
-
-template <class Comparator>
-inline void ReadOnlyInlineSkipList<Comparator>::check_data() const {
-  Iterator iter(this);
-  iter.SeekToFirst();
-  while (iter.Valid()) {
-    size_t key_len = 0;
-    char* ptr = const_cast<char*>(iter.key());
-    ptr -= sizeof(size_t);
-    memcpy(&key_len, ptr, sizeof(size_t));
-    iter.Next();
-  }
-}
-
-template <class Comparator>
-inline void* ReadOnlyInlineSkipList<Comparator>::UnPackLocal(
-    TransferService* node) {
-  LOG("unpack ReadOnlyInlineSkipList");
-  // void* local_cmp_ = MemTable::KeyComparator::UnPackLocal(sockfd);
-  int64_t* total_len = nullptr;
-  size_t size = sizeof(total_len);
-  node->receive(reinterpret_cast<void**>(&total_len), &size);
-  void* data = malloc(*total_len);
-  node->receive(&data, reinterpret_cast<size_t*>(total_len));
-  auto* local_readonly_skiplistrep = new ReadOnlyInlineSkipList();
-  void* mem = reinterpret_cast<void*>(local_readonly_skiplistrep);
-  node->receive(mem, sizeof(ReadOnlyInlineSkipList));
-  LOG("ReadOnlyInlineSkipList::UnPackLocal read mem len:",
-      sizeof(ReadOnlyInlineSkipList));
-  local_readonly_skiplistrep->data_ = data;
-  local_readonly_skiplistrep->total_len_ = *total_len;
-  LOG("unpack ReadOnlyInlineSkipList done");
-  return mem;
-}
-
-template <class Comparator>
-inline void ReadOnlyInlineSkipList<Comparator>::PackLocal(
-    TransferService* node) const {
-  LOG("pack ReadOnlyInlineSkipList");
-  // compare_.PackLocal(sockfd);
-  LOG("ReadOnlyInlineSkipList::PackLocal send tot_len start:", total_len_);
-  node->send(reinterpret_cast<const void*>(&total_len_), sizeof(total_len_));
-  LOG("ReadOnlyInlineSkipList::PackLocal send tot_len:", total_len_);
-  node->send(data_, total_len_);
-  node->send(reinterpret_cast<const void*>(this),
-             sizeof(ReadOnlyInlineSkipList));
-  LOG("ReadOnlyInlineSkipList::PackLocal send data len:",
-      sizeof(ReadOnlyInlineSkipList));
-  LOG("pack ReadOnlyInlineSkipList done");
-}
-
-template <class Comparator>
-inline ReadOnlyInlineSkipList<Comparator>::Iterator::Iterator(
-    const ReadOnlyInlineSkipList* list) {
-  SetList(list);
-}
-
-template <class Comparator>
-inline void ReadOnlyInlineSkipList<Comparator>::Iterator::SetList(
-    const ReadOnlyInlineSkipList* list) {
-  list_ = list;
-}
-
-template <class Comparator>
-inline bool ReadOnlyInlineSkipList<Comparator>::Iterator::Valid() const {
-  if (now_ == nullptr) return false;
-  size_t key_len = 0;
-  char* ptr = reinterpret_cast<char*>(now_);
-  memcpy(&key_len, ptr, sizeof(size_t));
-  return key_len != magic;
-}
-
-template <class Comparator>
-inline const char* ReadOnlyInlineSkipList<Comparator>::Iterator::key() const {
-  assert(Valid());
-  size_t key_len = 0;
-  char* ptr = reinterpret_cast<char*>(now_);
-  memcpy(&key_len, ptr, sizeof(size_t));
-  ptr += sizeof(size_t);
-  return ptr;
-}
-template <class Comparator>
-inline void ReadOnlyInlineSkipList<Comparator>::Iterator::Next() {
-  if (!Valid()) {
-    now_ = nullptr;
-    return;
-  }
-  size_t key_len = 0;
-  char* ptr = reinterpret_cast<char*>(now_);
-  memcpy(&key_len, ptr, sizeof(size_t));
-  ptr += (2 * sizeof(size_t) + key_len);
-  now_ = reinterpret_cast<void*>(ptr);
-}
-template <class Comparator>
-inline void ReadOnlyInlineSkipList<Comparator>::Iterator::Prev() {
-  if (!Valid()) {
-    now_ = nullptr;
-    return;
-  }
-  size_t key_len = 0;
-  char* ptr = reinterpret_cast<char*>(now_);
-  ptr -= sizeof(size_t);
-  memcpy(&key_len, ptr, sizeof(size_t));
-  ptr -= ((key_len != magic) ? (key_len + sizeof(size_t)) : 0);
-  now_ = reinterpret_cast<void*>(ptr);
-  return;
-}
-
-template <class Comparator>
-inline void ReadOnlyInlineSkipList<Comparator>::Iterator::Seek(
-    const char* target) {
-  assert(false);
-}
-
-template <class Comparator>
-inline void ReadOnlyInlineSkipList<Comparator>::Iterator::SeekToFirst() {
-  char* ptr = reinterpret_cast<char*>(list_->data_);
-  size_t magic_val = 0;
-  memcpy(&magic_val, ptr, sizeof(size_t));
-  assert(magic_val == magic);
-  ptr += sizeof(size_t);
-  now_ = reinterpret_cast<void*>(ptr);
-}
-
-template <class Comparator>
-ReadOnlyInlineSkipList<Comparator>::ReadOnlyInlineSkipList(
-    const InlineSkipList<Comparator>& raw_skip_list_, const Comparator cmp,
-    size_t protection_bytes_per_key) {
-  LOG("construct ReadOnlyInlineSkipList");
-  typename InlineSkipList<Comparator>::Iterator iter(&raw_skip_list_);
-  int64_t total_len = 0;
-  iter.SeekToFirst();
-  while (iter.Valid()) {
-    const char* key_ptr = iter.key();
-    size_t key_len = cmp.decode_len(key_ptr, protection_bytes_per_key);
-    total_len += (int64_t)(key_len + 2 * sizeof(size_t));
-    iter.Next();
-  }
-  data_ = malloc(total_len + 2 * sizeof(size_t));
-  total_len_ = sizeof(size_t) * 2 + total_len;
-  char* data_ptr = reinterpret_cast<char*>(data_);
-  memcpy(data_ptr, &magic, sizeof(size_t));
-  data_ptr += sizeof(size_t);
-  iter.SeekToFirst();
-  while (iter.Valid()) {
-    const char* key_ptr = iter.key();
-    size_t key_len = cmp.decode_len(key_ptr, protection_bytes_per_key);
-    memcpy(data_ptr, &key_len, sizeof(size_t));
-    data_ptr += sizeof(size_t);
-    memcpy(data_ptr, key_ptr, key_len);
-    data_ptr += key_len;
-    memcpy(data_ptr, &key_len, sizeof(size_t));
-    data_ptr += sizeof(size_t);
-    iter.Next();
-  }
-  memcpy(data_ptr, &magic, sizeof(size_t));
-  LOG("construct ReadOnlyInlineSkipList done");
-}
-
-template <class Comparator>
-class InlineSkipList {
-  friend ReadOnlyInlineSkipList<Comparator>;
-
- public:
-  ReadOnlyInlineSkipList<Comparator>* Clone(
-      size_t protection_bytes_per_key) const {
-    return new ReadOnlyInlineSkipList<Comparator>(*this, compare_,
-                                                  protection_bytes_per_key);
-  }
   inline void TESTContinuous() const {
     LOG_CERR("InlineSkipList TESTContinuous");
     void* ptr = const_cast<void*>(reinterpret_cast<const void*>(this));
     LOG_CERR("InlineSkipList TESTContinuous ptr:", ptr, ' ', sizeof(*this));
     LOG_CERR("Allocator name: ", allocator_->name());
     reinterpret_cast<BasicArena*>(allocator_)->TESTContinuous();
-    // LOG_CERR("Allocator size: ", allocator_->ApproximateMemoryUsage());
     Node* node = head_;
     while (node != nullptr) {
-      LOG_CERR("Node: ", reinterpret_cast<void*>(node), ' ', node->Key());
+      // LOG_CERR("Node: ", reinterpret_cast<void*>(node), ' ', node->Key());
+      void* pptr =
+          const_cast<void*>(reinterpret_cast<const void*>(node->Key()));
+      assert(
+          pptr <= reinterpret_cast<TransConcurrentArena*>(allocator_)->end() &&
+          pptr >= reinterpret_cast<TransConcurrentArena*>(allocator_)->begin());
       node = node->Next(0);
     }
     LOG_CERR("InlineSkipList TESTContinuous finish");
+  }
+  void PackLocal(TransferService* node) const {
+    int msg = 1;
+    node->send(&msg, sizeof(msg));
+    reinterpret_cast<ConcurrentArena*>(allocator_)->PackLocal(node);
   }
 
  private:
@@ -310,16 +107,16 @@ class InlineSkipList {
 
   static const uint16_t kMaxPossibleHeight = 32;
 
-  // Create a new InlineSkipList object that will use "cmp" for comparing
+  // Create a new TransInlineSkipList object that will use "cmp" for comparing
   // keys, and will allocate memory using "*allocator".  Objects allocated
   // in the allocator must remain allocated for the lifetime of the
   // skiplist object.
-  explicit InlineSkipList(Comparator cmp, Allocator* allocator,
-                          int32_t max_height = 12,
-                          int32_t branching_factor = 4);
+  explicit TransInlineSkipList(Comparator cmp, Allocator* allocator,
+                               int32_t max_height = 12,
+                               int32_t branching_factor = 4);
   // No copying allowed
-  InlineSkipList(const InlineSkipList&) = delete;
-  InlineSkipList& operator=(const InlineSkipList&) = delete;
+  TransInlineSkipList(const TransInlineSkipList&) = delete;
+  TransInlineSkipList& operator=(const TransInlineSkipList&) = delete;
 
   // Allocates a key and a skip-list node, returning a pointer to the key
   // portion of the node.  This method is thread-safe if the allocator
@@ -392,12 +189,12 @@ class InlineSkipList {
    public:
     // Initialize an iterator over the specified list.
     // The returned iterator is not valid.
-    explicit Iterator(const InlineSkipList* list);
+    explicit Iterator(const TransInlineSkipList* list);
 
     // Change the underlying skiplist used for this iterator
     // This enables us not changing the iterator without deallocating
     // an old one and then allocating a new one
-    void SetList(const InlineSkipList* list);
+    void SetList(const TransInlineSkipList* list);
 
     // Returns true iff the iterator is positioned at a valid node.
     bool Valid() const;
@@ -432,7 +229,7 @@ class InlineSkipList {
     void SeekToLast();
 
    private:
-    const InlineSkipList* list_;
+    const TransInlineSkipList* list_;
     Node* node_;
     // Intentionally copyable
   };
@@ -442,8 +239,11 @@ class InlineSkipList {
   const uint16_t kBranching_;
   const uint32_t kScaledInverseBranching_;
 
-  Allocator* const allocator_;  // Allocator used for allocations of nodes
+  TransConcurrentArena* const
+      allocator_;  // Allocator used for allocations of nodes
   // Immutable after construction
+  const void* mem_begin_local_;
+  const void* mem_begin_remote_;
   Comparator const compare_;
   Node* const head_;
 
@@ -520,7 +320,7 @@ class InlineSkipList {
 // Implementation details follow
 
 template <class Comparator>
-struct InlineSkipList<Comparator>::Splice {
+struct TransInlineSkipList<Comparator>::Splice {
   // The invariant of a Splice is that prev_[i+1].key <= prev_[i].key <
   // next_[i].key <= next_[i+1].key for all i.  That means that if a
   // key is bracketed by prev_[i] and next_[i] then it is bracketed by
@@ -538,7 +338,7 @@ struct InlineSkipList<Comparator>::Splice {
 // stored immediately _before_ the struct.  This avoids the need to include
 // any pointer or sizing data, which reduces per-node memory overheads.
 template <class Comparator>
-struct InlineSkipList<Comparator>::Node {
+struct TransInlineSkipList<Comparator>::Node {
   // Stores the height of the node in the memory location normally used for
   // next_[0].  This is used for passing data from AllocateKey to Insert.
   void StashHeight(const int height) {
@@ -604,37 +404,37 @@ struct InlineSkipList<Comparator>::Node {
 };
 
 template <class Comparator>
-inline InlineSkipList<Comparator>::Iterator::Iterator(
-    const InlineSkipList* list) {
+inline TransInlineSkipList<Comparator>::Iterator::Iterator(
+    const TransInlineSkipList* list) {
   SetList(list);
 }
 
 template <class Comparator>
-inline void InlineSkipList<Comparator>::Iterator::SetList(
-    const InlineSkipList* list) {
+inline void TransInlineSkipList<Comparator>::Iterator::SetList(
+    const TransInlineSkipList* list) {
   list_ = list;
   node_ = nullptr;
 }
 
 template <class Comparator>
-inline bool InlineSkipList<Comparator>::Iterator::Valid() const {
+inline bool TransInlineSkipList<Comparator>::Iterator::Valid() const {
   return node_ != nullptr;
 }
 
 template <class Comparator>
-inline const char* InlineSkipList<Comparator>::Iterator::key() const {
+inline const char* TransInlineSkipList<Comparator>::Iterator::key() const {
   assert(Valid());
   return node_->Key();
 }
 
 template <class Comparator>
-inline void InlineSkipList<Comparator>::Iterator::Next() {
+inline void TransInlineSkipList<Comparator>::Iterator::Next() {
   assert(Valid());
   node_ = node_->Next(0);
 }
 
 template <class Comparator>
-inline void InlineSkipList<Comparator>::Iterator::Prev() {
+inline void TransInlineSkipList<Comparator>::Iterator::Prev() {
   // Instead of using explicit "prev" links, we just search for
   // the last node that falls before key.
   assert(Valid());
@@ -645,12 +445,13 @@ inline void InlineSkipList<Comparator>::Iterator::Prev() {
 }
 
 template <class Comparator>
-inline void InlineSkipList<Comparator>::Iterator::Seek(const char* target) {
+inline void TransInlineSkipList<Comparator>::Iterator::Seek(
+    const char* target) {
   node_ = list_->FindGreaterOrEqual(target);
 }
 
 template <class Comparator>
-inline void InlineSkipList<Comparator>::Iterator::SeekForPrev(
+inline void TransInlineSkipList<Comparator>::Iterator::SeekForPrev(
     const char* target) {
   Seek(target);
   if (!Valid()) {
@@ -662,17 +463,17 @@ inline void InlineSkipList<Comparator>::Iterator::SeekForPrev(
 }
 
 template <class Comparator>
-inline void InlineSkipList<Comparator>::Iterator::RandomSeek() {
+inline void TransInlineSkipList<Comparator>::Iterator::RandomSeek() {
   node_ = list_->FindRandomEntry();
 }
 
 template <class Comparator>
-inline void InlineSkipList<Comparator>::Iterator::SeekToFirst() {
+inline void TransInlineSkipList<Comparator>::Iterator::SeekToFirst() {
   node_ = list_->head_->Next(0);
 }
 
 template <class Comparator>
-inline void InlineSkipList<Comparator>::Iterator::SeekToLast() {
+inline void TransInlineSkipList<Comparator>::Iterator::SeekToLast() {
   node_ = list_->FindLast();
   if (node_ == list_->head_) {
     node_ = nullptr;
@@ -680,7 +481,7 @@ inline void InlineSkipList<Comparator>::Iterator::SeekToLast() {
 }
 
 template <class Comparator>
-int InlineSkipList<Comparator>::RandomHeight() {
+int TransInlineSkipList<Comparator>::RandomHeight() {
   auto rnd = Random::GetTLSInstance();
 
   // Increase height with probability 1 in kBranching
@@ -696,24 +497,24 @@ int InlineSkipList<Comparator>::RandomHeight() {
 }
 
 template <class Comparator>
-bool InlineSkipList<Comparator>::KeyIsAfterNode(const char* key,
-                                                Node* n) const {
+bool TransInlineSkipList<Comparator>::KeyIsAfterNode(const char* key,
+                                                     Node* n) const {
   // nullptr n is considered infinite
   assert(n != head_);
   return (n != nullptr) && (compare_(n->Key(), key) < 0);
 }
 
 template <class Comparator>
-bool InlineSkipList<Comparator>::KeyIsAfterNode(const DecodedKey& key,
-                                                Node* n) const {
+bool TransInlineSkipList<Comparator>::KeyIsAfterNode(const DecodedKey& key,
+                                                     Node* n) const {
   // nullptr n is considered infinite
   assert(n != head_);
   return (n != nullptr) && (compare_(n->Key(), key) < 0);
 }
 
 template <class Comparator>
-typename InlineSkipList<Comparator>::Node*
-InlineSkipList<Comparator>::FindGreaterOrEqual(const char* key) const {
+typename TransInlineSkipList<Comparator>::Node*
+TransInlineSkipList<Comparator>::FindGreaterOrEqual(const char* key) const {
   // Note: It looks like we could reduce duplication by
   // implementing this function as FindLessThan(key)->Next(0),
   // but we wouldn't be able to exit early on equality and the
@@ -750,16 +551,17 @@ InlineSkipList<Comparator>::FindGreaterOrEqual(const char* key) const {
 }
 
 template <class Comparator>
-typename InlineSkipList<Comparator>::Node*
-InlineSkipList<Comparator>::FindLessThan(const char* key, Node** prev) const {
+typename TransInlineSkipList<Comparator>::Node*
+TransInlineSkipList<Comparator>::FindLessThan(const char* key,
+                                              Node** prev) const {
   return FindLessThan(key, prev, head_, GetMaxHeight(), 0);
 }
 
 template <class Comparator>
-typename InlineSkipList<Comparator>::Node*
-InlineSkipList<Comparator>::FindLessThan(const char* key, Node** prev,
-                                         Node* root, int top_level,
-                                         int bottom_level) const {
+typename TransInlineSkipList<Comparator>::Node*
+TransInlineSkipList<Comparator>::FindLessThan(const char* key, Node** prev,
+                                              Node* root, int top_level,
+                                              int bottom_level) const {
   assert(top_level > bottom_level);
   int level = top_level - 1;
   Node* x = root;
@@ -794,8 +596,8 @@ InlineSkipList<Comparator>::FindLessThan(const char* key, Node** prev,
 }
 
 template <class Comparator>
-typename InlineSkipList<Comparator>::Node*
-InlineSkipList<Comparator>::FindLast() const {
+typename TransInlineSkipList<Comparator>::Node*
+TransInlineSkipList<Comparator>::FindLast() const {
   Node* x = head_;
   int level = GetMaxHeight() - 1;
   while (true) {
@@ -814,8 +616,8 @@ InlineSkipList<Comparator>::FindLast() const {
 }
 
 template <class Comparator>
-typename InlineSkipList<Comparator>::Node*
-InlineSkipList<Comparator>::FindRandomEntry() const {
+typename TransInlineSkipList<Comparator>::Node*
+TransInlineSkipList<Comparator>::FindRandomEntry() const {
   // TODO(bjlemaire): consider adding PREFETCH calls.
   Node *x = head_, *scan_node = nullptr, *limit_node = nullptr;
 
@@ -856,7 +658,7 @@ InlineSkipList<Comparator>::FindRandomEntry() const {
 }
 
 template <class Comparator>
-uint64_t InlineSkipList<Comparator>::EstimateCount(const char* key) const {
+uint64_t TransInlineSkipList<Comparator>::EstimateCount(const char* key) const {
   uint64_t count = 0;
 
   Node* x = head_;
@@ -884,14 +686,16 @@ uint64_t InlineSkipList<Comparator>::EstimateCount(const char* key) const {
 }
 
 template <class Comparator>
-InlineSkipList<Comparator>::InlineSkipList(const Comparator cmp,
-                                           Allocator* allocator,
-                                           int32_t max_height,
-                                           int32_t branching_factor)
+TransInlineSkipList<Comparator>::TransInlineSkipList(const Comparator cmp,
+                                                     Allocator* allocator,
+                                                     int32_t max_height,
+                                                     int32_t branching_factor)
     : kMaxHeight_(static_cast<uint16_t>(max_height)),
       kBranching_(static_cast<uint16_t>(branching_factor)),
       kScaledInverseBranching_((Random::kMaxNext + 1) / kBranching_),
-      allocator_(allocator),
+      allocator_(reinterpret_cast<TransConcurrentArena*>(allocator)),
+      mem_begin_local_(allocator_->begin()),
+      mem_begin_remote_(allocator_->begin()),
       compare_(cmp),
       head_(AllocateNode(0, max_height)),
       max_height_(1),
@@ -907,13 +711,13 @@ InlineSkipList<Comparator>::InlineSkipList(const Comparator cmp,
 }
 
 template <class Comparator>
-char* InlineSkipList<Comparator>::AllocateKey(size_t key_size) {
+char* TransInlineSkipList<Comparator>::AllocateKey(size_t key_size) {
   return const_cast<char*>(AllocateNode(key_size, RandomHeight())->Key());
 }
 
 template <class Comparator>
-typename InlineSkipList<Comparator>::Node*
-InlineSkipList<Comparator>::AllocateNode(size_t key_size, int height) {
+typename TransInlineSkipList<Comparator>::Node*
+TransInlineSkipList<Comparator>::AllocateNode(size_t key_size, int height) {
   auto prefix = sizeof(std::atomic<Node*>) * (height - 1);
 
   // prefix is space for the height - 1 pointers that we store
@@ -937,8 +741,8 @@ InlineSkipList<Comparator>::AllocateNode(size_t key_size, int height) {
 }
 
 template <class Comparator>
-typename InlineSkipList<Comparator>::Splice*
-InlineSkipList<Comparator>::AllocateSplice() {
+typename TransInlineSkipList<Comparator>::Splice*
+TransInlineSkipList<Comparator>::AllocateSplice() {
   // size of prev_ and next_
   size_t array_size = sizeof(Node*) * (kMaxHeight_ + 1);
   char* raw = allocator_->AllocateAligned(sizeof(Splice) + array_size * 2);
@@ -950,8 +754,8 @@ InlineSkipList<Comparator>::AllocateSplice() {
 }
 
 template <class Comparator>
-typename InlineSkipList<Comparator>::Splice*
-InlineSkipList<Comparator>::AllocateSpliceOnHeap() {
+typename TransInlineSkipList<Comparator>::Splice*
+TransInlineSkipList<Comparator>::AllocateSpliceOnHeap() {
   size_t array_size = sizeof(Node*) * (kMaxHeight_ + 1);
   char* raw = new char[sizeof(Splice) + array_size * 2];
   Splice* splice = reinterpret_cast<Splice*>(raw);
@@ -962,12 +766,12 @@ InlineSkipList<Comparator>::AllocateSpliceOnHeap() {
 }
 
 template <class Comparator>
-bool InlineSkipList<Comparator>::Insert(const char* key) {
+bool TransInlineSkipList<Comparator>::Insert(const char* key) {
   return Insert<false>(key, seq_splice_, false);
 }
 
 template <class Comparator>
-bool InlineSkipList<Comparator>::InsertConcurrently(const char* key) {
+bool TransInlineSkipList<Comparator>::InsertConcurrently(const char* key) {
   Node* prev[kMaxPossibleHeight];
   Node* next[kMaxPossibleHeight];
   Splice splice;
@@ -977,7 +781,8 @@ bool InlineSkipList<Comparator>::InsertConcurrently(const char* key) {
 }
 
 template <class Comparator>
-bool InlineSkipList<Comparator>::InsertWithHint(const char* key, void** hint) {
+bool TransInlineSkipList<Comparator>::InsertWithHint(const char* key,
+                                                     void** hint) {
   assert(hint != nullptr);
   Splice* splice = reinterpret_cast<Splice*>(*hint);
   if (splice == nullptr) {
@@ -988,8 +793,8 @@ bool InlineSkipList<Comparator>::InsertWithHint(const char* key, void** hint) {
 }
 
 template <class Comparator>
-bool InlineSkipList<Comparator>::InsertWithHintConcurrently(const char* key,
-                                                            void** hint) {
+bool TransInlineSkipList<Comparator>::InsertWithHintConcurrently(
+    const char* key, void** hint) {
   assert(hint != nullptr);
   Splice* splice = reinterpret_cast<Splice*>(*hint);
   if (splice == nullptr) {
@@ -1002,10 +807,11 @@ bool InlineSkipList<Comparator>::InsertWithHintConcurrently(const char* key,
 
 template <class Comparator>
 template <bool prefetch_before>
-void InlineSkipList<Comparator>::FindSpliceForLevel(const DecodedKey& key,
-                                                    Node* before, Node* after,
-                                                    int level, Node** out_prev,
-                                                    Node** out_next) {
+void TransInlineSkipList<Comparator>::FindSpliceForLevel(const DecodedKey& key,
+                                                         Node* before,
+                                                         Node* after, int level,
+                                                         Node** out_prev,
+                                                         Node** out_next) {
   while (true) {
     Node* next = before->Next(level);
     if (next != nullptr) {
@@ -1030,9 +836,8 @@ void InlineSkipList<Comparator>::FindSpliceForLevel(const DecodedKey& key,
 }
 
 template <class Comparator>
-void InlineSkipList<Comparator>::RecomputeSpliceLevels(const DecodedKey& key,
-                                                       Splice* splice,
-                                                       int recompute_level) {
+void TransInlineSkipList<Comparator>::RecomputeSpliceLevels(
+    const DecodedKey& key, Splice* splice, int recompute_level) {
   assert(recompute_level > 0);
   assert(recompute_level <= splice->height_);
   for (int i = recompute_level - 1; i >= 0; --i) {
@@ -1043,8 +848,8 @@ void InlineSkipList<Comparator>::RecomputeSpliceLevels(const DecodedKey& key,
 
 template <class Comparator>
 template <bool UseCAS>
-bool InlineSkipList<Comparator>::Insert(const char* key, Splice* splice,
-                                        bool allow_partial_splice_fix) {
+bool TransInlineSkipList<Comparator>::Insert(const char* key, Splice* splice,
+                                             bool allow_partial_splice_fix) {
   Node* x = reinterpret_cast<Node*>(const_cast<char*>(key)) - 1;
   const DecodedKey key_decoded = compare_.decode_key(key);
   int height = x->UnstashHeight();
@@ -1251,7 +1056,7 @@ bool InlineSkipList<Comparator>::Insert(const char* key, Splice* splice,
 }
 
 template <class Comparator>
-bool InlineSkipList<Comparator>::Contains(const char* key) const {
+bool TransInlineSkipList<Comparator>::Contains(const char* key) const {
   Node* x = FindGreaterOrEqual(key);
   if (x != nullptr && Equal(key, x->Key())) {
     return true;
@@ -1261,7 +1066,7 @@ bool InlineSkipList<Comparator>::Contains(const char* key) const {
 }
 
 template <class Comparator>
-void InlineSkipList<Comparator>::TEST_Validate() const {
+void TransInlineSkipList<Comparator>::TEST_Validate() const {
   // Interate over all levels at the same time, and verify nodes
   // appear in the right order, and nodes appear in upper level
   // also appear in lower levels.
@@ -1302,7 +1107,7 @@ void InlineSkipList<Comparator>::TEST_Validate() const {
 }
 
 template <class Comparator>
-void InlineSkipList<Comparator>::CHECK_all_addr() {
+void TransInlineSkipList<Comparator>::CHECK_all_addr() {
   Iterator iter(this);
   iter.SeekToFirst();
   while (iter.Valid()) {

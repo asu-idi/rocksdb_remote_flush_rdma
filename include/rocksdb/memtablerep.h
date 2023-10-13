@@ -67,7 +67,19 @@ extern Slice GetLengthPrefixedSlice(const char* data);
 extern int VarintLength(uint64_t v);
 class MemTableRep {
  public:
-  virtual void PackLocal(TransferService*, size_t) const {
+  virtual Status SendToRemote(RDMAClient*, RDMANode::rdma_connection*,
+                              const std::pair<size_t, size_t>&, size_t,
+                              const std::pair<size_t, size_t>&, size_t,
+                              uint64_t, int) {
+    LOG("MemTableRep::SendToRemote: error: not implemented");
+    assert(false);
+  }
+  virtual void TESTContinuous() const {
+    LOG("MemTableRep::TESTContinuous");
+    assert(false);
+    LOG("MemTableRep::TESTContinuous finish");
+  }
+  virtual void PackLocal(TransferService*) const {
     LOG("MemTableRep::PackLocal: error: not implemented");
     assert(false);
   }
@@ -202,9 +214,7 @@ class MemTableRep {
   // does nothing.  After MarkReadOnly() is called, this table rep will
   // not be written to (ie No more calls to Allocate(), Insert(),
   // or any writes done directly to entries accessed through the iterator.)
-  virtual void MarkReadOnly(uint64_t, int) {
-    LOG_CERR("MemTableRep MarkReadOnly");
-  }
+  virtual void MarkReadOnly() { LOG_CERR("MemTableRep MarkReadOnly"); }
 
   // Notify this table rep that it has been flushed to stable storage.
   // By default, does nothing.

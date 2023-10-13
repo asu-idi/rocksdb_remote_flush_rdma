@@ -28,6 +28,9 @@ namespace {
 
 class FixedPrefixTransform : public SliceTransform {
  public:
+  int64_t identifier() const override {
+    return (((int64_t)prefix_len_) << 8) | 1;
+  }
   void PackLocal(TransferService* node) const override {
     LOG("FixedPrefixTransform::PackLocal");
     int64_t msg = 0;
@@ -90,6 +93,7 @@ class FixedPrefixTransform : public SliceTransform {
 
 class CappedPrefixTransform : public SliceTransform {
  public:
+  int64_t identifier() const override { return (((int64_t)cap_len_) << 8) | 2; }
   void PackLocal(TransferService* node) const override {
     LOG("CappedPrefixTransform::PackLocal");
     int64_t msg = 0;
@@ -149,6 +153,7 @@ class CappedPrefixTransform : public SliceTransform {
 
 class NoopTransform : public SliceTransform {
  public:
+  int64_t identifier() const override { return 3; }
   void PackLocal(TransferService* node) const override {
     LOG("NoopTransform::PackLocal");
     int64_t msg = 0;

@@ -786,6 +786,7 @@ set(SOURCES
         logging/log_buffer.cc
         memory/arena.cc
         memory/concurrent_arena.cc
+        memory/trans_concurrent_arena.cc
         memory/jemalloc_nodump_allocator.cc
         memory/memkind_kmem_allocator.cc
         memory/memory_allocator.cc
@@ -1571,6 +1572,7 @@ set(WITH_DEV true)
 if(WITH_DEV)
   set(DEVELOP 
   dev/remote_flush_test_server.cpp
+  dev/memtable_test.cc
   dev/remote_flush_worker.cpp
   # dev/trace_query_test.cpp
   # dev/trace_io_test.cpp

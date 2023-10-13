@@ -33,7 +33,7 @@ class VectorRep : public MemTableRep {
   // Returns true iff an entry that compares equal to key is in the collection.
   bool Contains(const char* key) const override;
 
-  void MarkReadOnly(uint64_t, int) override;
+  void MarkReadOnly() override;
 
   size_t ApproximateMemoryUsage() override;
 
@@ -117,7 +117,7 @@ bool VectorRep::Contains(const char* key) const {
   return std::find(bucket_->begin(), bucket_->end(), key) != bucket_->end();
 }
 
-void VectorRep::MarkReadOnly(uint64_t, int) {
+void VectorRep::MarkReadOnly() {
   WriteLock l(&rwlock_);
   immutable_ = true;
 }

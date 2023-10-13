@@ -37,6 +37,7 @@
 #include "memory/arena_factory.h"
 #include "memory/concurrent_arena.h"
 #include "memory/memory_usage.h"
+#include "memory/trans_concurrent_arena.h"
 #include "monitoring/perf_context_imp.h"
 #include "monitoring/statistics.h"
 #include "port/lang.h"
@@ -104,13 +105,7 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
       kArenaBlockSize(Arena::OptimizeBlockSize(moptions_.arena_block_size)),
       mem_tracker_(write_buffer_manager),
       arena_(static_cast<BasicArena*>(
-          new ConcurrentArena(moptions_.arena_block_size,
-                              (write_buffer_manager != nullptr &&
-                               (write_buffer_manager->enabled() ||
-                                write_buffer_manager->cost_to_cache()))
-                                  ? &mem_tracker_
-                                  : nullptr,
-                              mutable_cf_options.memtable_huge_page_size))),
+          new TransConcurrentArena(mutable_cf_options.write_buffer_size))),
       table_(ioptions.memtable_factory->CreateMemTableRep(
           comparator_, arena_, mutable_cf_options.prefix_extractor.get(),
           ioptions.logger, column_family_id)),
@@ -173,6 +168,17 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
       reinterpret_cast<void*>(table_), std::dec);
 }
 
+Status MemTable::SendToRemote(RDMAClient* client,
+                              RDMANode::rdma_connection* memtable_conn,
+                              const std::pair<size_t, size_t>& remote_meta_reg,
+                              const size_t local_meta_offset,
+                              const std::pair<size_t, size_t>& remote_data_reg,
+                              const size_t local_data_reg) {
+  return table_->SendToRemote(client, memtable_conn, remote_meta_reg,
+                              local_meta_offset, remote_data_reg,
+                              local_data_reg, GetID(), 0);
+}
+
 void* MemTable::UnPackLocal(TransferService* node) {
   LOG("start MemTable::UnPackLocal");
   void* local_arena = BasicArenaFactory::UnPackLocal(node);
@@ -230,10 +236,10 @@ void MemTable::PackLocal(TransferService* node) const {
   // bloom_filter_->PackLocal(sock_fd);
   assert(table_ != nullptr);
   LOG("start MemTable::PackLocal table_");
-  table_->PackLocal(node, moptions_.protection_bytes_per_key);
+  table_->PackLocal(node);
   LOG("start MemTable::PackLocal range_del_table_");
   assert(range_del_table_ != nullptr);
-  range_del_table_->PackLocal(node, moptions_.protection_bytes_per_key);
+  range_del_table_->PackLocal(node);
   LOG("range_del_table_->PackLocal done");
   node->send(reinterpret_cast<const void*>(this), sizeof(MemTable));
   LOG("write MemTable", reinterpret_cast<const void*>(this));
@@ -1597,7 +1603,16 @@ void MemTable::GetFromTable(const LookupKey& key,
   saver.do_merge = do_merge;
   saver.allow_data_in_errors = moptions_.allow_data_in_errors;
   saver.protection_bytes_per_key = moptions_.protection_bytes_per_key;
+  std::chrono::system_clock::time_point start_time =
+      std::chrono::system_clock::now();
   table_->Get(key, &saver, SaveValue);
+  std::chrono::system_clock::time_point end_time =
+      std::chrono::system_clock::now();
+  LOG_CERR("MemTable::GetFromTable: Perform SkipListRep::Get",
+           std::chrono::duration_cast<std::chrono::microseconds>(end_time -
+                                                                 start_time)
+               .count(),
+           " us");
   *seq = saver.seq;
 }
 

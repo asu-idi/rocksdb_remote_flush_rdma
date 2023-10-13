@@ -38,6 +38,7 @@ class Allocator {
 class BasicArena : public Allocator {
  public:
   virtual void PackLocal(TransferService* node) const = 0;
+  virtual void TESTContinuous() const { assert(false); }
 
  public:
   virtual size_t ApproximateMemoryUsage() const = 0;

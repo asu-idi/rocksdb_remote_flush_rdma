@@ -182,6 +182,8 @@ class RDMANode {
   friend class RDMAClient;
   friend class RemoteFlushJob;
   friend class DBImpl;
+
+ public:
   // structure of test parameters
   struct config_t {
     std::string dev_name;  // IB device name

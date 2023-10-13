@@ -2275,8 +2275,9 @@ Status DBImpl::SwitchMemtable(ColumnFamilyData* cfd, WriteContext* context) {
 
   cfd->mem()->SetNextLogNumber(logfile_number_);
   assert(new_mem != nullptr);
-  LOG_CERR("StartToTransferRemoteMemTable")
+  LOG_CERR("StartToTransferRemoteMemTable");
   cfd->imm()->Add(cfd->mem(), &context->memtables_to_free_);
+  cfd->register_imm_trans(cfd->mem());
   new_mem->Ref();
   cfd->SetMemtable(new_mem);
   InstallSuperVersionAndScheduleWork(cfd, &context->superversion_context,

@@ -688,6 +688,7 @@ class IterKey {
 // internal keys.
 class InternalKeySliceTransform : public SliceTransform {
  public:
+  int64_t identifier() const override { return 0; }
   void PackLocal(TransferService* node) const override {
     LOG("InternalKeySliceTransform::PackLocal");
     int64_t info = 0;
