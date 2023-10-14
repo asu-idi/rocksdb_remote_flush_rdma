@@ -1157,6 +1157,45 @@ bool RDMAClient::register_executor_request(struct rdma_connection *conn) {
   }
   return ret;
 }
+
+bool RDMAClient::register_memtable_read_request(
+    struct rdma_connection *conn, size_t &local_offset,
+    std::pair<size_t, size_t> &remote_offset, uint64_t id) {
+  char req_type = 6;
+  bool ret = true;
+  int rc = write(conn->sock, reinterpret_cast<void *>(&req_type), sizeof(char));
+  if (rc < (int)sizeof(char))
+    fprintf(stderr, "Failed writing data during register_executor_request\n");
+  else
+    return false;
+  size_t read_request_area = 100;
+  size_t local_offset_ = rdma_mem_.allocate(read_request_area);
+  if (local_offset_ < 0) {
+    fprintf(stderr, "Failed to allocate memory for read request\n");
+    return false;
+  }
+  local_offset = local_offset_;
+  auto remote_read_reg = allocate_mem_request(conn, read_request_area);
+  remote_offset = remote_read_reg;
+
+  return ret;
+}
+
+void RDMAServer::register_memtable_read_service(struct rdma_connection *conn,
+                                                std::thread *t,
+                                                bool *should_close) {
+  bool ret = true;
+  size_t ret_offset = 0, ret_size = 0;
+  allocate_mem_service(conn, ret_offset, ret_size);
+  *t = std::move(std::thread([&, this, conn]() {
+    while (!*should_close) {
+      post_receive(conn, ret_size, ret_offset);
+      // poll_completion(conn);
+      // todo: deal with read request
+    }
+  }));
+}
+
 void RDMAServer::register_executor_service(struct rdma_connection *conn) {
   bool ret = true;
   int local_size = sizeof(bool);
@@ -1273,6 +1312,8 @@ bool RDMAServer::service(struct rdma_connection *conn) {
         }));
         break;
       }
+      case 6:
+        register_memtable_read_service(conn, &cur, &should_close);
       default:
         fprintf(stderr, "Unknown request type from client: %d\n", req_type);
     }

@@ -597,7 +597,8 @@ ColumnFamilyData::ColumnFamilyData(
       cflevel_client_(nullptr),
       reginfo_(nullptr),
       imm_que(new std::queue<MemTable*>),
-      imm_que_mtx(new std::mutex) {
+      imm_que_mtx(new std::mutex),
+      memtable_ip_port(new std::pair<std::string, size_t>) {
   LOG("CHECK : ", "initial_cf_options_:",
       initial_cf_options_.server_use_remote_flush == true ? "true" : "false");
   if (id_ != kDummyColumnFamilyDataId) {
@@ -778,6 +779,7 @@ ColumnFamilyData::~ColumnFamilyData() {
   if (reginfo_) delete reginfo_;
   if (imm_que) delete imm_que;
   if (imm_que_mtx) delete imm_que_mtx;
+  if (memtable_ip_port) delete memtable_ip_port;
   if (cflevel_client_) delete cflevel_client_;
 }
 
@@ -799,7 +801,7 @@ Status ColumnFamilyData::background_schedule_imm_trans() {
     Status s = imm_to_trans->SendToRemote(
         cflevel_client_, memtable_conn_, reginfo_->imm_meta_remote_offset,
         reginfo_->imm_meta_local_offset, reginfo_->imm_data_remote_offset,
-        reginfo_->imm_data_local_offset);
+        reginfo_->imm_data_local_offset, *memtable_ip_port);
     if (!s.ok()) {
       fprintf(stderr,
               "immutable memtable sent remote failed, reschedule task\n");
@@ -1753,8 +1755,13 @@ Status ColumnFamilyData::init_cf_level_rdma_client(std::string& ip, int port) {
   Status s = Status::OK();
   cflevel_client_ = new RDMAClient();
   reginfo_ = new struct built_memreg_info;
+  memtable_ip_port->first = ip;
+  memtable_ip_port->second = port;
+
+  // memory for each column family
   size_t maintain_mr_size =
-      100 + mutable_cf_options_.write_buffer_size + 2500 + (64 << 20);
+      100 /*memtable meta*/ + mutable_cf_options_.write_buffer_size +
+      2500 /*memtable data*/ + (64 << 20) + 1000 /*read request*/;
   cflevel_client_->resources_create(maintain_mr_size);
   cflevel_client_->rdma_mem_.init(maintain_mr_size);
 

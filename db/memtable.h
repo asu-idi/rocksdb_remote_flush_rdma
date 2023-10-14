@@ -108,6 +108,13 @@ using MultiGetRange = MultiGetContext::Range;
 // written to (aka the 'immutable memtables').
 class MemTable {
  public:
+  struct rmem_info {
+    std::mutex read_mtx;
+    size_t local_read_offset{0};
+    std::pair<size_t, size_t> remote_read_offset{0, 0};
+    RDMANode::rdma_connection* read_conn_{nullptr};
+    RDMAClient* client_{nullptr};
+  };
   inline void set_local_begin(void* local) { table_->set_local_begin(local); }
   inline std::pair<char*, size_t> local_begin() const {
     return table_->local_begin();
@@ -117,7 +124,9 @@ class MemTable {
                       const std::pair<size_t, size_t>& remote_meta_reg,
                       const size_t local_meta_offset,
                       const std::pair<size_t, size_t>& remote_data_reg,
-                      const size_t local_data_reg);
+                      const size_t local_data_reg,
+                      const std::pair<std::string, size_t> memnode_ip_port);
+  Status RemoteRead();
   void free_remote() {
     flush_job_info_.reset();
     delete arena_;
@@ -691,6 +700,8 @@ class MemTable {
 
   // Flush job info of the current memtable.
   std::unique_ptr<FlushJobInfo> flush_job_info_;
+
+  rmem_info* rmem_info_{nullptr};
 
   // Updates flush_state_ using ShouldFlushNow()
   void UpdateFlushState();

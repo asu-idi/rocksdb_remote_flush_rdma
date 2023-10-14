@@ -679,6 +679,7 @@ class ColumnFamilyData {
   built_memreg_info* reginfo_;
   std::queue<MemTable*>* imm_que;
   std::mutex* imm_que_mtx;
+  std::pair<std::string, size_t>* memtable_ip_port;
 };
 
 // ColumnFamilySet has interesting thread-safety requirements

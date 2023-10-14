@@ -168,15 +168,48 @@ MemTable::MemTable(const InternalKeyComparator& cmp,
       reinterpret_cast<void*>(table_), std::dec);
 }
 
-Status MemTable::SendToRemote(RDMAClient* client,
-                              RDMANode::rdma_connection* memtable_conn,
-                              const std::pair<size_t, size_t>& remote_meta_reg,
-                              const size_t local_meta_offset,
-                              const std::pair<size_t, size_t>& remote_data_reg,
-                              const size_t local_data_reg) {
-  return table_->SendToRemote(client, memtable_conn, remote_meta_reg,
-                              local_meta_offset, remote_data_reg,
-                              local_data_reg, GetID(), 0);
+Status MemTable::SendToRemote(
+    RDMAClient* client, RDMANode::rdma_connection* memtable_conn,
+    const std::pair<size_t, size_t>& remote_meta_reg,
+    const size_t local_meta_offset,
+    const std::pair<size_t, size_t>& remote_data_reg,
+    const size_t local_data_reg,
+    const std::pair<std::string, size_t> memnode_ip_port) {
+  Status s = table_->SendToRemote(client, memtable_conn, remote_meta_reg,
+                                  local_meta_offset, remote_data_reg,
+                                  local_data_reg, GetID(), 0);
+  if (s.ok()) {
+    std::thread([this, client, memtable_conn, remote_meta_reg,
+                 local_meta_offset, remote_data_reg, local_data_reg,
+                 memnode_ip_port]() {
+      rmem_info_ = new rmem_info;
+
+      rmem_info_->read_conn_ =
+          client->sock_connect(memnode_ip_port.first, memnode_ip_port.second);
+      if (rmem_info_->read_conn_ == nullptr) {
+        fprintf(stderr, "connect to %s:%lu failed",
+                memnode_ip_port.first.data(), memnode_ip_port.second);
+        rmem_info_->read_conn_ = nullptr;
+        delete rmem_info_;
+        return;
+      }
+      // build remote read service
+      bool ret = client->register_memtable_read_request(
+          rmem_info_->read_conn_, rmem_info_->local_read_offset,
+          rmem_info_->remote_read_offset, id_);
+      if (!ret) {
+        fprintf(stderr, "build memtable:%lu read service failed\n", id_);
+        rmem_info_->read_conn_ = nullptr;
+      }
+      // switch to RMemtable and free local imm
+
+      // MarkAsFinished
+      fprintf(stderr, "Immutable memtable:%lu remote read MarkAsFinished\n",
+              id_);
+      rmem_info_->client_ = client;
+    }).detach();
+  }
+  return s;
 }
 
 void* MemTable::UnPackLocal(TransferService* node) {

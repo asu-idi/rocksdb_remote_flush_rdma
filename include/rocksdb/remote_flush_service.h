@@ -89,11 +89,11 @@ class RDMAMemNode {
   RDMAMemNode() = default;
   ~RDMAMemNode() { mempool_.clear(); }
   void init(size_t buf_size) { buf_size_ = buf_size; }
-  size_t allocate(size_t size) {
+  int allocate(size_t size) {
     while (true) {
       std::lock_guard<std::mutex> lock(mtx_);
       bool flag = false;
-      size_t offset = 0;
+      int offset = 0;
       if (mempool_.empty()) {
         if (size <= buf_size_)
           offset = 0, flag = true;
@@ -302,7 +302,8 @@ class RDMAServer : public RDMANode {
   void disconnect_service(struct rdma_connection *idx);
   void register_executor_service(struct rdma_connection *idx);
   void wait_for_job_service(struct rdma_connection *idx);
-
+  void register_memtable_read_service(struct rdma_connection *idx,
+                                      std::thread *t, bool *should_close);
   RemoteMemTablePool *remote_memtable_pool_;
   std::unique_ptr<std::mutex> mempool_mtx;
   std::set<std::pair<long long /*offset*/, long long /*len*/>> pinned_mem;
@@ -367,6 +368,10 @@ class RDMAClient : public RDMANode {
                           std::pair<long long, long long> offset, int type);
   bool disconnect_request(struct rdma_connection *idx);
   bool register_executor_request(struct rdma_connection *idx);
+  bool register_memtable_read_request(struct rdma_connection *conn,
+                                      size_t &local_offset,
+                                      std::pair<size_t, size_t> &remote_offset,
+                                      uint64_t id);
   std::pair<long long, long long> wait_for_job_request(
       struct rdma_connection *idx);
   size_t port = -1;
