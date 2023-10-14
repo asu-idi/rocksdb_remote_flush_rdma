@@ -90,10 +90,30 @@ auto main(int argc, char** argv) -> signed {
       reinterpret_cast<ColumnFamilyHandleImpl*>(db->DefaultColumnFamily());
   int num = 0;
   cin >> num;
+  std::thread t([&]() {
+    for (int i = 0; i < num; i++) {
+      db->Put(wo, std::to_string(i), std::to_string(i));
+    }
+  });
   for (int i = 10000; i >= num; i--) {
     db->Put(wo, std::to_string(i), std::to_string(i));
   }
+  t.join();
+  for (int i = 0; i < 10000; i++) {
+    std::string value;
+    db->Get(ReadOptions(), std::to_string(i), &value);
+    assert(value == std::to_string(i));
+  }
   cf_impl->cfd()->mem()->TESTContinuous();
+  auto ret = cf_impl->cfd()->mem()->local_begin();
+  char* new_mem = new char[ret.second];
+  memcpy(new_mem, ret.first, ret.second);
+  cf_impl->cfd()->mem()->set_local_begin(new_mem);
+  for (int i = 0; i < 10000; i++) {
+    std::string value;
+    db->Get(ReadOptions(), std::to_string(i), &value);
+    assert(value == std::to_string(i));
+  }
   db->Close();
   return 0;
 }

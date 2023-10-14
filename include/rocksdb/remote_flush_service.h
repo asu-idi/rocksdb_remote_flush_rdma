@@ -278,6 +278,7 @@ struct PlacementDriver {
   void poll_events(int port);
 };
 
+class RemoteMemTablePool;
 class RDMAServer : public RDMANode {
   struct executor_info {
     int status;
@@ -287,7 +288,7 @@ class RDMAServer : public RDMANode {
 
  public:
   RDMAServer();
-  ~RDMAServer();
+  ~RDMAServer() override;
   bool service(struct rdma_connection *idx);
   void connect_clients(int port) {
     std::thread listen_thread{[this, port]() { pd_.poll_events(port); }};
@@ -295,11 +296,14 @@ class RDMAServer : public RDMANode {
   }
 
  private:
-  void allocate_mem_service(struct rdma_connection *idx);
+  void allocate_mem_service(struct rdma_connection *idx, size_t &ret_offset,
+                            size_t &size);
   void modify_mem_service(struct rdma_connection *idx);
   void disconnect_service(struct rdma_connection *idx);
   void register_executor_service(struct rdma_connection *idx);
   void wait_for_job_service(struct rdma_connection *idx);
+
+  RemoteMemTablePool *remote_memtable_pool_;
   std::unique_ptr<std::mutex> mempool_mtx;
   std::set<std::pair<long long /*offset*/, long long /*len*/>> pinned_mem;
   inline long long pin_mem(long long size) {
@@ -333,10 +337,7 @@ class RDMAServer : public RDMANode {
   std::vector<std::thread *> threads;
   std::unordered_map<struct rdma_connection *, executor_info> executors_;
   void after_connect_qp(struct rdma_connection *idx) override {
-    auto ser = [this, idx] {
-      while (true)
-        if (!service(idx)) break;
-    };
+    auto ser = [this, idx] { service(idx); };
     threads.push_back(new std::thread(ser));
     threads.back()->detach();
   }
@@ -348,7 +349,7 @@ class RDMAServer : public RDMANode {
 class RDMAClient : public RDMANode {
  public:
   RDMAClient();
-  ~RDMAClient();
+  ~RDMAClient() override = default;
   std::pair<long long, long long> allocate_mem_request(
       struct rdma_connection *idx, size_t size);
   // qry_type:

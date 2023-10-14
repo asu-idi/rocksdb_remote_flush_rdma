@@ -30,6 +30,7 @@
 #include <thread>
 #include <utility>
 
+#include "memory/remote_memtable_service.h"
 #include "rocksdb/logger.hpp"
 #include "rocksdb/macro.hpp"
 
@@ -326,14 +327,6 @@ RDMANode::RDMANode() {
 }
 
 RDMANode::~RDMANode() {
-  resources_destroy();
-  delete res;
-}
-RDMAServer::~RDMAServer() {
-  resources_destroy();
-  delete res;
-}
-RDMAClient::~RDMAClient() {
   resources_destroy();
   delete res;
 }
@@ -889,8 +882,16 @@ int RDMANode::modify_qp_to_rts(struct ibv_qp *qp) {
 
 RDMAServer::RDMAServer() : RDMANode() {
   mempool_mtx = std::make_unique<std::mutex>();
+  remote_memtable_pool_ = new RemoteMemTablePool();
 }
+
+RDMAServer::~RDMAServer() {
+  delete remote_memtable_pool_;
+  remote_memtable_pool_ = nullptr;
+}
+
 RDMAClient::RDMAClient() : RDMANode() {}
+
 std::pair<long long, long long> RDMAClient::allocate_mem_request(
     struct rdma_connection *conn, size_t size) {
   char req_type = 1;
@@ -920,7 +921,8 @@ std::pair<long long, long long> RDMAClient::allocate_mem_request(
   }
   return std::make_pair(ret[0], ret[1]);
 }
-void RDMAServer::allocate_mem_service(struct rdma_connection *conn) {
+void RDMAServer::allocate_mem_service(struct rdma_connection *conn,
+                                      size_t &ret_offset, size_t &ret_size) {
   size_t size;
   long long ret[2];
   int remote_size = sizeof(size_t), local_size = sizeof(long long) * 2;
@@ -946,6 +948,8 @@ void RDMAServer::allocate_mem_service(struct rdma_connection *conn) {
     } else {
       ret[0] = pin_begin;
       ret[1] = pin_begin + (long long)size;
+      ret_size = size;
+      ret_offset = pin_begin;
       break;
     }
   }
@@ -1189,6 +1193,7 @@ std::pair<long long, long long> RDMAClient::wait_for_job_request(
   }
   return std::make_pair(ret[0], ret[1]);
 }
+
 void RDMAServer::wait_for_job_service(struct rdma_connection *conn) {
   long long ret[2];
   int local_size = sizeof(long long) * 2;
@@ -1209,40 +1214,71 @@ void RDMAServer::wait_for_job_service(struct rdma_connection *conn) {
   else
     rc = 0;
 }
+
 bool RDMAServer::service(struct rdma_connection *conn) {
-  char req_type;
-  int remote_size = sizeof(char);
-  int rc = 0;
-  int read_bytes = 0;
-  int total_read_bytes = 0;
-  while (!rc && total_read_bytes < remote_size) {
-    read_bytes =
-        read(conn->sock, reinterpret_cast<char *>(&req_type) + total_read_bytes,
-             remote_size - total_read_bytes);
-    if (read_bytes > 0)
-      total_read_bytes += read_bytes;
-    else
-      rc = read_bytes;
+  bool should_close = false;
+  std::thread cur;
+
+  while (!should_close) {
+    char req_type;
+    int remote_size = sizeof(char);
+    int rc = 0;
+    int read_bytes = 0;
+    int total_read_bytes = 0;
+    while (!rc && total_read_bytes < remote_size) {
+      read_bytes = read(conn->sock,
+                        reinterpret_cast<char *>(&req_type) + total_read_bytes,
+                        remote_size - total_read_bytes);
+      if (read_bytes > 0)
+        total_read_bytes += read_bytes;
+      else
+        rc = read_bytes;
+    }
+    switch (req_type) {
+      case 0:
+        disconnect_service(conn);
+        should_close = true;
+        break;
+      case 1: {
+        size_t ret_offset, ret_size;
+        allocate_mem_service(conn, ret_offset, ret_size);
+        break;
+      }
+      case 2:
+        modify_mem_service(conn);
+        break;
+      case 3:
+        register_executor_service(conn);
+        break;
+      case 4:
+        wait_for_job_service(conn);
+        break;
+      case 5: {
+        size_t meta_offset = 0, meta_size = 0, mem_offset = 0, mem_size = 0;
+        allocate_mem_service(conn, meta_offset, meta_size);
+        allocate_mem_service(conn, mem_offset, mem_size);
+        if (meta_size == 0 || mem_size == 0) {
+          fprintf(stderr, "Failed to allocate memory\n");
+          break;
+        }
+        cur = std::move(std::thread([this, &should_close, conn, mem_size,
+                                     meta_size, mem_offset, meta_offset]() {
+          while (!should_close) {
+            post_receive(conn, meta_size, meta_offset);
+            post_receive(conn, mem_size, mem_offset);
+            remote_memtable_pool_->store(
+                reinterpret_cast<void *>(get_buf() + mem_offset), mem_size,
+                reinterpret_cast<void *>(get_buf() + meta_offset), meta_size);
+          }
+        }));
+        break;
+      }
+      default:
+        fprintf(stderr, "Unknown request type from client: %d\n", req_type);
+    }
   }
-  switch (req_type) {
-    case 0:
-      disconnect_service(conn);
-      return false;
-    case 1:
-      allocate_mem_service(conn);
-      break;
-    case 2:
-      modify_mem_service(conn);
-      break;
-    case 3:
-      register_executor_service(conn);
-      break;
-    case 4:
-      wait_for_job_service(conn);
-      break;
-    default:
-      fprintf(stderr, "Unknown request type from client: %d\n", req_type);
-  }
+
+  if (cur.joinable()) cur.join();
   return true;
 }
 

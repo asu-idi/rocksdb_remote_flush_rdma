@@ -791,6 +791,7 @@ set(SOURCES
         memory/memkind_kmem_allocator.cc
         memory/memory_allocator.cc
         memory/remote_flush_service.cc
+        memory/remote_memtable_service.cc
         memtable/alloc_tracker.cc
         memtable/hash_linklist_rep.cc
         memtable/hash_skiplist_rep.cc

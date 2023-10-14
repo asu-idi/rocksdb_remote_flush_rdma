@@ -70,7 +70,8 @@ namespace ROCKSDB_NAMESPACE {
 
 template <class Comparator>
 class TransInlineSkipList {
-  using Offset = int32_t;
+  using Offset = int32_t;  // to align record count, probably we should
+                           // switch this into int64_t
 
  public:
   inline void TESTContinuous() const {
@@ -87,7 +88,7 @@ class TransInlineSkipList {
       assert(
           pptr <= reinterpret_cast<TransConcurrentArena*>(allocator_)->end() &&
           pptr >= reinterpret_cast<TransConcurrentArena*>(allocator_)->begin());
-      node = node->Next(0);
+      node = node->Next(mem_begin_local_, 0);
     }
     LOG_CERR("InlineSkipList TESTContinuous finish");
   }
@@ -118,6 +119,13 @@ class TransInlineSkipList {
   TransInlineSkipList(const TransInlineSkipList&) = delete;
   TransInlineSkipList& operator=(const TransInlineSkipList&) = delete;
 
+  inline void set_local_begin(void* local) {
+    mem_begin_local_ = reinterpret_cast<char*>(local);
+  }
+  inline std::pair<char*, size_t> local_begin() {
+    return std::make_pair(mem_begin_local_,
+                          allocator_->get_max_allocated_bytes());
+  }
   // Allocates a key and a skip-list node, returning a pointer to the key
   // portion of the node.  This method is thread-safe if the allocator
   // is thread-safe.
@@ -242,8 +250,7 @@ class TransInlineSkipList {
   TransConcurrentArena* const
       allocator_;  // Allocator used for allocations of nodes
   // Immutable after construction
-  const void* mem_begin_local_;
-  const void* mem_begin_remote_;
+  char* mem_begin_local_;
   Comparator const compare_;
   Node* const head_;
 
@@ -359,48 +366,72 @@ struct TransInlineSkipList<Comparator>::Node {
   // Accessors/mutators for links.  Wrapped in methods so we can add
   // the appropriate barriers as necessary, and perform the necessary
   // addressing trickery for storing links below the Node in memory.
-  Node* Next(int n) {
+  Node* Next(char* begin, int n) {
     assert(n >= 0);
     // Use an 'acquire load' so that we observe a fully initialized
     // version of the returned Node.
-    return ((&next_[0] - n)->load(std::memory_order_acquire));
+    auto tmp =
+        static_cast<Offset>((&next_[0] - n)->load(std::memory_order_acquire));
+    if (tmp == 0) {
+      return nullptr;
+    } else {
+      return reinterpret_cast<Node*>(begin + tmp);
+    }
   }
 
-  void SetNext(int n, Node* x) {
+  void SetNext(char* begin, int n, Node* x) {
     assert(n >= 0);
     // Use a 'release store' so that anybody who reads through this
     // pointer observes a fully initialized version of the inserted node.
-    (&next_[0] - n)->store(x, std::memory_order_release);
+    auto tmp =
+        (x) ? static_cast<Offset>(reinterpret_cast<char*>(x) - begin) : 0;
+    (&next_[0] - n)->store(tmp, std::memory_order_release);
   }
 
-  bool CASNext(int n, Node* expected, Node* x) {
+  bool CASNext(char* begin, int n, Node* expected, Node* x) {
     assert(n >= 0);
-    return (&next_[0] - n)->compare_exchange_strong(expected, x);
+    auto expected_offset =
+        (expected)
+            ? static_cast<Offset>(reinterpret_cast<char*>(expected) - begin)
+            : 0;
+    auto x_offset =
+        (x) ? static_cast<Offset>(reinterpret_cast<char*>(x) - begin) : 0;
+    return (&next_[0] - n)->compare_exchange_strong(expected_offset, x_offset);
   }
 
   // No-barrier variants that can be safely used in a few locations.
-  Node* NoBarrier_Next(int n) {
+  Node* NoBarrier_Next(char* begin, int n) {
     assert(n >= 0);
-    return (&next_[0] - n)->load(std::memory_order_relaxed);
+    auto tmp =
+        static_cast<Offset>((&next_[0] - n)->load(std::memory_order_relaxed));
+    if (tmp == 0) {
+      return nullptr;
+    } else {
+      return reinterpret_cast<Node*>(begin + tmp);
+    }
   }
 
-  void NoBarrier_SetNext(int n, Node* x) {
+  void NoBarrier_SetNext(char* begin, int n, Node* x) {
     assert(n >= 0);
-    (&next_[0] - n)->store(x, std::memory_order_relaxed);
+    (&next_[0] - n)
+        ->store((x != nullptr && x != reinterpret_cast<Node*>(begin))
+                    ? static_cast<Offset>(reinterpret_cast<char*>(x) - begin)
+                    : Offset(0),
+                std::memory_order_relaxed);
   }
 
   // Insert node after prev on specific level.
-  void InsertAfter(Node* prev, int level) {
+  void InsertAfter(char* begin, Node* prev, int level) {
     // NoBarrier_SetNext() suffices since we will add a barrier when
     // we publish a pointer to "this" in prev.
-    NoBarrier_SetNext(level, prev->NoBarrier_Next(level));
-    prev->SetNext(level, this);
+    NoBarrier_SetNext(begin, level, prev->NoBarrier_Next(begin, level));
+    prev->SetNext(begin, level, this);
   }
 
  private:
   // next_[0] is the lowest level link (level 0).  Higher levels are
   // stored _earlier_, so level 1 is at next_[-1].
-  std::atomic<Node*> next_[1];
+  std::atomic<Offset> next_[1];
 };
 
 template <class Comparator>
@@ -430,7 +461,7 @@ inline const char* TransInlineSkipList<Comparator>::Iterator::key() const {
 template <class Comparator>
 inline void TransInlineSkipList<Comparator>::Iterator::Next() {
   assert(Valid());
-  node_ = node_->Next(0);
+  node_ = node_->Next(list_->mem_begin_local_, 0);
 }
 
 template <class Comparator>
@@ -469,7 +500,7 @@ inline void TransInlineSkipList<Comparator>::Iterator::RandomSeek() {
 
 template <class Comparator>
 inline void TransInlineSkipList<Comparator>::Iterator::SeekToFirst() {
-  node_ = list_->head_->Next(0);
+  node_ = list_->head_->Next(list_->mem_begin_local_, 0);
 }
 
 template <class Comparator>
@@ -526,9 +557,9 @@ TransInlineSkipList<Comparator>::FindGreaterOrEqual(const char* key) const {
   Node* last_bigger = nullptr;
   const DecodedKey key_decoded = compare_.decode_key(key);
   while (true) {
-    Node* next = x->Next(level);
+    Node* next = x->Next(mem_begin_local_, level);
     if (next != nullptr) {
-      PREFETCH(next->Next(level), 0, 1);
+      PREFETCH(next->Next(mem_begin_local_, level), 0, 1);
     }
     // Make sure the lists are sorted
     assert(x == head_ || next == nullptr || KeyIsAfterNode(next->Key(), x));
@@ -570,9 +601,9 @@ TransInlineSkipList<Comparator>::FindLessThan(const char* key, Node** prev,
   const DecodedKey key_decoded = compare_.decode_key(key);
   while (true) {
     assert(x != nullptr);
-    Node* next = x->Next(level);
+    Node* next = x->Next(mem_begin_local_, level);
     if (next != nullptr) {
-      PREFETCH(next->Next(level), 0, 1);
+      PREFETCH(next->Next(mem_begin_local_, level), 0, 1);
     }
     assert(x == head_ || next == nullptr || KeyIsAfterNode(next->Key(), x));
     assert(x == head_ || KeyIsAfterNode(key_decoded, x));
@@ -601,7 +632,7 @@ TransInlineSkipList<Comparator>::FindLast() const {
   Node* x = head_;
   int level = GetMaxHeight() - 1;
   while (true) {
-    Node* next = x->Next(level);
+    Node* next = x->Next(mem_begin_local_, level);
     if (next == nullptr) {
       if (level == 0) {
         return x;
@@ -643,7 +674,7 @@ TransInlineSkipList<Comparator>::FindRandomEntry() const {
     scan_node = x;
     while (scan_node != limit_node) {
       lvl_nodes.push_back(scan_node);
-      scan_node = scan_node->Next(level);
+      scan_node = scan_node->Next(mem_begin_local_, level);
     }
     uint32_t rnd_idx = rnd->Next() % lvl_nodes.size();
     x = lvl_nodes[rnd_idx];
@@ -654,7 +685,8 @@ TransInlineSkipList<Comparator>::FindRandomEntry() const {
   }
   // There is a special case where x could still be the head_
   // (note that the head_ contains no key).
-  return x == head_ && head_ != nullptr ? head_->Next(0) : x;
+  return (x == head_ && head_ != nullptr) ? head_->Next(mem_begin_local_, 0)
+                                          : x;
 }
 
 template <class Comparator>
@@ -666,9 +698,9 @@ uint64_t TransInlineSkipList<Comparator>::EstimateCount(const char* key) const {
   const DecodedKey key_decoded = compare_.decode_key(key);
   while (true) {
     assert(x == head_ || compare_(x->Key(), key_decoded) < 0);
-    Node* next = x->Next(level);
+    Node* next = x->Next(mem_begin_local_, level);
     if (next != nullptr) {
-      PREFETCH(next->Next(level), 0, 1);
+      PREFETCH(next->Next(mem_begin_local_, level), 0, 1);
     }
     if (next == nullptr || compare_(next->Key(), key_decoded) >= 0) {
       if (level == 0) {
@@ -694,8 +726,7 @@ TransInlineSkipList<Comparator>::TransInlineSkipList(const Comparator cmp,
       kBranching_(static_cast<uint16_t>(branching_factor)),
       kScaledInverseBranching_((Random::kMaxNext + 1) / kBranching_),
       allocator_(reinterpret_cast<TransConcurrentArena*>(allocator)),
-      mem_begin_local_(allocator_->begin()),
-      mem_begin_remote_(allocator_->begin()),
+      mem_begin_local_(reinterpret_cast<char*>(allocator_->begin())),
       compare_(cmp),
       head_(AllocateNode(0, max_height)),
       max_height_(1),
@@ -706,7 +737,7 @@ TransInlineSkipList<Comparator>::TransInlineSkipList(const Comparator cmp,
   assert(kScaledInverseBranching_ > 0);
 
   for (int i = 0; i < kMaxHeight_; ++i) {
-    head_->SetNext(i, nullptr);
+    head_->SetNext(mem_begin_local_, i, nullptr);
   }
 }
 
@@ -718,7 +749,7 @@ char* TransInlineSkipList<Comparator>::AllocateKey(size_t key_size) {
 template <class Comparator>
 typename TransInlineSkipList<Comparator>::Node*
 TransInlineSkipList<Comparator>::AllocateNode(size_t key_size, int height) {
-  auto prefix = sizeof(std::atomic<Node*>) * (height - 1);
+  auto prefix = sizeof(std::atomic<Offset>) * (height - 1);
 
   // prefix is space for the height - 1 pointers that we store
   // before the Node instance (next_[-(height - 1) .. -1]). Node
@@ -726,6 +757,10 @@ TransInlineSkipList<Comparator>::AllocateNode(size_t key_size, int height) {
   // skip list pointer next_[0].  key_size is the bytes for the
   // key, which comes just after the Node.
   char* raw = allocator_->Allocate(prefix + sizeof(Node) + key_size);
+  fprintf(stderr, "raw: %p allocatebytes: %d. mem_begin_local_= %p\n",
+          reinterpret_cast<void*>(raw), prefix + sizeof(Node) + key_size,
+          reinterpret_cast<void*>(mem_begin_local_));
+
   Node* x = reinterpret_cast<Node*>(raw + prefix);
 
   // Once we've linked the node into the skip list we don't
@@ -813,13 +848,14 @@ void TransInlineSkipList<Comparator>::FindSpliceForLevel(const DecodedKey& key,
                                                          Node** out_prev,
                                                          Node** out_next) {
   while (true) {
-    Node* next = before->Next(level);
+    Node* next = before->Next(mem_begin_local_, level);
     if (next != nullptr) {
-      PREFETCH(next->Next(level), 0, 1);
+      fprintf(stderr, "next: %p begin: %p\n", next, mem_begin_local_);
+      PREFETCH(next->Next(mem_begin_local_, level), 0, 1);
     }
     if (prefetch_before == true) {
       if (next != nullptr && level > 0) {
-        PREFETCH(next->Next(level - 1), 0, 1);
+        PREFETCH(next->Next(mem_begin_local_, level - 1), 0, 1);
       }
     }
     assert(before == head_ || next == nullptr ||
@@ -911,7 +947,8 @@ bool TransInlineSkipList<Comparator>::Insert(const char* key, Splice* splice,
     // be pessimistic for seq_splice_, optimistic if the caller
     // actually went to the work of providing a Splice.
     while (recompute_height < max_height) {
-      if (splice->prev_[recompute_height]->Next(recompute_height) !=
+      if (splice->prev_[recompute_height]->Next(mem_begin_local_,
+                                                recompute_height) !=
           splice->next_[recompute_height]) {
         // splice isn't tight at this level, there must have
         // been some inserts to this location that didn't update
@@ -977,8 +1014,9 @@ bool TransInlineSkipList<Comparator>::Insert(const char* key, Splice* splice,
                compare_(x->Key(), splice->next_[i]->Key()) < 0);
         assert(splice->prev_[i] == head_ ||
                compare_(splice->prev_[i]->Key(), x->Key()) < 0);
-        x->NoBarrier_SetNext(i, splice->next_[i]);
-        if (splice->prev_[i]->CASNext(i, splice->next_[i], x)) {
+        x->NoBarrier_SetNext(mem_begin_local_, i, splice->next_[i]);
+        if (splice->prev_[i]->CASNext(mem_begin_local_, i, splice->next_[i],
+                                      x)) {
           // success
           break;
         }
@@ -1004,7 +1042,7 @@ bool TransInlineSkipList<Comparator>::Insert(const char* key, Splice* splice,
   } else {
     for (int i = 0; i < height; ++i) {
       if (i >= recompute_height &&
-          splice->prev_[i]->Next(i) != splice->next_[i]) {
+          splice->prev_[i]->Next(mem_begin_local_, i) != splice->next_[i]) {
         FindSpliceForLevel<false>(key_decoded, splice->prev_[i], nullptr, i,
                                   &splice->prev_[i], &splice->next_[i]);
       }
@@ -1024,9 +1062,9 @@ bool TransInlineSkipList<Comparator>::Insert(const char* key, Splice* splice,
              compare_(x->Key(), splice->next_[i]->Key()) < 0);
       assert(splice->prev_[i] == head_ ||
              compare_(splice->prev_[i]->Key(), x->Key()) < 0);
-      assert(splice->prev_[i]->Next(i) == splice->next_[i]);
-      x->NoBarrier_SetNext(i, splice->next_[i]);
-      splice->prev_[i]->SetNext(i, x);
+      assert(splice->prev_[i]->Next(mem_begin_local_, i) == splice->next_[i]);
+      x->NoBarrier_SetNext(mem_begin_local_, i, splice->next_[i]);
+      splice->prev_[i]->SetNext(mem_begin_local_, i, x);
     }
   }
   if (splice_is_valid) {
@@ -1077,7 +1115,7 @@ void TransInlineSkipList<Comparator>::TEST_Validate() const {
     nodes[i] = head_;
   }
   while (nodes[0] != nullptr) {
-    Node* l0_next = nodes[0]->Next(0);
+    Node* l0_next = nodes[0]->Next(mem_begin_local_, 0);
     if (l0_next == nullptr) {
       break;
     }
@@ -1086,7 +1124,7 @@ void TransInlineSkipList<Comparator>::TEST_Validate() const {
 
     int i = 1;
     while (i < max_height) {
-      Node* next = nodes[i]->Next(i);
+      Node* next = nodes[i]->Next(mem_begin_local_, i);
       if (next == nullptr) {
         break;
       }
@@ -1102,7 +1140,8 @@ void TransInlineSkipList<Comparator>::TEST_Validate() const {
     }
   }
   for (int i = 1; i < max_height; i++) {
-    assert(nodes[i] != nullptr && nodes[i]->Next(i) == nullptr);
+    assert(nodes[i] != nullptr &&
+           nodes[i]->Next(mem_begin_local_, i) == nullptr);
   }
 }
 

@@ -108,6 +108,10 @@ using MultiGetRange = MultiGetContext::Range;
 // written to (aka the 'immutable memtables').
 class MemTable {
  public:
+  inline void set_local_begin(void* local) { table_->set_local_begin(local); }
+  inline std::pair<char*, size_t> local_begin() const {
+    return table_->local_begin();
+  }
   Status SendToRemote(RDMAClient* client,
                       RDMANode::rdma_connection* memtable_conn,
                       const std::pair<size_t, size_t>& remote_meta_reg,

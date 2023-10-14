@@ -37,6 +37,12 @@ class SkipListRep : public MemTableRep {
   friend ReadOnlySkipListRep;
 
  public:
+  inline void set_local_begin(void* local) override {
+    skip_list_.set_local_begin(local);
+  }
+  inline std::pair<char*, size_t> local_begin() override {
+    return skip_list_.local_begin();
+  }
   void TESTContinuous() const override {
     char* ptr = reinterpret_cast<char*>(const_cast<SkipListRep*>(this));
     LOG("SkipListRep: ", reinterpret_cast<void*>(ptr));
@@ -466,7 +472,6 @@ Status SkipListRep::SendToRemote(
                        reinterpret_cast<TransConcurrentArena*>(allocator_)
                            ->get_max_allocated_bytes(),
                        local_data_offset, remote_data_seg.first);
-    client->poll_completion(conn);
     if (client->poll_completion(conn)) {
       s = Status::IOError("poll_completion failed");
     }
@@ -491,13 +496,7 @@ void SkipListRep::PackLocal(TransferService* node) const {
   LOG("SkipListRep::PackLocal finish");
 }
 
-// caller async
-void SkipListRep::MarkReadOnly() {
-  LOG_CERR("SkipListRep MarkReadOnly");
-  // PackLocal(TransferService *node, size_t protection_bytes_per_key)
-  // todo: remote support
-  MarkTransAsFinished();
-}
+void SkipListRep::MarkReadOnly() { LOG_CERR("SkipListRep MarkReadOnly"); }
 
 }  // namespace
 
