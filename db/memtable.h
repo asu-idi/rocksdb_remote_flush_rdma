@@ -59,7 +59,7 @@ struct ImmutableMemTableOptions {
     size_t size = sizeof(ImmutableMemTableOptions);
     node->receive(&mem, &size);
     auto* ptr = reinterpret_cast<ImmutableMemTableOptions*>(mem);
-    ptr->info_log = nullptr;  // todo(iaIm14)
+    ptr->info_log = nullptr;
     return mem;
   }
 

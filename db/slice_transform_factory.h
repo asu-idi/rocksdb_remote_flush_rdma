@@ -25,11 +25,10 @@ class SliceTransformFactory {
 };
 
 inline void* SliceTransformFactory::UnPackLocal(TransferService* node) {
-  int64_t* msg = nullptr;
-  size_t size = sizeof(int64_t);
-  node->receive(reinterpret_cast<void**>(&msg), &size);
-  int64_t type = *msg & 0xff;
-  int64_t info = (*msg >> 8);
+  std::pair<uint8_t, size_t> msg(0, 0);
+  node->receive(&msg, sizeof(msg));
+  uint8_t type = msg.first;
+  size_t info = msg.second;
   if (type == 0 /*InternalKeySliceTransform*/) {
     void* ptr = SliceTransformFactory::UnPackLocal(node);
     return reinterpret_cast<void*>(InternalKeySliceTransform::UnPackLocal(ptr));
@@ -42,10 +41,11 @@ inline void* SliceTransformFactory::UnPackLocal(TransferService* node) {
   } else if (type == 3 /*NoopTransform*/) {
     const SliceTransform* local_ptr = NewNoopTransform();
     return reinterpret_cast<void*>(const_cast<SliceTransform*>(local_ptr));
-  } else if (type == 0xff) {
+  } else if (type == 4) {
     return nullptr;
   } else {
-    LOG("SliceTransformFactory::UnPackLocal: error: ", type, ' ', info);
+    LOG_CERR("SliceTransformFactory::UnPackLocal: error: ", uint8_t(type), ' ',
+             info);
     assert(false);
     return nullptr;
   }

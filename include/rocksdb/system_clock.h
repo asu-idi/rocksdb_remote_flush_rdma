@@ -34,11 +34,8 @@ struct ConfigOptions;
 class SystemClock : public Customizable {
  public:
   virtual void PackLocal(TransferService* node) const {
-    std::string mem(Name());
-    mem.resize(20);
-    assert(mem.length() == 20);
-    node->send(mem.c_str(), mem.length());
-    LOG("send ", mem.c_str());
+    uint8_t type = 0;
+    node->send(&type, sizeof(type));
   }
 
  public:

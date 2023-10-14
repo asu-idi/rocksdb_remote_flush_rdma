@@ -33,9 +33,7 @@ class FixedPrefixTransform : public SliceTransform {
   }
   void PackLocal(TransferService* node) const override {
     LOG("FixedPrefixTransform::PackLocal");
-    int64_t msg = 0;
-    msg += (0x01);
-    msg += (((int64_t)prefix_len_) << 8);
+    std::pair<uint8_t, size_t> msg(1, prefix_len_);
     node->send(&msg, sizeof(msg));
   }
 
@@ -96,9 +94,7 @@ class CappedPrefixTransform : public SliceTransform {
   int64_t identifier() const override { return (((int64_t)cap_len_) << 8) | 2; }
   void PackLocal(TransferService* node) const override {
     LOG("CappedPrefixTransform::PackLocal");
-    int64_t msg = 0;
-    msg += (0x02);
-    msg += (((int64_t)cap_len_) << 8);
+    std::pair<uint8_t, size_t> msg(2, cap_len_);
     node->send(&msg, sizeof(msg));
   }
 
@@ -156,8 +152,7 @@ class NoopTransform : public SliceTransform {
   int64_t identifier() const override { return 3; }
   void PackLocal(TransferService* node) const override {
     LOG("NoopTransform::PackLocal");
-    int64_t msg = 0;
-    msg += (0x03);
+    std::pair<uint8_t, size_t> msg(3, 0);
     node->send(&msg, sizeof(msg));
   }
 

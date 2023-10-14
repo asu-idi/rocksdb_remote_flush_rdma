@@ -6,6 +6,7 @@
 #include "db/memtable_list.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cassert>
 #include <chrono>
 #include <cinttypes>

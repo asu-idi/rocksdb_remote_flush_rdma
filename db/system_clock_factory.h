@@ -21,24 +21,17 @@ class SystemClockFactory {
   ~SystemClockFactory() = default;
 };
 inline void* SystemClockFactory::UnPackLocal(TransferService* node) {
-  std::string clock_info_;
-  clock_info_.resize(20);
-  node->receive(clock_info_.data(), 20);
-
-  if (strncmp(clock_info_.c_str(), "SystemClock", strlen("SystemClock")) == 0 ||
-      strncmp(clock_info_.c_str(), "DefaultClock", strlen("DefaultClock")) ==
-          0) {
-    return SystemClock::Default().get();
-  }
-  if (strncmp(clock_info_.c_str(), "LegacySystemClock",
-              strlen("LegacySystemClock")) == 0)
+  uint8_t msg = 0;
+  node->receive(&msg, sizeof(msg));
+  if (msg == 0) {
     return Env::Default()->GetSystemClock().get();
-  if (strncmp(clock_info_.c_str(), "TimeEmulatedSystemClock",
-              strlen("TimeEmulatedSystemClock")) == 0 ||
-      strncmp(clock_info_.c_str(), "TimeEmulatedSystemCl",
-              strlen("TimeEmulatedSystemCl")) == 0)
+  } else if (msg == 1) {
+    return Env::Default()->GetSystemClock().get();
+  } else if (msg == 2) {
     return new EmulatedSystemClock(SystemClock::Default());
-  LOG("Unknown clock info: ", clock_info_.c_str());
-  assert(false);
+  } else {
+    assert(false);
+    return nullptr;
+  }
 }
 }  // namespace ROCKSDB_NAMESPACE

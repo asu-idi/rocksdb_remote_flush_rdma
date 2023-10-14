@@ -133,6 +133,8 @@ class PosixDynamicLibrary : public DynamicLibrary {
 
 class PosixClock : public SystemClock {
  public:
+  using SystemClock::PackLocal;
+
   static const char* kClassName() { return "PosixClock"; }
   const char* Name() const override { return kDefaultName(); }
   const char* NickName() const override { return kClassName(); }

@@ -57,10 +57,8 @@ class RDMATransferService : public TransferService {
   }
 
   bool send(const void *buf, size_t size) override {
-    const char *hheader = "Header";
-    memcpy(current_ptr, hheader, 6);
-    memcpy(current_ptr + 6, &size, sizeof(size_t));
-    current_ptr += sizeof(size_t) + 6;
+    memcpy(current_ptr, &size, sizeof(size_t));
+    current_ptr += sizeof(size_t);
     memcpy(current_ptr, buf, size);
     current_ptr += size;
     return true;
@@ -76,10 +74,8 @@ class RDMATransferService : public TransferService {
   }
   bool receive(void **buf, size_t *size) override {
     char *buf_ = reinterpret_cast<char *>(*buf);
-    assert(memcmp(current_ptr, "Header", 6) == 0);
-    size_t package_size =
-        *reinterpret_cast<size_t *>(reinterpret_cast<char *>(current_ptr) + 6);
-    current_ptr += sizeof(size_t) + 6;
+    size_t package_size = *reinterpret_cast<size_t *>(current_ptr);
+    current_ptr += sizeof(size_t);
     if (*size == 0)
       *size = package_size;
     else

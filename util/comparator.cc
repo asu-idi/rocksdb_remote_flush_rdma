@@ -36,9 +36,8 @@ class BytewiseComparatorImpl : public Comparator {
  public:
   void PackLocal(TransferService* node) const override {
     LOG("BytewiseComparatorImpl::PackLocal");
-    int64_t msg = 0;
-    msg += (0x00);
-    node->send(&msg, sizeof(int64_t));
+    uint8_t msg = 0;
+    node->send(&msg, sizeof(msg));
   }
 
  public:
@@ -162,9 +161,8 @@ class ReverseBytewiseComparatorImpl : public BytewiseComparatorImpl {
  public:
   void PackLocal(TransferService* node) const override {
     LOG("ReverseBytewiseComparatorImpl::PackLocal");
-    int64_t msg = 0;
-    msg += (0x01);
-    node->send(&msg, sizeof(int64_t));
+    uint8_t msg = 1;
+    node->send(&msg, sizeof(msg));
   }
 
  public:

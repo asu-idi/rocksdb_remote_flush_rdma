@@ -48,15 +48,11 @@ static inline uint64_t ntohll(uint64_t x) { return x; }
 namespace ROCKSDB_NAMESPACE {
 
 bool TCPNode::send(const void *buf, size_t size) {
-  const char *hheader = "Header";
-  void *header_ = malloc(sizeof(size) + 6);
-  memcpy(header_, hheader, 6);
-  memcpy(reinterpret_cast<char *>(header_) + 6, &size, sizeof(size));
   size_t total = 0;
-  while (total < sizeof(size) + 6) {
-    ssize_t n = write(connection_info_.client_sockfd,
-                      reinterpret_cast<char *>(header_) + total,
-                      sizeof(size) + 6 - total);
+  while (total < sizeof(size)) {
+    ssize_t n =
+        write(connection_info_.client_sockfd,
+              reinterpret_cast<char *>(&size) + total, sizeof(size) - total);
     if (n == -1) {
       LOG("TCPNode::send: write error");
       assert(false);
@@ -64,7 +60,6 @@ bool TCPNode::send(const void *buf, size_t size) {
     total += n;
   }
 
-  free(header_);
   char *buf_ = reinterpret_cast<char *>(const_cast<void *>(buf));
   total = 0;
   while (total < size) {
@@ -88,12 +83,12 @@ bool TCPNode::send(const void *buf, size_t size) {
 // recv(buf==nullptr,size==0) => receive n bytes data to new allocated address
 bool TCPNode::receive(void **buf, size_t *size) {
   char *buf_ = reinterpret_cast<char *>(*buf);
-  void *header_ = malloc(sizeof(size_t) + 6);
+  size_t package_size = 0;
   ssize_t total = 0;
-  while (total < ssize_t(sizeof(size_t) + 6)) {
+  while (total < ssize_t(sizeof(size_t))) {
     ssize_t n = read(connection_info_.client_sockfd,
-                     reinterpret_cast<char *>(header_) + total,
-                     sizeof(size_t) + 6 - total);
+                     reinterpret_cast<char *>(&package_size) + total,
+                     sizeof(size_t) - total);
     if (n == -1) {
       LOG("TCPNode::receive: read error");
       assert(false);
@@ -103,14 +98,7 @@ bool TCPNode::receive(void **buf, size_t *size) {
     }
     total += n;
   }
-  if (memcmp(header_, "Header", 6)) {
-    LOG("TCPNode::receive: header error");
-    assert(false);
-  }
-  size_t package_size = 0;
-  memcpy(&package_size, reinterpret_cast<char *>(header_) + 6,
-         sizeof(package_size));
-  free(header_);
+
   if (*size == 0)
     *size = package_size;
   else

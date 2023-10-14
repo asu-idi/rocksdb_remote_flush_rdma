@@ -23,16 +23,13 @@ class ComparatorFactory {
 };
 
 inline void* ComparatorFactory::UnPackLocal(TransferService* node) {
-  int64_t* msg = nullptr;
-  size_t size = sizeof(int64_t);
-  node->receive(reinterpret_cast<void**>(&msg), &size);
-  int64_t type = *msg & 0xff;
-  // int64_t info = (*msg >> 8);
-  if (type == 0 /*BytewiseComparator*/) {
+  uint8_t msg = 0;
+  node->receive(&msg, sizeof(msg));
+  if (msg == 0 /*BytewiseComparator*/) {
     LOG("ComparatorFactory::UnPackLocal: BytewiseComparator");
     const Comparator* local_ptr = BytewiseComparator();
     return reinterpret_cast<void*>(const_cast<Comparator*>(local_ptr));
-  } else if (type == 1 /*ReverseBytewiseComparatorImpl*/) {
+  } else if (msg == 1 /*ReverseBytewiseComparatorImpl*/) {
     LOG("ComparatorFactory::UnPackLocal: ReverseBytewiseComparatorImpl");
     const Comparator* local_ptr = ReverseBytewiseComparator();
     return reinterpret_cast<void*>(const_cast<Comparator*>(local_ptr));

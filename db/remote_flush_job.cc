@@ -102,7 +102,7 @@ RemoteFlushJob::RemoteFlushJob(
     FSDirectory* output_file_directory, CompressionType output_compression,
     Statistics* stats, EventLogger* event_logger, bool measure_io_stats,
     const bool sync_output_directory, const bool write_manifest,
-    Env::Priority thread_pri, const std::shared_ptr<IOTracer>& io_tracer,
+    const std::shared_ptr<IOTracer>& io_tracer,
     const SeqnoToTimeMapping& seqno_time_mapping,
 #ifdef ROCKSDB_RDMA
     RDMAClient* rdma_client,
@@ -137,7 +137,6 @@ RemoteFlushJob::RemoteFlushJob(
       edit_(nullptr),
       base_(nullptr),
       pick_memtable_called(false),
-      thread_pri_(thread_pri),
       clock_(db_options_.clock),
       full_history_ts_low_(std::move(full_history_ts_low)),
       stats_(stats),
@@ -187,9 +186,8 @@ void RemoteFlushJob::PackLocal(TransferService* node) const {
   // Pack db_impl_seqno_time_mapping_
   db_impl_seqno_time_mapping_.PackLocal(node);
   seqno_to_time_mapping_.PackLocal(node);
-  db_mutex_->Lock();
   // Pack cfd_
-  cfd_->PackLocal(node);
+  cfd_->PackLocal(node, db_mutex_);
   assert(base_ != nullptr && base_->cfd() == cfd_);
   if (base_ != cfd_->current()) {
     size_t msg = 0;
@@ -404,10 +402,10 @@ void RemoteFlushJob::PackRemote(TransferService* node) const {
       "Pack data from remote side");
   assert(mems_.size() > 0);
   mems_[0]->PackRemote(node);
-  cfd_->PackRemote(node);
-  table_properties_.PackRemote(node);
   edit_->PackRemote(node);
   meta_.PackRemote(node);
+  table_properties_.PackRemote(node);
+  cfd_->PackRemote(node);
   edit_->free_remote();
   mems_[0]->free_remote();
   cfd_->free_remote();
@@ -438,13 +436,6 @@ void RemoteFlushJob::UnPackRemote(TransferService* node) {
   LOG("RemoteFlushJob::UnPackRemote mems_[0]");
   mems_[0]->UnPackRemote(node);
   LOG("RemoteFlushJob::UnPackRemote cfd_");
-  db_mutex_->Lock();
-  cfd_->UnPackRemote(node);
-  auto new_table_properties =
-      reinterpret_cast<TableProperties*>(TableProperties::UnPackRemote(node));
-  table_properties_ = *new_table_properties;
-  delete new_table_properties;
-  db_mutex_->Unlock();
   edit_->UnPackRemote(node);
   auto remote_metadata =
       reinterpret_cast<FileMetaData*>(FileMetaData::UnPackRemote(node));
@@ -467,10 +458,28 @@ void RemoteFlushJob::UnPackRemote(TransferService* node) {
   meta_.file_checksum_func_name = remote_metadata->file_checksum_func_name;
   meta_.unique_id = remote_metadata->unique_id;
   meta_.oldest_ancester_time = remote_metadata->oldest_ancester_time;
-  free(remote_metadata);
+  auto new_table_properties =
+      reinterpret_cast<TableProperties*>(TableProperties::UnPackRemote(node));
+  table_properties_ = *new_table_properties;
+  delete new_table_properties;
+  LOG("rebuild table cache");
+  std::unique_ptr<InternalIterator> it(cfd_->table_cache()->NewIterator(
+      ReadOptions(), file_options_, cfd_->internal_comparator(), meta_,
+      nullptr /* range_del_agg */, mutable_cf_options_.prefix_extractor,
+      nullptr,
+      (cfd_->internal_stats() == nullptr)
+          ? nullptr
+          : cfd_->internal_stats()->GetFileReadHist(0),
+      TableReaderCaller::kFlush, /*arena=*/nullptr,
+      /*skip_filter=*/false, 0, MaxFileSizeForL0MetaPin(mutable_cf_options_),
+      /*smallest_compaction_key=*/nullptr,
+      /*largest_compaction_key*/ nullptr,
+      /*allow_unprepared_value*/ false));
+  // close connection with remote worker
   db_mutex_->Lock();
+  cfd_->UnPackRemote(node);
   base_->Unref();
-  db_mutex_->Unlock();
+  free(remote_metadata);
   LOG("RemoteFlushJob::UnPackRemote done");
 }
 
@@ -487,7 +496,7 @@ std::shared_ptr<RemoteFlushJob> RemoteFlushJob::CreateRemoteFlushJob(
     FSDirectory* output_file_directory, CompressionType output_compression,
     Statistics* stats, EventLogger* event_logger, bool measure_io_stats,
     const bool sync_output_directory, const bool write_manifest,
-    Env::Priority thread_pri, const std::shared_ptr<IOTracer>& io_tracer,
+    const std::shared_ptr<IOTracer>& io_tracer,
     const SeqnoToTimeMapping& seqno_time_mapping,
 #ifdef ROCKSDB_RDMA
     RDMAClient* rdma_client,
@@ -501,8 +510,8 @@ std::shared_ptr<RemoteFlushJob> RemoteFlushJob::CreateRemoteFlushJob(
       std::move(existing_snapshots), earliest_write_conflict_snapshot,
       snapshot_checker, job_context, flush_reason, log_buffer, db_directory,
       output_file_directory, output_compression, stats, event_logger,
-      measure_io_stats, sync_output_directory, write_manifest, thread_pri,
-      io_tracer, seqno_time_mapping,
+      measure_io_stats, sync_output_directory, write_manifest, io_tracer,
+      seqno_time_mapping,
 #ifdef ROCKSDB_RDMA
       rdma_client,
 #endif
@@ -657,7 +666,9 @@ Status RemoteFlushJob::RunRemote(
     transfer_service.send(&port, sizeof(int));
     assert(local_ip.size());
     transfer_service.send(local_ip.c_str(), local_ip.size());
+
 #ifdef ROCKSDB_RDMA
+    fprintf(stderr, "rf-meta size=%lu\n", transfer_service.get_size());
     auto remote_seg = local_generator_rdma_client->allocate_mem_request(
         rdma_conn, transfer_service.get_size());
     local_generator_rdma_client->rdma_write(
@@ -681,23 +692,7 @@ Status RemoteFlushJob::RunRemote(
     TCPTransferService transfer_service2(&local_generator_node);
     UnPackRemote(&transfer_service2);
     // s = Status::OK();
-    LOG("rebuild table cache");
-    std::unique_ptr<InternalIterator> it(cfd_->table_cache()->NewIterator(
-        ReadOptions(), file_options_, cfd_->internal_comparator(), meta_,
-        nullptr /* range_del_agg */, mutable_cf_options_.prefix_extractor,
-        nullptr,
-        (cfd_->internal_stats() == nullptr)
-            ? nullptr
-            : cfd_->internal_stats()->GetFileReadHist(0),
-        TableReaderCaller::kFlush, /*arena=*/nullptr,
-        /*skip_filter=*/false, 0, MaxFileSizeForL0MetaPin(mutable_cf_options_),
-        /*smallest_compaction_key=*/nullptr,
-        /*largest_compaction_key*/ nullptr,
-        /*allow_unprepared_value*/ false));
-    // close connection with remote worker
     assert(QuitRemoteWorker() == Status::OK());
-    db_mutex_->Lock();
-
     LOG("Run job: write l0table done");
     LOG(edit_->DebugString());
     LOG(meta_.DebugString());
@@ -1548,7 +1543,7 @@ Status RemoteFlushJob::WriteLevel0Table() {
   stats.num_output_files_blob = static_cast<int>(blobs.size());
 
   RecordTimeToHistogram(stats_, FLUSH_TIME, stats.micros);
-  cfd_->internal_stats()->AddCompactionStats(0 /* level */, thread_pri_,
+  cfd_->internal_stats()->AddCompactionStats(0 /* level */, Env::Priority::HIGH,
                                              stats);  // packremote
   cfd_->internal_stats()->AddCFStats(
       InternalStats::BYTES_FLUSHED,

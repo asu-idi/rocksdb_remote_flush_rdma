@@ -285,7 +285,7 @@ class ColumnFamilyData {
   }
   Status background_schedule_imm_trans();
   void free_remote();
-  void PackLocal(TransferService* node) const;
+  void PackLocal(TransferService* node, InstrumentedMutex* db_mutex) const;
   static void* UnPackLocal(TransferService* node);
   void PackRemote(TransferService* node) const;
   void UnPackRemote(TransferService* node);

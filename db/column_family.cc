@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cinttypes>
 #include <cstddef>
 #include <cstdlib>
@@ -46,6 +47,7 @@
 #include "db/write_controller.h"
 #include "file/sst_file_manager_impl.h"
 #include "logging/logging.h"
+#include "monitoring/instrumented_mutex.h"
 #include "monitoring/thread_status_util.h"
 #include "options/cf_options.h"
 #include "options/db_options.h"
@@ -838,10 +840,11 @@ void ColumnFamilyData::UnPackRemote(TransferService* node) {
   LOG("ColumnFamilyData::UnPackRemote done.");
 }
 
-void ColumnFamilyData::PackLocal(TransferService* node) const {
+void ColumnFamilyData::PackLocal(TransferService* node,
+                                 InstrumentedMutex* db_mutex) const {
+  assert(internal_comparator_.user_comparator() ==
+         initial_cf_options_.comparator);
   initial_cf_options_.PackLocal(node);
-  current_->PackLocal(node);
-  assert(current_->cfd() == this);
   ioptions_.PackLocal(node);
   mutable_cf_options_.PackLocal(node);
   // int_tbl_prop_collector_factories_.PackLocal(sockfd);
@@ -860,19 +863,22 @@ void ColumnFamilyData::PackLocal(TransferService* node) const {
   node->send(reinterpret_cast<const void*>(&ret_val), sizeof(size_t));
   node->send(reinterpret_cast<const void*>(name_.data()), name_.size());
 
+  std::chrono::time_point<std::chrono::system_clock> now =
+      std::chrono::system_clock::now();
+  db_mutex->Lock();
+  current_->PackLocal(node);
+  assert(current_->cfd() == this);
   node->send(reinterpret_cast<const void*>(this), sizeof(ColumnFamilyData));
-  //  todo: remove this
-  LOG("server CHECK cfd_ Comparator: ");
-  assert(internal_comparator_.user_comparator() ==
-         initial_cf_options_.comparator);
+  LOG_CERR("cfd_itself::PackLocal time: ",
+           std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now() - now)
+               .count());
 }
 
 void* ColumnFamilyData::UnPackLocal(TransferService* node) {
   void* mem = malloc(sizeof(ColumnFamilyData));
   auto* worker_initial_cf_options_ = reinterpret_cast<ColumnFamilyOptions*>(
       ColumnFamilyOptions::UnPackLocal(node));
-  auto* worker_current_ =
-      reinterpret_cast<Version*>(Version::UnPackLocal(node, mem));
   auto* worker_ioptions_ = reinterpret_cast<ImmutableOptions*>(
       ImmutableOptions::UnPackLocal(node, *worker_initial_cf_options_));
   auto* worker_mutable_cf_options_ =
@@ -891,6 +897,8 @@ void* ColumnFamilyData::UnPackLocal(TransferService* node) {
   std::string worker_name_(ret_val, '\0');
   node->receive(reinterpret_cast<void*>(worker_name_.data()), ret_val);
 
+  auto* worker_current_ =
+      reinterpret_cast<Version*>(Version::UnPackLocal(node, mem));
   node->receive(reinterpret_cast<void*>(mem), sizeof(ColumnFamilyData));
   auto* worker_cfd_ = reinterpret_cast<ColumnFamilyData*>(mem);
   new (const_cast<ColumnFamilyOptions*>(&worker_cfd_->initial_cf_options_))

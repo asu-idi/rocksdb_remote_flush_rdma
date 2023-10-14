@@ -1724,6 +1724,10 @@ class DBImpl : public DB {
 #endif
   };
 
+  struct RflushThreadArg {
+    DBImpl* db_;
+  };
+
   // Information for a manual compaction
   struct ManualCompactionState {
     ManualCompactionState(ColumnFamilyData* _cfd, int _input_level,
@@ -2101,6 +2105,7 @@ class DBImpl : public DB {
                                  std::pair<long long, long long> remote_seg,
 #endif  // ROCKSDB_RDMA
                                  Env::Priority thread_pri);
+  void BGListenRemoteFlush();
   void BackgroundCallCompaction(PrepickedCompaction* prepicked_compaction,
                                 Env::Priority thread_pri);
   void BackgroundCallFlush(Env::Priority thread_pri);

@@ -261,7 +261,7 @@ void MemTable::PackLocal(TransferService* node) const {
   if (prefix_extractor_ != nullptr)
     prefix_extractor_->PackLocal(node);
   else {
-    int64_t msg = 0xff;
+    std::pair<uint8_t, size_t> msg(4, 0);
     node->send(&msg, sizeof(msg));
   }
   comparator_.PackLocal(node);

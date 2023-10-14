@@ -545,7 +545,7 @@ class PDClient {
         placement_info pinfo = get_placement_info();
         if (lastpinfo.current_background_job_num_ !=
                 pinfo.current_background_job_num_ ||
-            lastpinfo.current_hdfs_io_ != pinfo.current_hdfs_io_ || cnt >= 5) {
+            lastpinfo.current_hdfs_io_ != pinfo.current_hdfs_io_ || cnt >= 3) {
           lastpinfo = pinfo;
           cnt = 0;
           Status s0 = SendHeartBeat(pinfo);

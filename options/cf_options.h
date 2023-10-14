@@ -163,7 +163,7 @@ struct MutableCFOptions {
     if (prefix_extractor != nullptr)
       prefix_extractor->PackLocal(node);
     else {
-      int64_t msg = 0xff;
+      std::pair<uint8_t, size_t> msg(4, 0);
       node->send(&msg, sizeof(msg));
     }
     node->send(&memtable_whole_key_filtering, sizeof(bool));
