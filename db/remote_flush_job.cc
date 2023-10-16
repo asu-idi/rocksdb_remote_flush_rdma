@@ -761,6 +761,7 @@ Status RemoteFlushJob::MatchRemoteWorker(int port) {
            (struct sockaddr*)&local_generator_node.connection_info_.sin_addr,
            sizeof(local_generator_node.connection_info_.sin_addr)) < 0) {
     LOG("bind failed");
+    fprintf(stderr, "bind failed with port %d\n", port);
     return Status::IOError("bind failed");
   }
   if (listen(local_generator_node.connection_info_.listen_sockfd, 1) < 0) {
