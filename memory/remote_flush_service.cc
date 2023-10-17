@@ -1004,7 +1004,7 @@ void RDMAServer::modify_mem_service(struct rdma_connection *conn) {
   }
   {
     mempool_mtx->lock();
-    auto iter = pinned_mem.find(std::make_pair(input[0], input[1]));
+    auto iter = pinned_mem.find(std::make_pair(input[0], input[1] - input[0]));
     if (iter == pinned_mem.end()) {
       // not found in mempool, this should not happen
       ret = false;
@@ -1017,7 +1017,7 @@ void RDMAServer::modify_mem_service(struct rdma_connection *conn) {
       mempool_mtx->unlock();
       unpin_mem(input[0], input[1] - input[0]);
       for (auto &it : executors_) {
-        if (it.second.current_job == *iter) {
+        if (it.second.current_job == std::make_pair(input[0], input[1])) {
           ret = true;
           it.second.status--;
           break;
@@ -1026,7 +1026,7 @@ void RDMAServer::modify_mem_service(struct rdma_connection *conn) {
     } else if (input[2] == 2) {
       mempool_mtx->unlock();
       // choose an execcutor to flush, decided by pd_ before.
-      if (choose_flush_job_executor(*iter) == nullptr) ret = false;
+      if (choose_flush_job_executor(std::make_pair(input[0], input[1])) == nullptr) ret = false;
     } else {
       mempool_mtx->unlock();
       ret = false;
