@@ -55,6 +55,7 @@
 #include "db/memtable.h"
 #include "memory/allocator.h"
 #include "memory/trans_concurrent_arena.h"
+#include "memtable/readonlyskiplist.h"
 #include "port/likely.h"
 #include "port/port.h"
 #include "rocksdb/comparator.h"
@@ -72,6 +73,14 @@ template <class Comparator>
 class TransInlineSkipList {
   using Offset = int32_t;  // to align record count, probably we should
                            // switch this into int64_t
+  friend ReadOnlyInlineSkipList<Comparator>;
+
+ public:
+  ReadOnlyInlineSkipList<Comparator>* Clone(
+      size_t protection_bytes_per_key) const {
+    return new ReadOnlyInlineSkipList<Comparator>(*this, compare_,
+                                                  protection_bytes_per_key);
+  }
 
  public:
   inline void TESTContinuous() const {
@@ -79,15 +88,16 @@ class TransInlineSkipList {
     void* ptr = const_cast<void*>(reinterpret_cast<const void*>(this));
     LOG_CERR("InlineSkipList TESTContinuous ptr:", ptr, ' ', sizeof(*this));
     LOG_CERR("Allocator name: ", allocator_->name());
-    reinterpret_cast<BasicArena*>(allocator_)->TESTContinuous();
+    // reinterpret_cast<BasicArena*>(allocator_)->TESTContinuous();
     Node* node = head_;
     while (node != nullptr) {
-      // LOG_CERR("Node: ", reinterpret_cast<void*>(node), ' ', node->Key());
+      LOG_CERR("Node: ", reinterpret_cast<void*>(node), ' ', node->Key());
       void* pptr =
           const_cast<void*>(reinterpret_cast<const void*>(node->Key()));
-      assert(
-          pptr <= reinterpret_cast<TransConcurrentArena*>(allocator_)->end() &&
-          pptr >= reinterpret_cast<TransConcurrentArena*>(allocator_)->begin());
+      // assert(
+      //     pptr <= reinterpret_cast<TransConcurrentArena*>(allocator_)->end()
+      //     && pptr >=
+      //     reinterpret_cast<TransConcurrentArena*>(allocator_)->begin());
       node = node->Next(mem_begin_local_, 0);
     }
     LOG_CERR("InlineSkipList TESTContinuous finish");
@@ -121,6 +131,15 @@ class TransInlineSkipList {
 
   inline void set_local_begin(void* local) {
     mem_begin_local_ = reinterpret_cast<char*>(local);
+  }
+  inline Offset get_head_offset() {
+    return Offset(reinterpret_cast<char*>(head_) -
+                  reinterpret_cast<char*>(mem_begin_local_));
+  }
+  inline void set_head_offset(Offset offset) {
+    Node** head = const_cast<Node**>(&head_);
+    *head = reinterpret_cast<Node*>(reinterpret_cast<char*>(mem_begin_local_) +
+                                    offset);
   }
   inline std::pair<char*, size_t> local_begin() {
     return std::make_pair(mem_begin_local_,
@@ -757,9 +776,6 @@ TransInlineSkipList<Comparator>::AllocateNode(size_t key_size, int height) {
   // skip list pointer next_[0].  key_size is the bytes for the
   // key, which comes just after the Node.
   char* raw = allocator_->Allocate(prefix + sizeof(Node) + key_size);
-  fprintf(stderr, "raw: %p allocatebytes: %d. mem_begin_local_= %p\n",
-          reinterpret_cast<void*>(raw), prefix + sizeof(Node) + key_size,
-          reinterpret_cast<void*>(mem_begin_local_));
 
   Node* x = reinterpret_cast<Node*>(raw + prefix);
 
@@ -850,7 +866,6 @@ void TransInlineSkipList<Comparator>::FindSpliceForLevel(const DecodedKey& key,
   while (true) {
     Node* next = before->Next(mem_begin_local_, level);
     if (next != nullptr) {
-      fprintf(stderr, "next: %p begin: %p\n", next, mem_begin_local_);
       PREFETCH(next->Next(mem_begin_local_, level), 0, 1);
     }
     if (prefetch_before == true) {

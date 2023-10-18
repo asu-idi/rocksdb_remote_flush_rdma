@@ -1,5 +1,6 @@
 #include "rocksdb/remote_flush_service.h"
 
+#include <alloca.h>
 #include <arpa/inet.h>
 #include <byteswap.h>
 #include <endian.h>
@@ -30,6 +31,7 @@
 #include <thread>
 #include <utility>
 
+#include "db/tcprw.h"
 #include "memory/remote_memtable_service.h"
 #include "rocksdb/logger.hpp"
 #include "rocksdb/macro.hpp"
@@ -48,34 +50,9 @@ static inline uint64_t ntohll(uint64_t x) { return x; }
 namespace ROCKSDB_NAMESPACE {
 
 bool TCPNode::send(const void *buf, size_t size) {
-  size_t total = 0;
-  while (total < sizeof(size)) {
-    ssize_t n =
-        write(connection_info_.client_sockfd,
-              reinterpret_cast<char *>(&size) + total, sizeof(size) - total);
-    if (n == -1) {
-      LOG("TCPNode::send: write error");
-      assert(false);
-    }
-    total += n;
-  }
-
-  char *buf_ = reinterpret_cast<char *>(const_cast<void *>(buf));
-  total = 0;
-  while (total < size) {
-    ssize_t n =
-        write(connection_info_.client_sockfd, buf_ + total, size - total);
-    if (n == -1) {
-      LOG("TCPNode::send: write error");
-      assert(false);
-    } else if (n == 0) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
-      LOG_CERR("TCPNode::send: write 0 bytes");
-      continue;
-    }
-    total += n;
-  }
-  assert(total == size);
+  ASSERT_RW(writen(connection_info_.client_sockfd, &size, sizeof(size)) ==
+            sizeof(size));
+  ASSERT_RW(writen(connection_info_.client_sockfd, buf, size) == size);
   return true;
 }
 
@@ -84,20 +61,8 @@ bool TCPNode::send(const void *buf, size_t size) {
 bool TCPNode::receive(void **buf, size_t *size) {
   char *buf_ = reinterpret_cast<char *>(*buf);
   size_t package_size = 0;
-  ssize_t total = 0;
-  while (total < ssize_t(sizeof(size_t))) {
-    ssize_t n = read(connection_info_.client_sockfd,
-                     reinterpret_cast<char *>(&package_size) + total,
-                     sizeof(size_t) - total);
-    if (n == -1) {
-      LOG("TCPNode::receive: read error");
-      assert(false);
-    } else if (n == 0) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
-      continue;
-    }
-    total += n;
-  }
+  ASSERT_RW(readn(connection_info_.client_sockfd, &package_size,
+                  sizeof(package_size)) == sizeof(package_size));
 
   if (*size == 0)
     *size = package_size;
@@ -108,21 +73,8 @@ bool TCPNode::receive(void **buf, size_t *size) {
     buf_ = reinterpret_cast<char *>(memory_.allocate(package_size));
     *buf = buf_;
   }
-  LOG("TCPNode::receive: package size:", package_size);
-  total = 0;
-  while (total < ssize_t(package_size)) {
-    ssize_t n = read(connection_info_.client_sockfd, buf_ + total,
-                     package_size - total);
-    if (n == -1) {
-      LOG("TCPNode::receive: read error");
-      assert(false);
-    } else if (n == 0) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
-      continue;
-    }
-    total += n;
-  }
-  assert(total == ssize_t(package_size));
+  ASSERT_RW(readn(connection_info_.client_sockfd, buf_, package_size) ==
+            package_size);
   return true;
 }
 
@@ -441,6 +393,7 @@ int RDMANode::poll_completion(struct rdma_connection *conn) {
     rc = 1;
   } else if (poll_result == 0) {  // the CQ is empty
     fprintf(stderr, "completion wasn't found in the CQ after timeout\n");
+    // std::this_thread::sleep_for(std::chrono::milliseconds(100));
     rc = 1;
   } else {
     // CQE found
@@ -880,163 +833,112 @@ RDMAServer::~RDMAServer() {
 
 RDMAClient::RDMAClient() : RDMANode() {}
 
-std::pair<long long, long long> RDMAClient::allocate_mem_request(
-    struct rdma_connection *conn, size_t size) {
-  char req_type = 1;
-  long long ret[2];
-  int local_size = sizeof(size_t), remote_size = sizeof(long long) * 2;
-  int rc = 0;
-  int read_bytes = 0;
-  int total_read_bytes = 0;
-  rc = write(conn->sock, reinterpret_cast<void *>(&req_type), sizeof(char));
-  if (rc < (int)(sizeof(char)))
-    fprintf(stderr, "Failed writing data during allocate_mem_request\n");
-  else
-    rc = 0;
-  rc = write(conn->sock, reinterpret_cast<void *>(&size), local_size);
-  if (rc < local_size)
-    fprintf(stderr, "Failed writing data during allocate_mem_request\n");
-  else
-    rc = 0;
-  while (!rc && total_read_bytes < remote_size) {
-    read_bytes =
-        read(conn->sock, reinterpret_cast<char *>(ret) + total_read_bytes,
-             remote_size - total_read_bytes);
-    if (read_bytes > 0)
-      total_read_bytes += read_bytes;
-    else
-      rc = read_bytes;
+void RDMAServer::free_mem_service(struct rdma_connection *conn) {
+  int64_t val[2] = {0, 0};
+  read(conn->sock, reinterpret_cast<char *>(val), sizeof(int64_t) * 2);
+  fprintf(stderr, "free_mem_service: %ld %ld\n", val[0], val[1]);
+  if (!unpin_mem(val[0], val[1])) {
+    fprintf(stderr, "unpin memory request not found\n");
   }
+}
+
+void RDMAClient::free_mem_request(struct rdma_connection *conn, int64_t addr,
+                                  int64_t size) {
+  int64_t val[2] = {addr, size};
+  write(conn->sock, reinterpret_cast<char *>(val), sizeof(int64_t) * 2);
+}
+
+void RDMAServer::create_rmem_service(struct rdma_connection *conn,
+                                     int64_t &meta_offset, int64_t &meta_size,
+                                     int64_t &mem_offset, int64_t &mem_size) {
+  fprintf(stderr, "Received request for rmemtable store\n");
+  allocate_mem_service(conn, meta_offset, meta_size);
+  allocate_mem_service(conn, mem_offset, mem_size);
+
+  if (meta_size == 0 || mem_size == 0) {
+    fprintf(stderr, "Failed to allocate memory\n");
+    assert(false);
+  }
+}
+
+void RDMAServer::receive_rmem_service(struct rdma_connection *conn,
+                                      int64_t &meta_offset, int64_t &meta_size,
+                                      int64_t &mem_offset, int64_t &mem_size) {
+  remote_memtable_pool_->store(
+      reinterpret_cast<void *>(get_buf() + mem_offset), mem_size,
+      reinterpret_cast<void *>(get_buf() + meta_offset), meta_size);
+  char ret = 1;
+  ASSERT_RW(writen(conn->sock, reinterpret_cast<void *>(&ret), sizeof(char)) ==
+            sizeof(char));
+}
+
+void RDMAServer::receive_remote_flush_service(struct rdma_connection *conn,
+                                              int64_t &meta_offset,
+                                              int64_t &meta_size) {
+  int64_t meta_buf_offset = -1;
+  int failed_try = 0;
+  while (true) {
+    meta_buf_offset = pin_mem(meta_size);
+    if (meta_buf_offset == -1) {
+      std::this_thread::sleep_for(
+          std::chrono::milliseconds(100 * (failed_try++)));
+      fprintf(stderr, "Failed to pin MR memory, retrying\n");
+    } else {
+      break;
+    }
+  }
+  std::memcpy(get_buf() + meta_buf_offset, get_buf() + meta_offset, meta_size);
+  char ret_op = 1;
+  ASSERT_RW(writen(conn->sock, reinterpret_cast<void *>(&ret_op),
+                   sizeof(char)) == sizeof(char));
+  std::pair<int64_t, int64_t> job_mem_tobe_registered{
+      meta_buf_offset, meta_size + meta_buf_offset};
+  assert(choose_flush_job_executor(job_mem_tobe_registered) != nullptr);
+}
+
+// return remote_offset , remote_end
+std::pair<int64_t, int64_t> RDMAClient::allocate_mem_request(
+    struct rdma_connection *conn, int64_t size) {
+  fprintf(stderr, "allocate_mem_request: size = %lld\n", size);
+  write(conn->sock, reinterpret_cast<void *>(&size), sizeof(int64_t));
+  int64_t ret[2];
+  read(conn->sock, reinterpret_cast<char *>(ret), sizeof(int64_t) * 2);
   return std::make_pair(ret[0], ret[1]);
 }
+
+// return remote_offset , remote_end
 void RDMAServer::allocate_mem_service(struct rdma_connection *conn,
-                                      size_t &ret_offset, size_t &ret_size) {
-  size_t size;
-  long long ret[2];
-  int remote_size = sizeof(size_t), local_size = sizeof(long long) * 2;
-  int rc = 0;
-  int read_bytes = 0;
-  int total_read_bytes = 0;
-  while (!rc && total_read_bytes < remote_size) {
-    read_bytes =
-        read(conn->sock, reinterpret_cast<char *>(&size) + total_read_bytes,
-             remote_size - total_read_bytes);
-    if (read_bytes > 0)
-      total_read_bytes += read_bytes;
-    else
-      rc = read_bytes;
-  }
+                                      int64_t &ret_offset, int64_t &ret_size) {
+  int64_t size = 0;
+  int64_t ret[2];
+  read(conn->sock, reinterpret_cast<char *>(&size), sizeof(int64_t));
 
   int failed_try = 1;
   while (true) {
-    long long pin_begin = pin_mem(size);
+    fprintf(stderr, "Trying to pin memory: %lld\n", size);
+    int64_t pin_begin = pin_mem(size);
     if (pin_begin == -1) {
       std::this_thread::sleep_for(std::chrono::milliseconds(100 * failed_try));
       fprintf(stderr, "Failed to pin MR memory, retrying\n");
     } else {
       ret[0] = pin_begin;
-      ret[1] = pin_begin + (long long)size;
+      ret[1] = pin_begin + size;
       ret_size = size;
       ret_offset = pin_begin;
       break;
     }
   }
-  rc = write(conn->sock, reinterpret_cast<void *>(ret), local_size);
-  if (rc < local_size)
-    fprintf(stderr, "Failed writing data during allocate_mem_service\n");
-  else
-    rc = 0;
-}
-bool RDMAClient::modify_mem_request(struct rdma_connection *conn,
-                                    std::pair<long long, long long> offset,
-                                    int type) {
-  char req_type = 2;
-  long long tmp[3] = {offset.first, offset.second, type};
-  bool ret = false;
-  int local_size = sizeof(long long) * 3, remote_size = sizeof(bool);
-  int rc = 0;
-  int read_bytes = 0;
-  int total_read_bytes = 0;
-  rc = write(conn->sock, reinterpret_cast<void *>(&req_type), sizeof(char));
-  if (rc < (int)sizeof(char))
-    fprintf(stderr, "Failed writing data during modify_mem_request\n");
-  else
-    rc = 0;
-  rc = write(conn->sock, reinterpret_cast<void *>(tmp), local_size);
-  if (rc < local_size)
-    fprintf(stderr, "Failed writing data during modify_mem_request\n");
-  else
-    rc = 0;
-  while (!rc && total_read_bytes < remote_size) {
-    read_bytes =
-        read(conn->sock, reinterpret_cast<char *>(&ret) + total_read_bytes,
-             remote_size - total_read_bytes);
-    if (read_bytes > 0)
-      total_read_bytes += read_bytes;
-    else
-      rc = read_bytes;
-  }
-  return ret;
-}
-void RDMAServer::modify_mem_service(struct rdma_connection *conn) {
-  long long input[3];
-  bool ret = true;
-  int remote_size = sizeof(long long) * 3, local_size = sizeof(bool);
-  int rc = 0;
-  int read_bytes = 0;
-  int total_read_bytes = 0;
-  while (!rc && total_read_bytes < remote_size) {
-    read_bytes =
-        read(conn->sock, reinterpret_cast<char *>(input) + total_read_bytes,
-             remote_size - total_read_bytes);
-    if (read_bytes > 0)
-      total_read_bytes += read_bytes;
-    else
-      rc = read_bytes;
-  }
-  {
-    mempool_mtx->lock();
-    auto iter = pinned_mem.find(std::make_pair(input[0], input[1] - input[0]));
-    if (iter == pinned_mem.end()) {
-      // not found in mempool, this should not happen
-      ret = false;
-      fprintf(stderr, "Memory node cannot find memory segment\n");
-      mempool_mtx->unlock();
-    } else if (input[2] == 0) {
-      // free meta on memnode's pinned mem
-      std::lock_guard<std::mutex> lk2(*executor_table_mtx);
-      ret = true;
-      mempool_mtx->unlock();
-      unpin_mem(input[0], input[1] - input[0]);
-      for (auto &it : executors_) {
-        if (it.second.current_job == std::make_pair(input[0], input[1])) {
-          ret = true;
-          it.second.status--;
-          break;
-        }
-      }
-    } else if (input[2] == 2) {
-      mempool_mtx->unlock();
-      // choose an execcutor to flush, decided by pd_ before.
-      if (choose_flush_job_executor(std::make_pair(input[0], input[1])) == nullptr) ret = false;
-    } else {
-      mempool_mtx->unlock();
-      ret = false;
-      fprintf(stderr, "Unexpected memory segment state\n");
-    }
-  }
-  rc = write(conn->sock, reinterpret_cast<void *>(&ret), local_size);
-  if (rc < local_size)
-    fprintf(stderr, "Failed writing data during modify_mem_service\n");
-  else
-    rc = 0;
+  fprintf(stderr, "allocate remote mem: %ld %ld size=%ld\n", ret[0], ret[1],
+          size);
+  write(conn->sock, reinterpret_cast<void *>(ret), sizeof(int64_t) * 2);
 }
 
 struct RDMANode::rdma_connection *RDMAServer::choose_flush_job_executor(
-    const std::pair<long long, long long> &job_mem_tobe_registered) {
+    const std::pair<int64_t, int64_t> &job_mem_tobe_registered) {
   std::lock_guard<std::mutex> lk2(*executor_table_mtx);
   bool ret = true;
   if (!pd_.available_workers_.empty()) {
+    // choose by scheduler
     TCPNode *choose_by_policy = pd_.available_workers_.front();
     pd_.available_workers_.pop();
     char choose_client_ip[INET_ADDRSTRLEN];
@@ -1047,12 +949,24 @@ struct RDMANode::rdma_connection *RDMAServer::choose_flush_job_executor(
       char client_ip[INET_ADDRSTRLEN];
       inet_ntop(AF_INET, &it.first->addr.sin_addr, client_ip, INET_ADDRSTRLEN);
       if (strcmp(client_ip, choose_client_ip) == 0) {
+        LOG_CERR("choose executor by scheduler: ", client_ip, ' ',
+                 job_mem_tobe_registered.first, ' ',
+                 job_mem_tobe_registered.second);
         it.second.status++;
         it.second.flush_job_queue.push(job_mem_tobe_registered);
         return it.first;
       }
     }
   } else {
+    // choose randomly
+    int rd = rand() % executors_.size();
+    auto it = executors_.begin();
+    for (int cnt = 0; cnt < rd; cnt++) it++;
+    LOG_CERR("choose executor randomly: ", job_mem_tobe_registered.first, ' ',
+             job_mem_tobe_registered.second);
+    it->second.status++;
+    it->second.flush_job_queue.push(job_mem_tobe_registered);
+    return it->first;
   }
   return nullptr;
 }
@@ -1061,23 +975,10 @@ bool RDMAClient::disconnect_request(struct rdma_connection *conn) {
   char req_type = 0;
   bool ret = false;
   int remote_size = sizeof(bool);
-  int rc = 0;
-  int read_bytes = 0;
-  int total_read_bytes = 0;
-  rc = write(conn->sock, reinterpret_cast<void *>(&req_type), sizeof(char));
-  if (rc < (int)sizeof(char))
-    fprintf(stderr, "Failed writing data during disconnect_request\n");
-  else
-    rc = 0;
-  while (!rc && total_read_bytes < remote_size) {
-    read_bytes =
-        read(conn->sock, reinterpret_cast<char *>(&ret) + total_read_bytes,
-             remote_size - total_read_bytes);
-    if (read_bytes > 0)
-      total_read_bytes += read_bytes;
-    else
-      rc = read_bytes;
-  }
+  ASSERT_RW(writen(conn->sock, reinterpret_cast<void *>(&req_type),
+                   sizeof(char)) == sizeof(char));
+  ASSERT_RW(readn(conn->sock, reinterpret_cast<char *>(&ret), sizeof(bool)) ==
+            sizeof(bool));
   if (ret) {
     if (conn->qp) ibv_destroy_qp(conn->qp);
     conn->qp = nullptr;
@@ -1087,25 +988,20 @@ bool RDMAClient::disconnect_request(struct rdma_connection *conn) {
       if (close(conn->sock)) fprintf(stderr, "failed to close socket\n");
       conn->sock = -1;
     }
-    delete conn;
     std::lock_guard<std::mutex> lk(*conns_mtx);
     for (auto iter = res->conns.begin(); iter != res->conns.end(); iter++)
       if (*iter == conn) {
         res->conns.erase(iter);
         break;
       }
+    delete conn;
   }
   return ret;
 }
 void RDMAServer::disconnect_service(struct rdma_connection *conn) {
   bool ret = true;
   int local_size = sizeof(bool);
-  int rc = 0;
-  rc = write(conn->sock, reinterpret_cast<void *>(&ret), local_size);
-  if (rc < local_size)
-    fprintf(stderr, "Failed writing data during disconnect_service\n");
-  else
-    rc = 0;
+  ASSERT_RW(writen(conn->sock, reinterpret_cast<void *>(&ret), local_size));
   if (conn->qp) ibv_destroy_qp(conn->qp);
   conn->qp = nullptr;
   if (conn->cq) ibv_destroy_cq(conn->cq);
@@ -1114,36 +1010,101 @@ void RDMAServer::disconnect_service(struct rdma_connection *conn) {
     if (close(conn->sock)) fprintf(stderr, "failed to close socket\n");
     conn->sock = -1;
   }
-  delete conn;
   std::lock_guard<std::mutex> lk(*conns_mtx);
   for (auto iter = res->conns.begin(); iter != res->conns.end(); iter++)
     if (*iter == conn) {
       res->conns.erase(iter);
       break;
     }
+  delete conn;
 }
 bool RDMAClient::register_executor_request(struct rdma_connection *conn) {
   char req_type = 3;
   bool ret = false;
-  int remote_size = sizeof(bool);
-  int rc = 0;
-  int read_bytes = 0;
-  int total_read_bytes = 0;
-  rc = write(conn->sock, reinterpret_cast<void *>(&req_type), sizeof(char));
-  if (rc < (int)sizeof(char))
-    fprintf(stderr, "Failed writing data during register_executor_request\n");
-  else
-    rc = 0;
-  while (!rc && total_read_bytes < remote_size) {
-    read_bytes =
-        read(conn->sock, reinterpret_cast<char *>(&ret) + total_read_bytes,
-             remote_size - total_read_bytes);
-    if (read_bytes > 0)
-      total_read_bytes += read_bytes;
-    else
-      rc = read_bytes;
-  }
+  ASSERT_RW(writen(conn->sock, reinterpret_cast<void *>(&req_type),
+                   sizeof(char)) == sizeof(char));
+  ASSERT_RW(readn(conn->sock, reinterpret_cast<char *>(&ret), sizeof(bool)) ==
+            sizeof(bool));
   return ret;
+}
+
+void RDMAClient::fetch_memtable_request(struct rdma_connection *conn,
+                                        uint64_t mixed_id, void *&meta_ptr,
+                                        int64_t &meta_size, void *&mem_ptr,
+                                        int64_t &mem_size) {
+  bool found = false;
+  int64_t ret[4];
+  while (!found) {
+    ASSERT_RW(writen(conn->sock, reinterpret_cast<void *>(&mixed_id),
+                     sizeof(uint64_t)) == sizeof(uint64_t));
+    ASSERT_RW(readn(conn->sock, reinterpret_cast<char *>(ret),
+                    sizeof(int64_t) * 4) == sizeof(int64_t) * 4);
+    if (ret[0] == -1) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      LOG_CERR("refetch rmem: ", mixed_id);
+    } else {
+      break;
+    }
+  }
+  meta_size = ret[2];
+  mem_size = ret[3];
+  int64_t local_meta_offset = rdma_mem_.allocate(meta_size);
+  int64_t local_mem_offset = rdma_mem_.allocate(mem_size);
+  rdma_read(conn, meta_size, local_meta_offset, ret[0]);
+  assert(poll_completion(conn) == 0);
+  rdma_read(conn, mem_size, local_mem_offset, ret[1]);
+  assert(poll_completion(conn) == 0);
+  ASSERT_RW(writen(conn->sock, reinterpret_cast<char *>(&found),
+                   sizeof(bool)) == sizeof(bool));
+  meta_ptr = malloc(meta_size);
+  mem_ptr = malloc(mem_size);
+  memcpy(meta_ptr, get_buf() + local_meta_offset, meta_size);
+  memcpy(mem_ptr, get_buf() + local_mem_offset, mem_size);
+  rdma_mem_.free(local_mem_offset);
+  rdma_mem_.free(local_meta_offset);
+}
+
+void RDMAServer::fetch_memtable_service(struct rdma_connection *conn) {
+  bool found = false;
+  int64_t ret[4] = {-1, -1, -1, -1};
+  RemoteMemTable *rmem = nullptr;
+  uint64_t mixed_id = 0;
+  while (!found) {
+    ASSERT_RW(readn(conn->sock, reinterpret_cast<char *>(&mixed_id),
+                    sizeof(uint64_t)) == sizeof(uint64_t));
+    rmem = remote_memtable_pool_->get(mixed_id);
+    if (rmem == nullptr) {
+      fprintf(stderr, "Failed to find remote memtable:%lu\n", mixed_id);
+      ASSERT_RW(writen(conn->sock, reinterpret_cast<void *>(ret),
+                       sizeof(int64_t) * 4) == sizeof(int64_t) * 4);
+      continue;
+    } else {
+      break;
+    }
+  }
+  int failed_retry = 0;
+  while (ret[0] == -1) {
+    ret[0] = pin_mem(rmem->meta_size);
+    std::this_thread::sleep_for(
+        std::chrono::milliseconds(100 * (failed_retry++)));
+  }
+  failed_retry = 0;
+  while (ret[1] == -1) {
+    ret[1] = pin_mem(rmem->data_size);
+    std::this_thread::sleep_for(
+        std::chrono::milliseconds(100 * (failed_retry++)));
+  }
+  ret[2] = rmem->meta_size;
+  ret[3] = rmem->data_size;
+  memcpy(get_buf() + ret[0], rmem->meta, rmem->meta_size);
+  memcpy(get_buf() + ret[1], rmem->data, rmem->data_size);
+  ASSERT_RW(writen(conn->sock, reinterpret_cast<void *>(ret),
+                   sizeof(int64_t) * 4) == sizeof(int64_t) * 4);
+  //  need gc
+  ASSERT_RW(readn(conn->sock, reinterpret_cast<char *>(&found), sizeof(bool)) ==
+            sizeof(bool));
+  unpin_mem(ret[0], rmem->meta_size);
+  unpin_mem(ret[1], rmem->data_size);
 }
 
 bool RDMAClient::register_memtable_read_request(
@@ -1151,11 +1112,8 @@ bool RDMAClient::register_memtable_read_request(
     std::pair<size_t, size_t> &remote_offset, uint64_t id) {
   char req_type = 6;
   bool ret = true;
-  int rc = write(conn->sock, reinterpret_cast<void *>(&req_type), sizeof(char));
-  if (rc < (int)sizeof(char))
-    fprintf(stderr, "Failed writing data during register_executor_request\n");
-  else
-    return false;
+  ASSERT_RW(writen(conn->sock, reinterpret_cast<void *>(&req_type),
+                   sizeof(char)) == sizeof(char));
   size_t read_request_area = 100;
   size_t local_offset_ = rdma_mem_.allocate(read_request_area);
   if (local_offset_ < 0) {
@@ -1173,7 +1131,7 @@ void RDMAServer::register_memtable_read_service(struct rdma_connection *conn,
                                                 std::thread *t,
                                                 bool *should_close) {
   bool ret = true;
-  size_t ret_offset = 0, ret_size = 0;
+  int64_t ret_offset = 0, ret_size = 0;
   allocate_mem_service(conn, ret_offset, ret_size);
   *t = std::move(std::thread([&, this, conn]() {
     while (!*should_close) {
@@ -1186,128 +1144,120 @@ void RDMAServer::register_memtable_read_service(struct rdma_connection *conn,
 
 void RDMAServer::register_executor_service(struct rdma_connection *conn) {
   bool ret = true;
-  int local_size = sizeof(bool);
-  int rc = 0;
   std::lock_guard<std::mutex> lk(*executor_table_mtx);
   executors_[conn].status = true;
-  rc = write(conn->sock, reinterpret_cast<void *>(&ret), local_size);
-  if (rc < local_size)
-    fprintf(stderr, "Failed writing data during register_executor_service\n");
-  else
-    rc = 0;
+  ASSERT_RW(writen(conn->sock, reinterpret_cast<void *>(&ret), sizeof(bool)) ==
+            sizeof(bool));
 }
-std::pair<long long, long long> RDMAClient::wait_for_job_request(
+
+// receive begin end
+std::pair<int64_t, int64_t> RDMAClient::wait_for_job_request(
     struct rdma_connection *conn) {
   char req_type = 4;
-  long long ret[2];
-  int remote_size = sizeof(long long) * 2;
-  int rc = 0;
-  int read_bytes = 0;
-  int total_read_bytes = 0;
-  rc = write(conn->sock, reinterpret_cast<void *>(&req_type), sizeof(char));
-  if (rc < (int)sizeof(char))
-    fprintf(stderr, "Failed writing data during wait_for_job_request\n");
-  else
-    rc = 0;
-  while (!rc && total_read_bytes < remote_size) {
-    read_bytes =
-        read(conn->sock, reinterpret_cast<char *>(&ret) + total_read_bytes,
-             remote_size - total_read_bytes);
-    if (read_bytes > 0)
-      total_read_bytes += read_bytes;
-    else
-      rc = read_bytes;
-  }
+  int64_t ret[2];
+  int remote_size = sizeof(int64_t) * 2;
+  ASSERT_RW(writen(conn->sock, reinterpret_cast<void *>(&req_type),
+                   sizeof(char)) == sizeof(char));
+  ASSERT_RW(readn(conn->sock, reinterpret_cast<char *>(&ret),
+                  sizeof(int64_t) * 2) == sizeof(int64_t) * 2);
   return std::make_pair(ret[0], ret[1]);
 }
 
 void RDMAServer::wait_for_job_service(struct rdma_connection *conn) {
-  long long ret[2];
-  int local_size = sizeof(long long) * 2;
-  int rc = 0;
+  int64_t ret[2];
   while (true) {
     std::lock_guard<std::mutex> lk(*executor_table_mtx);
     if (!executors_[conn].flush_job_queue.empty()) {
-      ret[0] = executors_[conn].flush_job_queue.front().first;
-      ret[1] = executors_[conn].flush_job_queue.front().second;
+      ret[0] = std::get<0>(executors_[conn].flush_job_queue.front());
+      ret[1] = std::get<1>(executors_[conn].flush_job_queue.front());
       executors_[conn].current_job = executors_[conn].flush_job_queue.front();
       executors_[conn].flush_job_queue.pop();
       break;
     }
   }
-  rc = write(conn->sock, reinterpret_cast<void *>(&ret), local_size);
-  if (rc < local_size)
-    fprintf(stderr, "Failed writing data during wait_for_job_service\n");
-  else
-    rc = 0;
+  ASSERT_RW(writen(conn->sock, reinterpret_cast<void *>(&ret),
+                   sizeof(int64_t) * 2) == sizeof(int64_t) * 2);
 }
 
 bool RDMAServer::service(struct rdma_connection *conn) {
   bool should_close = false;
-  std::thread cur;
-
+  int64_t meta_offset = 0, meta_size = 0, mem_offset = 0, mem_size = 0;
   while (!should_close) {
     char req_type;
-    int remote_size = sizeof(char);
-    int rc = 0;
-    int read_bytes = 0;
-    int total_read_bytes = 0;
-    while (!rc && total_read_bytes < remote_size) {
-      read_bytes = read(conn->sock,
-                        reinterpret_cast<char *>(&req_type) + total_read_bytes,
-                        remote_size - total_read_bytes);
-      if (read_bytes > 0)
-        total_read_bytes += read_bytes;
-      else
-        rc = read_bytes;
-    }
+    ASSERT_RW(readn(conn->sock, reinterpret_cast<char *>(&req_type),
+                    sizeof(char)) == sizeof(char));
     switch (req_type) {
       case 0:
-        disconnect_service(conn);
+        LOG_CERR("SERVICE:disconnect service");
         should_close = true;
+        if (meta_size > 0) unpin_mem(meta_offset, meta_size);
+        if (mem_size > 0) unpin_mem(mem_offset, mem_size);
+        disconnect_service(conn);
         break;
-      case 1: {
-        size_t ret_offset, ret_size;
+      case 1:
+        LOG_CERR("SERVICE:allocate mem service");
+        int64_t ret_offset, ret_size;
         allocate_mem_service(conn, ret_offset, ret_size);
         break;
-      }
       case 2:
-        modify_mem_service(conn);
+        LOG_CERR("SERVICE:free mem service");
+        free_mem_service(conn);
         break;
       case 3:
+        LOG_CERR("SERVICE:register executor service");
         register_executor_service(conn);
         break;
       case 4:
+        LOG_CERR("SERVICE:wait for job service");
         wait_for_job_service(conn);
         break;
-      case 5: {
-        size_t meta_offset = 0, meta_size = 0, mem_offset = 0, mem_size = 0;
-        allocate_mem_service(conn, meta_offset, meta_size);
-        allocate_mem_service(conn, mem_offset, mem_size);
-        if (meta_size == 0 || mem_size == 0) {
-          fprintf(stderr, "Failed to allocate memory\n");
-          break;
+      case 5:
+        LOG_CERR("SERVICE:create rmem connection");
+        create_rmem_service(conn, meta_offset, meta_size, mem_offset, mem_size);
+        break;
+      case 6:
+        LOG_CERR("SERVICE:receive rmem");
+        receive_rmem_service(conn, meta_offset, meta_size, mem_offset,
+                             mem_size);
+        break;
+      case 7: {
+        LOG_CERR("SERVICE:free rmem");
+        // delete staled immutable tables
+        uint64_t id;
+        ASSERT_RW(readn(conn->sock, reinterpret_cast<char *>(&id),
+                        sizeof(id)) == sizeof(id));
+        Status s = remote_memtable_pool_->delete_remote_memtable(id);
+        if (!s.ok()) {
+          fprintf(
+              stderr,
+              "Failed to delete remote memtable %lu, might cause memory leak\n",
+              id);
         }
-        cur = std::move(std::thread([this, &should_close, conn, mem_size,
-                                     meta_size, mem_offset, meta_offset]() {
-          while (!should_close) {
-            post_receive(conn, meta_size, meta_offset);
-            post_receive(conn, mem_size, mem_offset);
-            remote_memtable_pool_->store(
-                reinterpret_cast<void *>(get_buf() + mem_offset), mem_size,
-                reinterpret_cast<void *>(get_buf() + meta_offset), meta_size);
-          }
-        }));
+        char ret = 1;
+        ASSERT_RW(writen(conn->sock, reinterpret_cast<char *>(&ret),
+                         sizeof(char)) == sizeof(char));
         break;
       }
-      case 6:
-        register_memtable_read_service(conn, &cur, &should_close);
+      case 8: {
+        LOG_CERR("SERVICE:receive remote flush service");
+        receive_remote_flush_service(conn, meta_offset, meta_size);
+        break;
+      }
+      case 9: {
+        LOG_CERR("SERVICE:create remote flush service");
+        // create remote flush service
+        allocate_mem_service(conn, meta_offset, meta_size);
+        break;
+      }
+      case 10: {
+        LOG_CERR("SERVICE:fetch memtable service");
+        fetch_memtable_service(conn);
+      }
       default:
         fprintf(stderr, "Unknown request type from client: %d\n", req_type);
     }
   }
 
-  if (cur.joinable()) cur.join();
   return true;
 }
 

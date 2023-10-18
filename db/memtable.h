@@ -50,14 +50,13 @@ class SystemClock;
 struct ImmutableMemTableOptions {
  public:
   void PackLocal(TransferService* node) const {
-    LOG("ImmutableMemTableOptions::PackLocal");
+    LOG_CERR("ImmutableMemTableOptions::PackLocal");
     node->send(reinterpret_cast<const void*>(this), sizeof(*this));
   }
   static void* UnPackLocal(TransferService* node) {
-    LOG("ImmutableMemTableOptions::UnPackLocal");
+    LOG_CERR("ImmutableMemTableOptions::UnPackLocal");
     void* mem = malloc(sizeof(ImmutableMemTableOptions));
-    size_t size = sizeof(ImmutableMemTableOptions);
-    node->receive(&mem, &size);
+    node->receive(&mem, sizeof(ImmutableMemTableOptions));
     auto* ptr = reinterpret_cast<ImmutableMemTableOptions*>(mem);
     ptr->info_log = nullptr;
     return mem;
@@ -114,8 +113,10 @@ class MemTable {
     std::pair<size_t, size_t> remote_read_offset{0, 0};
     RDMANode::rdma_connection* read_conn_{nullptr};
     RDMAClient* client_{nullptr};
+    uint64_t mixed_id{0};
   };
   inline void set_local_begin(void* local) { table_->set_local_begin(local); }
+  inline int32_t get_head_offset() { return table_->get_head_offset(); }
   inline std::pair<char*, size_t> local_begin() const {
     return table_->local_begin();
   }
@@ -125,7 +126,8 @@ class MemTable {
                       const size_t local_meta_offset,
                       const std::pair<size_t, size_t>& remote_data_reg,
                       const size_t local_data_reg,
-                      const std::pair<std::string, size_t> memnode_ip_port);
+                      const std::pair<std::string, size_t> memnode_ip_port,
+                      uint64_t cfd_id);
   Status RemoteRead();
   void free_remote() {
     flush_job_info_.reset();
@@ -134,8 +136,8 @@ class MemTable {
     delete table_;
     delete range_del_table_;
   }
-  static void* UnPackLocal(TransferService* node);
-  void PackLocal(TransferService* node) const;
+  static void* UnPackLocal(TransferService* node, MemTableRep* rep);
+  void PackLocal(TransferService* node, uint64_t mixed_id) const;
   void PackRemote(TransferService* node) const;
   void UnPackRemote(TransferService* node);
 
@@ -559,6 +561,8 @@ class MemTable {
   void SetID(uint64_t id) { id_ = id; }
 
   uint64_t GetID() const { return id_; }
+
+  bool IsTransferCompleted() const { return table_->IsRemote(); }
 
   void SetFlushCompleted(bool completed) { flush_completed_ = completed; }
 

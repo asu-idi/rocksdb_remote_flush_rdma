@@ -29,6 +29,7 @@
 #include "db/pinned_iterators_manager.h"
 #include "db/range_tombstone_fragmenter.h"
 #include "db/read_callback.h"
+#include "db/tcprw.h"
 #include "db/version_edit.h"
 #include "db/wide/wide_column_serialization.h"
 #include "logging/logging.h"
@@ -174,63 +175,58 @@ Status MemTable::SendToRemote(
     const size_t local_meta_offset,
     const std::pair<size_t, size_t>& remote_data_reg,
     const size_t local_data_reg,
-    const std::pair<std::string, size_t> memnode_ip_port) {
+    const std::pair<std::string, size_t> memnode_ip_port, uint64_t cfd_id) {
+  if (IsTransferCompleted()) {
+    return Status::OK();
+  }
+  LOG_CERR("start to trans rmem: ", cfd_id, ' ', GetID(), ' ',
+           (cfd_id << 32) | GetID());
   Status s = table_->SendToRemote(client, memtable_conn, remote_meta_reg,
                                   local_meta_offset, remote_data_reg,
-                                  local_data_reg, GetID(), 0);
+                                  local_data_reg, (cfd_id << 32) | GetID(), 0);
   if (s.ok()) {
-    std::thread([this, client, memtable_conn, remote_meta_reg,
-                 local_meta_offset, remote_data_reg, local_data_reg,
-                 memnode_ip_port]() {
-      rmem_info_ = new rmem_info;
+    rmem_info_ = new rmem_info;
+    rmem_info_->mixed_id = (cfd_id << 32) | id_;
+    LOG_CERR("send rmem: ", rmem_info_->mixed_id);
+    rmem_info_->read_conn_ =
+        client->sock_connect(memnode_ip_port.first, memnode_ip_port.second);
+    if (rmem_info_->read_conn_ == nullptr) {
+      fprintf(stderr, "connect to %s:%lu failed", memnode_ip_port.first.data(),
+              memnode_ip_port.second);
+      rmem_info_->read_conn_ = nullptr;
+      delete rmem_info_;
+      s = Status::IOError("connect to remote memtable failed");
+      return s;
+    }
+    // build remote read service
+    // bool ret = client->register_memtable_read_request(
+    //     rmem_info_->read_conn_, rmem_info_->local_read_offset,
+    //     rmem_info_->remote_read_offset, id_);
+    // if (!ret) {
+    //   fprintf(stderr, "build memtable:%lu read service failed\n", id_);
+    //   rmem_info_->read_conn_ = nullptr;
+    // }
+    // switch to RMemtable and free local imm
 
-      rmem_info_->read_conn_ =
-          client->sock_connect(memnode_ip_port.first, memnode_ip_port.second);
-      if (rmem_info_->read_conn_ == nullptr) {
-        fprintf(stderr, "connect to %s:%lu failed",
-                memnode_ip_port.first.data(), memnode_ip_port.second);
-        rmem_info_->read_conn_ = nullptr;
-        delete rmem_info_;
-        return;
-      }
-      // build remote read service
-      bool ret = client->register_memtable_read_request(
-          rmem_info_->read_conn_, rmem_info_->local_read_offset,
-          rmem_info_->remote_read_offset, id_);
-      if (!ret) {
-        fprintf(stderr, "build memtable:%lu read service failed\n", id_);
-        rmem_info_->read_conn_ = nullptr;
-      }
-      // switch to RMemtable and free local imm
-
-      // MarkAsFinished
-      fprintf(stderr, "Immutable memtable:%lu remote read MarkAsFinished\n",
-              id_);
-      rmem_info_->client_ = client;
-    }).detach();
+    // MarkAsFinished
+    fprintf(stderr, "Immutable memtable:%lu remote read MarkAsFinished\n", id_);
+    rmem_info_->client_ = client;
   }
   return s;
 }
 
-void* MemTable::UnPackLocal(TransferService* node) {
+void* MemTable::UnPackLocal(TransferService* node, MemTableRep* rep) {
   LOG("start MemTable::UnPackLocal");
-  void* local_arena = BasicArenaFactory::UnPackLocal(node);
-  void* local_prefix_extractor = SliceTransformFactory::UnPackLocal(node);
-  void* local_comparator = KeyComparator::UnPackLocal(node);
+  void* local_arena = rep->get_allocator();
+  void* local_prefix_extractor = rep->get_prefix_extractor();
+  void* local_comparator = rep->get_comparator();
   void* local_moptions = ImmutableMemTableOptions::UnPackLocal(node);
-  // // DynamicBloom* local_bloom_filter =
-  // //     DynamicBloom::UnPackLocal(sock_fd, local_arena);
-  auto* local_table =
-      reinterpret_cast<MemTableRep*>(MemTableRepPackFactory::UnPackLocal(node));
-  LOG("local_table MemTableRepPackFactory::UnPackLocal(sock_fd) done");
+  auto* local_table = rep;
   auto* local_range_del_table =
       reinterpret_cast<MemTableRep*>(MemTableRepPackFactory::UnPackLocal(node));
-  LOG("local_range_del_table MemTableRepPackFactory::UnPackLocal(sock_fd) "
-      "done");
   void* mem = malloc(sizeof(MemTable));
   auto* memtable = reinterpret_cast<MemTable*>(mem);
   node->receive(reinterpret_cast<void**>(&mem), sizeof(MemTable));
-  LOG("recv MemTable", mem);
 
   memtable->arena_ = reinterpret_cast<BasicArena*>(local_arena);
   memcpy(reinterpret_cast<void*>(
@@ -239,7 +235,6 @@ void* MemTable::UnPackLocal(TransferService* node) {
          sizeof(SliceTransform*));
   new (&memtable->comparator_) KeyComparator(
       reinterpret_cast<KeyComparator*>(local_comparator)->comparator);
-  delete reinterpret_cast<KeyComparator*>(local_comparator);
   memcpy(reinterpret_cast<void*>(
              const_cast<ImmutableMemTableOptions*>(&memtable->moptions_)),
          reinterpret_cast<void*>(local_moptions),
@@ -252,27 +247,14 @@ void* MemTable::UnPackLocal(TransferService* node) {
   new (&memtable->fragmented_range_tombstone_list_)
       std::unique_ptr<FragmentedRangeTombstoneList>(nullptr);
   memtable->ConstructFragmentedRangeTombstones();
-  LOG("send MemTable", mem);
   return mem;
 }
 
-void MemTable::PackLocal(TransferService* node) const {
-  arena_->PackLocal(node);
-  if (prefix_extractor_ != nullptr)
-    prefix_extractor_->PackLocal(node);
-  else {
-    std::pair<uint8_t, size_t> msg(4, 0);
-    node->send(&msg, sizeof(msg));
-  }
-  comparator_.PackLocal(node);
+void MemTable::PackLocal(TransferService* node, uint64_t mixed_id) const {
   moptions_.PackLocal(node);
-  // bloom_filter_->PackLocal(sock_fd);
-  assert(table_ != nullptr);
-  LOG("start MemTable::PackLocal table_");
-  table_->PackLocal(node);
   LOG("start MemTable::PackLocal range_del_table_");
   assert(range_del_table_ != nullptr);
-  range_del_table_->PackLocal(node);
+  range_del_table_->PackLocal(node, moptions_.protection_bytes_per_key);
   LOG("range_del_table_->PackLocal done");
   node->send(reinterpret_cast<const void*>(this), sizeof(MemTable));
   LOG("write MemTable", reinterpret_cast<const void*>(this));
@@ -383,6 +365,20 @@ void MemTable::UnPackRemote(TransferService* node) {
 MemTable::~MemTable() {
   mem_tracker_.FreeMem();
   delete arena_;
+  if (rmem_info_) {
+    assert(rmem_info_->client_ != nullptr);
+    char req_type = 7;
+    ASSERT_RW(writen(rmem_info_->read_conn_->sock, &req_type,
+                     sizeof(req_type)) == sizeof(req_type));
+    ASSERT_RW(
+        writen(rmem_info_->read_conn_->sock, &rmem_info_->mixed_id,
+               sizeof(rmem_info_->mixed_id) == sizeof(rmem_info_->mixed_id)));
+    ASSERT_RW(readn(rmem_info_->read_conn_->sock, &req_type,
+                    sizeof(req_type)) == sizeof(req_type));
+    rmem_info_->client_->disconnect_request(rmem_info_->read_conn_);
+    delete rmem_info_;
+    rmem_info_ = nullptr;
+  }
   delete table_;
   delete range_del_table_;
   LOG("Memtable ", GetID(), "destructed");

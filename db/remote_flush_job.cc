@@ -26,6 +26,7 @@
 #include "db/seqno_to_time_mapping.h"
 #include "db/snapshot_checker.h"
 #include "db/system_clock_factory.h"
+#include "db/tcprw.h"
 #include "monitoring/instrumented_mutex.h"
 #include "options/cf_options.h"
 #include "rocksdb/file_system.h"
@@ -164,13 +165,9 @@ void RemoteFlushJob::PackLocal(TransferService* node) const {
   //   read_data(server_socket_fd, &msg, sizeof(size_t));
   // }
   // Pack clock
-  clock_->PackLocal(node);
+  // clock_->PackLocal(node);
   // Pack mems_
-  size_t mem_size = mems_.size();
-  node->send(&mem_size, sizeof(size_t));
-  for (auto& memtable : mems_) {
-    memtable->PackLocal(node);
-  }
+
   versions_->PackLocal(node);
   edit_->PackLocal(node);
   if (job_context_ != nullptr) {
@@ -240,7 +237,9 @@ void RemoteFlushJob::PackLocal(TransferService* node) const {
   node->send(reinterpret_cast<const void*>(this), sizeof(RemoteFlushJob));
 }
 
-void* RemoteFlushJob::UnPackLocal(TransferService* node, DBImpl* remote_db) {
+void* RemoteFlushJob::UnPackLocal(RDMAClient* client, TransferService* node,
+                                  DBImpl* remote_db,
+                                  std::vector<MemTable*>& temp_mems) {
   LOG("RemoteFlushJob::UnPackLocal thread_id:", std::this_thread::get_id(),
       "UnPack data from local side");
   void* mem = malloc(sizeof(RemoteFlushJob));
@@ -249,17 +248,11 @@ void* RemoteFlushJob::UnPackLocal(TransferService* node, DBImpl* remote_db) {
   // void* output_file_directory_ret =
   //     FSDirectoryFactory::UnPackLocal(worker_socket_fd);
   // void* db_directory_ret = FSDirectoryFactory::UnPackLocal(worker_socket_fd);
-  void* clock_ret_addr = SystemClockFactory::UnPackLocal(node);
+  void* clock_ret_addr = Env::Default()->GetSystemClock().get();
 
   // RemoteFlushJob recv other data
-  size_t* mems_size_ = nullptr;
-  node->receive(reinterpret_cast<void**>(&mems_size_), sizeof(size_t));
+  size_t memtable_size = temp_mems.size();
 
-  std::vector<MemTable*> mems_temp;
-  for (size_t i = 0; i < *mems_size_; i++) {
-    void* local_mem_handler = MemTable::UnPackLocal(node);
-    mems_temp.emplace_back(reinterpret_cast<MemTable*>(local_mem_handler));
-  }
   void* versions_ret = VersionSet::UnPackLocal(node);
   void* edit_ret = VersionEdit::UnPackLocal(node);
   void* job_context_ret = JobContext::UnPackLocal(node);
@@ -339,7 +332,7 @@ void* RemoteFlushJob::UnPackLocal(TransferService* node, DBImpl* remote_db) {
   new (&local_handler->meta_)
       FileMetaData(*reinterpret_cast<FileMetaData*>(meta_ret));
   free(meta_ret);
-  for (auto& memtable : mems_temp) {
+  for (auto& memtable : temp_mems) {
     LOG("worker copy data: ", memtable);
     local_handler->mems_.emplace_back(memtable);
   }
@@ -407,7 +400,6 @@ void RemoteFlushJob::PackRemote(TransferService* node) const {
   table_properties_.PackRemote(node);
   cfd_->PackRemote(node);
   edit_->free_remote();
-  mems_[0]->free_remote();
   cfd_->free_remote();
   table_properties_.~TableProperties();
   versions_->free_remote();
@@ -419,7 +411,6 @@ void RemoteFlushJob::PackRemote(TransferService* node) const {
   const_cast<std::string*>(&full_history_ts_low_)->~basic_string();
   const_cast<FileOptions*>(&file_options_)->~FileOptions();
   free(cfd_);
-  free(mems_[0]);
   free(versions_);
   free(job_context_);
   free(edit_);
@@ -430,12 +421,12 @@ void RemoteFlushJob::PackRemote(TransferService* node) const {
   LOG("RemoteFlushJob::PackRemote done");
 }
 void RemoteFlushJob::UnPackRemote(TransferService* node) {
-  LOG("RemoteFlushJob::UnPackRemote thread_id:", std::this_thread::get_id(),
-      "UnPack data from remote side");
+  LOG_CERR("RemoteFlushJob::UnPackRemote thread_id:",
+           std::this_thread::get_id(), "UnPack data from remote side");
   assert(mems_.size() > 0);
-  LOG("RemoteFlushJob::UnPackRemote mems_[0]");
+  LOG_CERR("RemoteFlushJob::UnPackRemote mems_[0]");
   mems_[0]->UnPackRemote(node);
-  LOG("RemoteFlushJob::UnPackRemote cfd_");
+  LOG_CERR("RemoteFlushJob::UnPackRemote cfd_");
   edit_->UnPackRemote(node);
   auto remote_metadata =
       reinterpret_cast<FileMetaData*>(FileMetaData::UnPackRemote(node));
@@ -444,8 +435,8 @@ void RemoteFlushJob::UnPackRemote(TransferService* node) {
   meta_.fd.largest_seqno = remote_metadata->fd.largest_seqno;
   meta_.smallest = remote_metadata->smallest;
   meta_.largest = remote_metadata->largest;
-  LOG("RemoteFlushJob::UnPackRemote meta_.epoch_number: ", meta_.epoch_number,
-      ' ', remote_metadata->epoch_number);
+  LOG_CERR("RemoteFlushJob::UnPackRemote meta_.epoch_number: ",
+           meta_.epoch_number, ' ', remote_metadata->epoch_number);
   meta_.epoch_number = remote_metadata->epoch_number;
   assert(meta_.smallest.Valid());
   assert(meta_.largest.Valid());
@@ -462,7 +453,7 @@ void RemoteFlushJob::UnPackRemote(TransferService* node) {
       reinterpret_cast<TableProperties*>(TableProperties::UnPackRemote(node));
   table_properties_ = *new_table_properties;
   delete new_table_properties;
-  LOG("rebuild table cache");
+  LOG_CERR("rebuild table cache");
   std::unique_ptr<InternalIterator> it(cfd_->table_cache()->NewIterator(
       ReadOptions(), file_options_, cfd_->internal_comparator(), meta_,
       nullptr /* range_del_agg */, mutable_cf_options_.prefix_extractor,
@@ -651,49 +642,79 @@ Status RemoteFlushJob::RunRemote(
     LOG(table_properties_.ToString());
     db_mutex_->Unlock();
     // We create connection with one memnode and send package to it
-    assert(MatchMemNode(memnodes_) == Status::OK());  // todo: false tolerant
+    // assert(MatchMemNode(smemnodes_) == Status::OK());  // todo: false
+    // tolerant
 
 #ifdef ROCKSDB_RDMA
-    auto offset = local_generator_rdma_client->rdma_mem_.allocate(1ull << 27);
-    RDMATransferService transfer_service(local_generator_rdma_client, offset);
+    int buf_size = 40000;
+    void* tmp_data = malloc(buf_size);
+    BufTransferService transfer_service(tmp_data, buf_size);
 #else
     TCPTransferService transfer_service(&local_generator_node);
 #endif
+
+    size_t mem_size = mems_.size();
+    transfer_service.send(&mem_size, sizeof(size_t));
+    for (auto& memtable : mems_) {
+      uint64_t mixed_id = ((uint64_t)cfd_->GetID() << 32) | memtable->GetID();
+      transfer_service.send(&mixed_id, sizeof(uint64_t));
+      if (!memtable->IsTransferCompleted()) cfd_->register_imm_trans(memtable);
+    }
+
+    for (auto& memtable : mems_)
+      memtable->PackLocal(&transfer_service,
+                          ((uint64_t)cfd_->GetID() << 32) | memtable->GetID());
     PackLocal(&transfer_service);
 
     int port = (*get_available_port)();
-    LOG("Get available port from port list: ", port);
     transfer_service.send(&port, sizeof(int));
     assert(local_ip.size());
     transfer_service.send(local_ip.c_str(), local_ip.size());
 
 #ifdef ROCKSDB_RDMA
-    fprintf(stderr, "rf-meta size=%lu\n", transfer_service.get_size());
-    auto remote_seg = local_generator_rdma_client->allocate_mem_request(
-        rdma_conn, transfer_service.get_size());
+    assert(transfer_service.get_size() < buf_size);  // 39775 for now
+    assert(MatchMemNode(memnodes_) == Status::OK());
+    memcpy(local_generator_rdma_client->get_buf() +
+               cfd_->get_built_memreg_info()->rf_meta_local_offset,
+           tmp_data, transfer_service.get_size());
+    free(tmp_data);
+
     local_generator_rdma_client->rdma_write(
-        rdma_conn, transfer_service.get_size(), offset, remote_seg.first);
+        rdma_conn, buf_size,
+        cfd_->get_built_memreg_info()->rf_meta_local_offset,
+        cfd_->get_built_memreg_info()->rf_meta_remote_offset.first);
     assert(local_generator_rdma_client->poll_completion(rdma_conn) == 0);
-    local_generator_rdma_client->rdma_mem_.free(offset);
-    assert(local_generator_rdma_client->modify_mem_request(rdma_conn,
-                                                           remote_seg, 2));
+    {
+      char req_type = 8;
+      ASSERT_RW(writen(rdma_conn->sock, &req_type, sizeof(char)) ==
+                sizeof(char));
+      LOG_CERR("REQUEST: ", req_type, " request remote flush: ",
+               cfd_->get_built_memreg_info()->rf_meta_remote_offset.first, ' ',
+               cfd_->get_built_memreg_info()->rf_meta_remote_offset.second -
+                   cfd_->get_built_memreg_info()->rf_meta_remote_offset.first);
+      ASSERT_RW(readn(rdma_conn->sock, &req_type, sizeof(char)) ==
+                sizeof(char));
+      LOG_CERR("server recv remote flush meta, ready for next one");
+    }
+    cfd_->putback_meta_conn(rdma_conn);
 #endif
 
     // close connection with memnode
     assert(QuitMemNode().ok());
-
+    LOG_CERR("Quit memnode success");
     // s = WriteLevel0Table();
     // assert(s == Status::OK());
 
     // We receive some metadata directly from remote worker
     // Or maybe we could receive from memnode
     assert(MatchRemoteWorker(port) == Status::OK());
-
+    LOG_CERR("Match worker success");
     TCPTransferService transfer_service2(&local_generator_node);
     UnPackRemote(&transfer_service2);
+    LOG_CERR("Unpack remote success");
     // s = Status::OK();
     assert(QuitRemoteWorker() == Status::OK());
-    LOG("Run job: write l0table done");
+    LOG_CERR("Run job: write l0table done");
     LOG(edit_->DebugString());
     LOG(meta_.DebugString());
     LOG(table_properties_.ToString());
@@ -786,33 +807,21 @@ Status RemoteFlushJob::QuitMemNode() {
   local_generator_node.connection_info_.client_sockfd = 0;
   return Status::OK();
 #else
-  bool freed = true;
-  if (rdma_conn->qp) ibv_destroy_qp(rdma_conn->qp);
-  if (rdma_conn->cq) ibv_destroy_cq(rdma_conn->cq);
-  if (rdma_conn->sock >= 0) {
-    if (close(rdma_conn->sock)) {
-      fprintf(stderr, "failed to close socket\n");
-      freed = false;
-    }
-  }
-  delete rdma_conn;
-  return freed ? Status::OK() : Status::IOError("failed to close socket");
+  return Status::OK();
 #endif
 }
 Status RemoteFlushJob::MatchMemNode(
     std::vector<std::pair<std::string, size_t>>* ip_port_list) {
-  assert(ip_port_list->size() != 0);
-  int choosen = (int)(rand() % ip_port_list->size());
 #ifdef ROCKSDB_RDMA
-  rdma_conn = local_generator_rdma_client->sock_connect(
-      (*ip_port_list)[choosen].first.c_str(), (*ip_port_list)[choosen].second);
-  if (rdma_conn == nullptr) {
-    LOG_CERR("sock_connect failed");
-    return Status::IOError("sock_connect failed");
-  } else
-    return Status::OK();
+  while (true) {
+    rdma_conn = cfd_->try_get_meta_conn();
+    if (rdma_conn) break;
+  }
+  return Status::OK();
 
 #else
+  assert(ip_port_list->size() != 0);
+  int choosen = (int)(rand() % ip_port_list->size());
   local_generator_node.~TCPNode();
   memset(reinterpret_cast<void*>(&local_generator_node), 0, sizeof(TCPNode));
   if ((local_generator_node.connection_info_.client_sockfd =

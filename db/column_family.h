@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -274,10 +275,12 @@ class ColumnFamilySet;
 class ColumnFamilyData {
  public:
   struct built_memreg_info {
-    size_t imm_meta_local_offset;
-    std::pair<size_t, size_t> imm_meta_remote_offset;
-    size_t imm_data_local_offset;
-    std::pair<size_t, size_t> imm_data_remote_offset;
+    int64_t imm_meta_local_offset;
+    std::pair<int64_t, int64_t> imm_meta_remote_offset;
+    int64_t imm_data_local_offset;
+    std::pair<int64_t, int64_t> imm_data_remote_offset;
+    int64_t rf_meta_local_offset;
+    std::pair<int64_t, int64_t> rf_meta_remote_offset;
   };
   void register_imm_trans(MemTable* memtable) {
     std::lock_guard<std::mutex> lck(*imm_que_mtx);
@@ -290,11 +293,9 @@ class ColumnFamilyData {
   void PackRemote(TransferService* node) const;
   void UnPackRemote(TransferService* node);
   Status init_cf_level_rdma_client(std::string& ip, int port);
+  inline built_memreg_info* get_built_memreg_info() { return reginfo_; }
   [[nodiscard]] inline RDMANode::rdma_connection* get_memtable_conn() const {
     return memtable_conn_;
-  }
-  [[nodiscard]] inline RDMANode::rdma_connection* get_meta_conn() const {
-    return meta_conn_;
   }
 
  public:
@@ -569,6 +570,13 @@ class ColumnFamilyData {
   // Recover the next epoch number of this CF and epoch number
   // of its files (if missing)
   void RecoverEpochNumbers();
+  inline RDMANode::rdma_connection* try_get_meta_conn() {
+    return meta_conn_.exchange(nullptr);
+  }
+  inline void putback_meta_conn(RDMANode::rdma_connection* conn) {
+    meta_conn_.store(conn);
+  }
+  inline RDMAClient* get_cflevel_client() { return cflevel_client_; }
 
  private:
   friend class ColumnFamilySet;
@@ -673,13 +681,16 @@ class ColumnFamilyData {
   bool mempurge_used_;
 
   std::atomic<uint64_t> next_epoch_number_;
-  RDMANode::rdma_connection* meta_conn_;
+  std::atomic<RDMANode::rdma_connection*> meta_conn_;
+
   RDMANode::rdma_connection* memtable_conn_;
   RDMAClient* cflevel_client_;
   built_memreg_info* reginfo_;
   std::queue<MemTable*>* imm_que;
   std::mutex* imm_que_mtx;
   std::pair<std::string, size_t>* memtable_ip_port;
+  std::thread* memtable_thread;
+  bool should_drop{false};
 };
 
 // ColumnFamilySet has interesting thread-safety requirements

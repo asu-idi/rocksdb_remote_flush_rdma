@@ -97,7 +97,8 @@ class RemoteFlushJob {
       std::string full_history_ts_low = "",
       BlobFileCompletionCallback* blob_callback = nullptr);
   void PackLocal(TransferService* node) const;
-  static void* UnPackLocal(TransferService* node, DBImpl* remote_db);
+  static void* UnPackLocal(RDMAClient* client, TransferService* node,
+                           DBImpl* remote_db, std::vector<MemTable*>& mems);
   void PackRemote(TransferService* node) const;
   void UnPackRemote(TransferService* node);
 

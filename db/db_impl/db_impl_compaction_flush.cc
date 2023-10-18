@@ -242,7 +242,7 @@ Status DBImpl::FlushMemTableToOutputFile(
             true /* sync_output_directory */, true /* write_manifest */,
             io_tracer_, seqno_time_mapping_,
 #ifdef ROCKSDB_RDMA
-            rdma_client_,
+            cfd->get_cflevel_client(),
 #endif  // ROCKSDB_RDMA
             db_id_, db_session_id_, cfd->GetFullHistoryTsLow(),
             &blob_callback_);
@@ -2802,7 +2802,8 @@ void DBImpl::MaybeScheduleFlushOrCompaction() {
   }
 
   // pri2:remote
-  while (unscheduled_flushes_ > 0) {
+  while (immutable_db_options_.server_remote_flush &&
+         unscheduled_flushes_ > 0) {
     auto* fta = new RflushThreadArg;
     fta->db_ = this;
     std::thread(&DBImpl::BGListenRemoteFlush, this).detach();
@@ -2939,7 +2940,7 @@ void DBImpl::BGListenRemoteFlush() {
             true /* sync_output_directory */, true /* write_manifest */,
             io_tracer_, seqno_time_mapping_,
 #ifdef ROCKSDB_RDMA
-            rdma_client_,
+            cfd->get_cflevel_client(),
 #endif  // ROCKSDB_RDMA
             db_id_, db_session_id_, cfd->GetFullHistoryTsLow(),
             &blob_callback_);

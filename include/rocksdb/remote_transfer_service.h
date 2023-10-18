@@ -39,6 +39,56 @@ class TCPTransferService : public TransferService {
   TCPNode *service_provider_;
 };
 
+class BufTransferService : public TransferService {
+ public:
+  explicit BufTransferService(void *buf, size_t size)
+      : buf_(buf), size_(size), current_ptr_(static_cast<char *>(buf)) {}
+  ~BufTransferService() = default;
+  bool send_without_length(const void *buf, size_t size) {
+    memcpy(current_ptr_, buf, size);
+    current_ptr_ += size;
+    return true;
+  }
+  bool send(const void *buf, size_t size) override {
+    memcpy(current_ptr_, &size, sizeof(size_t));
+    current_ptr_ += sizeof(size_t);
+    memcpy(current_ptr_, buf, size);
+    current_ptr_ += size;
+    return true;
+  }
+  bool receive_without_len(void *buf, size_t size) {
+    memcpy(buf, current_ptr_, size);
+    current_ptr_ += size;
+    return true;
+  }
+  bool receive(void *buf, size_t size) override { return receive(&buf, size); }
+  bool receive(void **buf, size_t size) override { return receive(buf, &size); }
+  bool receive(void **buf, size_t *size) override {
+    char *buf_ = reinterpret_cast<char *>(*buf);
+    size_t package_size = *reinterpret_cast<size_t *>(current_ptr_);
+    current_ptr_ += sizeof(size_t);
+    if (*size == 0)
+      *size = package_size;
+    else
+      assert(package_size == *size);
+
+    if (buf_ == nullptr) {
+      buf_ = reinterpret_cast<char *>(memory_.allocate(package_size));
+      *buf = reinterpret_cast<void *>(buf_);
+    }
+    memcpy(buf_, current_ptr_, package_size);
+    current_ptr_ += package_size;
+    return true;
+  }
+  size_t get_size() { return current_ptr_ - static_cast<char *>(buf_); }
+
+ private:
+  void *buf_;
+  size_t size_;
+  char *current_ptr_;
+  RegularMemNode memory_;
+};
+
 class RDMATransferService : public TransferService {
  public:
   explicit RDMATransferService(RDMAClient *service_provider)

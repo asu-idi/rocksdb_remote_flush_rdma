@@ -67,8 +67,20 @@ extern Slice GetLengthPrefixedSlice(const char* data);
 extern int VarintLength(uint64_t v);
 class MemTableRep {
  public:
+  virtual bool IsRemote() const { assert(false); }
+  virtual void* get_allocator() const { assert(false); }
+  virtual void* get_prefix_extractor() const { assert(false); }
+  virtual void* get_comparator() const { assert(false); }
   virtual void set_local_begin(void*) {
     LOG("MemTableRep::set_local_begin: error: not implemented");
+    assert(false);
+  }
+  virtual void set_head_offset(int32_t offset) {
+    LOG("MemTableRep::set_head_offset: error: not implemented");
+    assert(false);
+  }
+  virtual int32_t get_head_offset() {
+    LOG("MemTableRep::get_head_offset: error: not implemented");
     assert(false);
   }
   virtual std::pair<char*, size_t> local_begin() {
@@ -92,7 +104,8 @@ class MemTableRep {
     assert(false);
     LOG("MemTableRep::TESTContinuous finish");
   }
-  virtual void PackLocal(TransferService*) const {
+  virtual void PackLocal(TransferService*,
+                         size_t protection_bytes_per_key) const {
     LOG("MemTableRep::PackLocal: error: not implemented");
     assert(false);
   }

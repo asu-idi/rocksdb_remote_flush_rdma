@@ -245,6 +245,10 @@ class RDMANode {
            long long local_offset) {
     return post_send(idx, msg_size, IBV_WR_SEND, local_offset, 0);
   }
+  int sendV2(struct rdma_connection *conn, size_t msg_size,
+             long long local_offset, long long remote_offset) {
+    return post_send(conn, msg_size, IBV_WR_SEND, local_offset, remote_offset);
+  }
   int receive(struct rdma_connection *idx, size_t msg_size,
               long long local_offset) {
     return post_receive(idx, msg_size, local_offset);
@@ -277,13 +281,12 @@ struct PlacementDriver {
   void step(bool, size_t, placement_info);
   void poll_events(int port);
 };
-
 class RemoteMemTablePool;
 class RDMAServer : public RDMANode {
   struct executor_info {
     int status;
-    std::queue<std::pair<long long, long long>> flush_job_queue;
-    std::pair<long long, long long> current_job;
+    std::queue<std::pair<int64_t, int64_t>> flush_job_queue;
+    std::pair<int64_t, int64_t> current_job;
   };
 
  public:
@@ -296,14 +299,23 @@ class RDMAServer : public RDMANode {
   }
 
  private:
-  void allocate_mem_service(struct rdma_connection *idx, size_t &ret_offset,
-                            size_t &size);
-  void modify_mem_service(struct rdma_connection *idx);
+  void create_rmem_service(struct rdma_connection *idx, int64_t &meta_offset,
+                           int64_t &meta_size, int64_t &mem_offset,
+                           int64_t &mem_size);
+  void receive_rmem_service(struct rdma_connection *idx, int64_t &meta_offset,
+                            int64_t &meta_size, int64_t &mem_offset,
+                            int64_t &mem_size);
+  void receive_remote_flush_service(struct rdma_connection *idx,
+                                    int64_t &meta_offset, int64_t &meta_size);
+  void allocate_mem_service(struct rdma_connection *idx, int64_t &ret_offset,
+                            int64_t &size);
+  void free_mem_service(struct rdma_connection *conn);
   void disconnect_service(struct rdma_connection *idx);
   void register_executor_service(struct rdma_connection *idx);
   void wait_for_job_service(struct rdma_connection *idx);
   void register_memtable_read_service(struct rdma_connection *idx,
                                       std::thread *t, bool *should_close);
+  void fetch_memtable_service(struct rdma_connection *conn);
   RemoteMemTablePool *remote_memtable_pool_;
   std::unique_ptr<std::mutex> mempool_mtx;
   std::set<std::pair<long long /*offset*/, long long /*len*/>> pinned_mem;
@@ -344,15 +356,15 @@ class RDMAServer : public RDMANode {
   }
   PlacementDriver pd_;
   struct rdma_connection *choose_flush_job_executor(
-      const std::pair<long long, long long> &job_mem_tobe_registered);
+      const std::pair<int64_t, int64_t> &job_mem_tobe_registered);
 };
 
 class RDMAClient : public RDMANode {
  public:
   RDMAClient();
   ~RDMAClient() override = default;
-  std::pair<long long, long long> allocate_mem_request(
-      struct rdma_connection *idx, size_t size);
+  std::pair<int64_t, int64_t> allocate_mem_request(struct rdma_connection *idx,
+                                                   int64_t size);
   // qry_type:
   // type == 0 client_request_disconnect
   // type == 1 client_send_memtable
@@ -364,16 +376,19 @@ class RDMAClient : public RDMANode {
   // type == fe client_recv_installinfo_for_remote_flush
   // type == ff client_send_sgn_flush_calculation
 
-  bool modify_mem_request(struct rdma_connection *idx,
-                          std::pair<long long, long long> offset, int type);
   bool disconnect_request(struct rdma_connection *idx);
+  void free_mem_request(struct rdma_connection *idx, int64_t offset,
+                        int64_t size);  // req_type=2
   bool register_executor_request(struct rdma_connection *idx);
   bool register_memtable_read_request(struct rdma_connection *conn,
                                       size_t &local_offset,
                                       std::pair<size_t, size_t> &remote_offset,
                                       uint64_t id);
-  std::pair<long long, long long> wait_for_job_request(
-      struct rdma_connection *idx);
+  void fetch_memtable_request(struct rdma_connection *conn, uint64_t mixed_id,
+                              void *&meta_ptr, int64_t &meta_size,
+                              void *&mem_ptr,
+                              int64_t &mem_size);  // req_type=10
+  std::pair<int64_t, int64_t> wait_for_job_request(struct rdma_connection *idx);
   size_t port = -1;
   RegularMemNode memory_;
   RDMAMemNode rdma_mem_;
@@ -513,11 +528,8 @@ class PDClient {
     }
     auto *node = new TCPNode(client_address, sock);
     pd_connection_ = node;
-    std::cout << "send is_worker" << std::endl;
     pd_connection_->send(&is_worker, sizeof(bool));
-    std::cout << "send is_worker  done" << std::endl;
     pd_connection_->receive(&peer_id_, sizeof(size_t));
-    std::cout << "send is_worker  done  done " << std::endl;
     return Status::OK();
   }
   inline Status SendHeartBeat(const placement_info &pinfo) {

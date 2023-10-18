@@ -43,6 +43,7 @@
 #include "db/range_del_aggregator.h"
 #include "db/table_cache.h"
 #include "db/table_properties_collector.h"
+#include "db/tcprw.h"
 #include "db/version_set.h"
 #include "db/write_controller.h"
 #include "file/sst_file_manager_impl.h"
@@ -600,7 +601,8 @@ ColumnFamilyData::ColumnFamilyData(
       reginfo_(nullptr),
       imm_que(new std::queue<MemTable*>),
       imm_que_mtx(new std::mutex),
-      memtable_ip_port(new std::pair<std::string, size_t>) {
+      memtable_ip_port(new std::pair<std::string, size_t>),
+      memtable_thread(new std::thread) {
   LOG("CHECK : ", "initial_cf_options_:",
       initial_cf_options_.server_use_remote_flush == true ? "true" : "false");
   if (id_ != kDummyColumnFamilyDataId) {
@@ -692,6 +694,11 @@ ColumnFamilyData::ColumnFamilyData(
               bbto->block_cache)));
     }
   }
+  if (db_options.server_remote_flush) {
+    std::string memnode_ip = "10.10.1.5";
+    init_cf_level_rdma_client(memnode_ip, 9091);
+    background_schedule_imm_trans();
+  }
 }
 
 // DB mutex held
@@ -750,33 +757,17 @@ ColumnFamilyData::~ColumnFamilyData() {
     }
   }
 
-  if (meta_conn_) {
-    if (meta_conn_->qp) ibv_destroy_qp(meta_conn_->qp);
-    if (meta_conn_->cq) ibv_destroy_cq(meta_conn_->cq);
-    if (meta_conn_->sock >= 0) {
-      if (close(meta_conn_->sock)) {
-        fprintf(stderr, "failed to close socket\n");
-      }
-    }
-    delete meta_conn_;
+  should_drop = true;
+  if (memtable_thread->joinable()) {
+    memtable_thread->join();
+    delete memtable_thread;
+    memtable_thread = nullptr;
   }
-
   if (memtable_conn_) {
-    if (reginfo_) {
-      cflevel_client_->modify_mem_request(memtable_conn_,
-                                          reginfo_->imm_data_remote_offset, 0);
-      cflevel_client_->modify_mem_request(memtable_conn_,
-                                          reginfo_->imm_meta_remote_offset, 0);
-      cflevel_client_->disconnect_request(memtable_conn_);
-    }
-    if (memtable_conn_->qp) ibv_destroy_qp(memtable_conn_->qp);
-    if (memtable_conn_->cq) ibv_destroy_cq(memtable_conn_->cq);
-    if (memtable_conn_->sock >= 0) {
-      if (close(memtable_conn_->sock)) {
-        fprintf(stderr, "failed to close socket\n");
-      }
-    }
-    delete memtable_conn_;
+    cflevel_client_->disconnect_request(memtable_conn_);
+  }
+  if (meta_conn_) {
+    cflevel_client_->disconnect_request(meta_conn_);
   }
   if (reginfo_) delete reginfo_;
   if (imm_que) delete imm_que;
@@ -786,32 +777,35 @@ ColumnFamilyData::~ColumnFamilyData() {
 }
 
 Status ColumnFamilyData::background_schedule_imm_trans() {
-  std::thread([this]() {
+  if (memtable_thread->joinable()) {
+    fprintf(stderr, "memtable thread already created\n");
+    return Status::Aborted();
+  }
+  *memtable_thread = std::move(std::thread([this]() {
     MemTable* imm_to_trans = nullptr;
-    while (imm_que != nullptr) {
+    while (!should_drop) {
+      assert(imm_que);
       imm_que_mtx->lock();
       if (imm_que->empty()) {
         imm_que_mtx->unlock();
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
         continue;
       } else {
         imm_to_trans = imm_que->front();
         imm_que->pop();
         imm_que_mtx->unlock();
       }
+      Status s = imm_to_trans->SendToRemote(
+          cflevel_client_, memtable_conn_, reginfo_->imm_meta_remote_offset,
+          reginfo_->imm_meta_local_offset, reginfo_->imm_data_remote_offset,
+          reginfo_->imm_data_local_offset, *memtable_ip_port, id_);
+      if (!s.ok()) {
+        fprintf(stderr,
+                "immutable memtable sent remote failed, reschedule task\n");
+        std::lock_guard<std::mutex> lck(*imm_que_mtx);
+        imm_que->push(imm_to_trans);
+      }
     }
-    Status s = imm_to_trans->SendToRemote(
-        cflevel_client_, memtable_conn_, reginfo_->imm_meta_remote_offset,
-        reginfo_->imm_meta_local_offset, reginfo_->imm_data_remote_offset,
-        reginfo_->imm_data_local_offset, *memtable_ip_port);
-    if (!s.ok()) {
-      fprintf(stderr,
-              "immutable memtable sent remote failed, reschedule task\n");
-      std::lock_guard<std::mutex> lck(*imm_que_mtx);
-      imm_que->push(imm_to_trans);
-      std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-  }).detach();
+  }));
   return Status::OK();
 }
 
@@ -1779,7 +1773,17 @@ Status ColumnFamilyData::init_cf_level_rdma_client(std::string& ip, int port) {
     s = Status::IOError("meta_conn_ connect failed");
     return s;
   }
-  // todo: allocate mem for meta
+
+  // allocate mem for meta
+  char req_type = 9;
+  ASSERT_RW(writen(meta_conn_.load()->sock, reinterpret_cast<void*>(&req_type),
+                   sizeof(char)) == sizeof(char));
+  auto meta_offset = cflevel_client_->rdma_mem_.allocate(40000);
+  auto remote_meta_reg =
+      cflevel_client_->allocate_mem_request(meta_conn_, 40000);
+  reginfo_->rf_meta_local_offset = meta_offset;
+  reginfo_->rf_meta_remote_offset.first = remote_meta_reg.first;
+  reginfo_->rf_meta_remote_offset.second = remote_meta_reg.second;
 
   memtable_conn_ = cflevel_client_->sock_connect(ip, port);
   if (memtable_conn_ == nullptr) {
@@ -1787,18 +1791,33 @@ Status ColumnFamilyData::init_cf_level_rdma_client(std::string& ip, int port) {
     s = Status::IOError("memtable_conn_ connect failed");
     return s;
   }
+
+  req_type = 5;
+  ASSERT_RW(writen(memtable_conn_->sock, reinterpret_cast<void*>(&req_type),
+                   sizeof(char)) == sizeof(char));
   auto memtable_meta_offset =
       cflevel_client_->rdma_mem_.allocate(53);  // imm metadata
   auto memtable_offset = cflevel_client_->rdma_mem_.allocate(
       mutable_cf_options_.write_buffer_size + 2500);  // imm raw data
-  auto remote_imm_meta_seg =
+  auto remote_memmeta_reg =
       cflevel_client_->allocate_mem_request(memtable_conn_, 53);
-  auto remote_imm_data_seg = cflevel_client_->allocate_mem_request(
-      memtable_conn_, mutable_cf_options_.write_buffer_size + 2500);
-  reginfo_->imm_data_remote_offset = remote_imm_data_seg;
-  reginfo_->imm_data_local_offset = memtable_meta_offset;
-  reginfo_->imm_meta_remote_offset = remote_imm_meta_seg;
-  reginfo_->imm_meta_local_offset = memtable_offset;
+  reginfo_->imm_meta_remote_offset.first = remote_memmeta_reg.first;
+  reginfo_->imm_meta_remote_offset.second = remote_memmeta_reg.second;
+
+  auto remote_memdata_reg = cflevel_client_->allocate_mem_request(
+      memtable_conn_, (int64_t)mutable_cf_options_.write_buffer_size + 2500);
+  reginfo_->imm_data_remote_offset.first = remote_memdata_reg.first;
+  reginfo_->imm_data_remote_offset.second = remote_memdata_reg.second;
+
+  reginfo_->imm_data_local_offset = memtable_offset;
+  reginfo_->imm_meta_local_offset = memtable_meta_offset;
+  fprintf(stderr,
+          "init_cf_level_rdma_client, rmem-meta: %ld %ld %d rmem-data %ld %ld "
+          "%d\n",
+          reginfo_->imm_meta_remote_offset.first,
+          reginfo_->imm_meta_remote_offset.second, memtable_meta_offset,
+          reginfo_->imm_data_remote_offset.first,
+          reginfo_->imm_data_remote_offset.second, memtable_offset);
   return s;
 }
 

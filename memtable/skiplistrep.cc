@@ -10,7 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <random>
-
+#include "db/tcprw.h"
 #include "db/dbformat.h"
 #include "db/memtable.h"
 #include "memory/allocator.h"
@@ -37,11 +37,27 @@ class SkipListRep : public MemTableRep {
   friend ReadOnlySkipListRep;
 
  public:
+  inline bool IsRemote() const override { return trans_finished_.load(); }
+  inline void* get_allocator() const override {
+    return reinterpret_cast<void*>(allocator_);
+  }
+  inline void* get_prefix_extractor() const override {
+    return reinterpret_cast<void*>(const_cast<SliceTransform*>(transform_));
+  }
+  inline void* get_comparator() const override {
+    return const_cast<void*>(static_cast<const void*>(&cmp_));
+  }
   inline void set_local_begin(void* local) override {
     skip_list_.set_local_begin(local);
   }
   inline std::pair<char*, size_t> local_begin() override {
     return skip_list_.local_begin();
+  }
+  inline void set_head_offset(int32_t offset) override {
+    skip_list_.set_head_offset(offset);
+  }
+  inline int32_t get_head_offset() override {
+    return skip_list_.get_head_offset();
   }
   void TESTContinuous() const override {
     char* ptr = reinterpret_cast<char*>(const_cast<SkipListRep*>(this));
@@ -59,7 +75,8 @@ class SkipListRep : public MemTableRep {
                       const std::pair<size_t, size_t>&, size_t,
                       const std::pair<size_t, size_t>&, size_t, uint64_t,
                       int) override;
-  void PackLocal(TransferService* node) const override;
+  void PackLocal(TransferService* node,
+                 size_t protection_bytes_per_key) const override;
 
  private:
   TransInlineSkipList<const MemTableRep::KeyComparator&> skip_list_;
@@ -411,7 +428,7 @@ Status SkipListRep::SendToRemote(
   char* ptr = metadata_;
   *reinterpret_cast<uint64_t*>(ptr) = memtable_id;
   ptr += sizeof(uint64_t);
-  *reinterpret_cast<int32_t*>(ptr) = type;
+  *reinterpret_cast<int32_t*>(ptr) = skip_list_.get_head_offset();
   ptr += sizeof(int32_t);
 
   // comparator
@@ -427,24 +444,26 @@ Status SkipListRep::SendToRemote(
     delete[] metadata_;
     return Status::NotSupported("cmp_ type not supported");
   }
+  ptr += sizeof(bool);
+
   // slicetransform
   std::function<bool(SliceTransform*&, char*&)> parser =
       [](SliceTransform*& now, char*& offset) -> bool {
     if (now == nullptr) {
       *reinterpret_cast<int64_t*>(offset) = 0xff;
       offset += sizeof(int64_t);
-      return true;
+      return false;
     } else if (now->identifier() == 0) {
       *reinterpret_cast<int64_t*>(offset) = 0;
       offset += sizeof(int64_t);
       now = const_cast<SliceTransform*>(
           static_cast<InternalKeySliceTransform*>(now)
               ->user_prefix_extractor());
-      return false;
+      return true;
     } else {
       *reinterpret_cast<int64_t*>(offset) = now->identifier();
       offset += sizeof(int64_t);
-      return true;
+      return false;
     }
   };
   auto* trans_ = const_cast<SliceTransform*>(transform_);
@@ -459,22 +478,36 @@ Status SkipListRep::SendToRemote(
   *reinterpret_cast<void**>(ptr) = begin;
   ptr += sizeof(void*);
   // 8+8+8+16+1+4+8 = 53
+
   std::memcpy(client->get_buf() + local_meta_offset, metadata_, 53);
+  fprintf(stderr, "write memtable meta: %lu %lu\n", local_meta_offset,
+          remote_meta_seg.first);
   client->rdma_write(conn, 53, local_meta_offset, remote_meta_seg.first);
-  if (client->poll_completion(conn)) {
-    s = Status::IOError("poll_completion failed");
-  }
+  assert(client->poll_completion(conn) == 0);
+
   if (s.ok()) {
     std::memcpy(client->get_buf() + local_data_offset, begin,
                 reinterpret_cast<TransConcurrentArena*>(allocator_)
                     ->get_max_allocated_bytes());
+    assert(reinterpret_cast<TransConcurrentArena*>(allocator_)
+               ->get_max_allocated_bytes() ==
+           remote_data_seg.second - remote_data_seg.first);
+    fprintf(stderr, "write memtable data: %lu %lu\n", local_data_offset,
+            remote_data_seg.first);
     client->rdma_write(conn,
                        reinterpret_cast<TransConcurrentArena*>(allocator_)
                            ->get_max_allocated_bytes(),
                        local_data_offset, remote_data_seg.first);
-    if (client->poll_completion(conn)) {
-      s = Status::IOError("poll_completion failed");
-    }
+    assert(client->poll_completion(conn) == 0);
+  }
+
+  if (s.ok()) {
+    char req_type = 6;
+    ASSERT_RW(writen(conn->sock, &req_type, sizeof(char)) == sizeof(char));
+    LOG_CERR("REQUEST: ", req_type, " transfer rMemTable: ", memtable_id, ' ',
+             remote_meta_seg.first, ' ', remote_data_seg.first);
+    ASSERT_RW(readn(conn->sock, &req_type, sizeof(char)) == sizeof(char));
+    assert(req_type == 1);
   }
   if (s.ok()) MarkTransAsFinished();
 
@@ -483,20 +516,18 @@ Status SkipListRep::SendToRemote(
   return s;
 }
 
-void SkipListRep::PackLocal(TransferService* node) const {
+void SkipListRep::PackLocal(TransferService* node,
+                            size_t protection_bytes_per_key) const {
   LOG("SkipListRep::PackLocal");
-  // int64_t msg = 0x1;
-  // node->send(&msg, sizeof(msg));
-  // ReadOnlyInlineSkipList<const MemTableRep::KeyComparator&>* ptr =
-  //     skip_list_.Clone(protection_bytes_per_key);
-  // ReadOnlySkipListRep::PackLocal(node, ptr);
   int64_t msg = 0x1;
   node->send(&msg, sizeof(msg));
-  skip_list_.PackLocal(node);
+  ReadOnlyInlineSkipList<const MemTableRep::KeyComparator&>* ptr =
+      skip_list_.Clone(protection_bytes_per_key);
+  ReadOnlySkipListRep::PackLocal(node, ptr);
   LOG("SkipListRep::PackLocal finish");
 }
 
-void SkipListRep::MarkReadOnly() { LOG_CERR("SkipListRep MarkReadOnly"); }
+void SkipListRep::MarkReadOnly() {}
 
 }  // namespace
 

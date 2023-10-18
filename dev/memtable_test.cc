@@ -19,9 +19,13 @@
 
 #include "db/column_family.h"
 #include "db/db_impl/db_impl.h"
+#include "db/dbformat.h"
+#include "memory/concurrent_arena.h"
+#include "rocksdb/comparator.h"
 #include "rocksdb/db.h"
 #include "rocksdb/listener.h"
 #include "rocksdb/logger.hpp"
+#include "rocksdb/memtablerep.h"
 #include "rocksdb/options.h"
 #include "rocksdb/remote_flush_service.h"
 #include "rocksdb/slice_transform.h"
@@ -108,12 +112,24 @@ auto main(int argc, char** argv) -> signed {
   auto ret = cf_impl->cfd()->mem()->local_begin();
   char* new_mem = new char[ret.second];
   memcpy(new_mem, ret.first, ret.second);
-  cf_impl->cfd()->mem()->set_local_begin(new_mem);
+  // cf_impl->cfd()->mem()->set_local_begin(new_mem);
+  auto* factory = new SkipListFactory(16);
+  auto* arena = new ConcurrentArena();
+  auto* key_cmp = new MemTable::KeyComparator(
+      (InternalKeyComparator(BytewiseComparator())));
+  auto* rep = factory->CreateMemTableRep(*key_cmp, arena,
+                                         opt.prefix_extractor.get(), nullptr);
+  rep->set_local_begin(new_mem);
+  rep->set_head_offset(cf_impl->cfd()->mem()->get_head_offset());
   for (int i = 0; i < 10000; i++) {
     std::string value;
     db->Get(ReadOptions(), std::to_string(i), &value);
     assert(value == std::to_string(i));
   }
+  rep->TESTContinuous();
+  std::cout << "AAA" << endl;
+  cf_impl->cfd()->mem()->TESTContinuous();
+
   db->Close();
   return 0;
 }

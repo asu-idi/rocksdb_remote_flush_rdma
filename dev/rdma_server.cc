@@ -22,7 +22,7 @@ int main(int argc, char** argv) {
     fprintf(stderr, "Parameters: [mem_size] [port]\n");
     return 0;
   }
-  size_t mem_size = argc >= 2 ? std::atoll(argv[1]) : 1ull << 28;  // 256MB
+  int64_t mem_size = argc >= 2 ? std::atoll(argv[1]) : 1ull << 33;  // 8G
   rocksdb::RDMAServer server;
   // if(argc >= 3) server.config.tcp_port = std::atoi(argv[2]);
   server.connect_clients(10086);
