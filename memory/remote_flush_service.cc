@@ -1232,10 +1232,11 @@ bool RDMAServer::service(struct rdma_connection *conn) {
               stderr,
               "Failed to delete remote memtable %lu, might cause memory leak\n",
               id);
+        } else {
+          char ret = 1;
+          ASSERT_RW(writen(conn->sock, reinterpret_cast<char *>(&ret),
+                           sizeof(char)) == sizeof(char));
         }
-        char ret = 1;
-        ASSERT_RW(writen(conn->sock, reinterpret_cast<char *>(&ret),
-                         sizeof(char)) == sizeof(char));
         break;
       }
       case 8: {

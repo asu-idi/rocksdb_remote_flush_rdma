@@ -35,6 +35,7 @@ class RemoteMemTablePool {
     if (id2ptr_.find(id) == id2ptr_.end()) {
       s = Status::NotFound("id not found");
     } else {
+      std::lock_guard<std::mutex> lock(mtx_);
       RemoteMemTable* rmem = id2ptr_[id];
       delete rmem->memtable;
       delete rmem->arena;

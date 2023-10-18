@@ -49,6 +49,7 @@ class TransConcurrentArena : public BasicArena {
              arena_allocated_and_unused_.load(std::memory_order_relaxed));
   }
   explicit TransConcurrentArena(size_t max_memtable_size);
+  ~TransConcurrentArena() override { free(const_cast<void *>(begin_address)); }
   char *Allocate(size_t bytes) override { return AllocateImpl(bytes); }
   char *AllocateAligned(size_t bytes,
                         [[maybe_unused]] size_t huge_page_size = 0,
