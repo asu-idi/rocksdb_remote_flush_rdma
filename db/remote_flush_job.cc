@@ -395,10 +395,10 @@ void RemoteFlushJob::PackRemote(TransferService* node) const {
       "Pack data from remote side");
   assert(mems_.size() > 0);
   mems_[0]->PackRemote(node);
+  cfd_->PackRemote(node);
+  table_properties_.PackRemote(node);
   edit_->PackRemote(node);
   meta_.PackRemote(node);
-  table_properties_.PackRemote(node);
-  cfd_->PackRemote(node);
   edit_->free_remote();
   cfd_->free_remote();
   table_properties_.~TableProperties();
@@ -427,6 +427,13 @@ void RemoteFlushJob::UnPackRemote(TransferService* node) {
   LOG_CERR("RemoteFlushJob::UnPackRemote mems_[0]");
   mems_[0]->UnPackRemote(node);
   LOG_CERR("RemoteFlushJob::UnPackRemote cfd_");
+  db_mutex_->Lock();
+  cfd_->UnPackRemote(node);
+  auto new_table_properties =
+      reinterpret_cast<TableProperties*>(TableProperties::UnPackRemote(node));
+  table_properties_ = *new_table_properties;
+  delete new_table_properties;
+  db_mutex_->Unlock();
   edit_->UnPackRemote(node);
   auto remote_metadata =
       reinterpret_cast<FileMetaData*>(FileMetaData::UnPackRemote(node));
@@ -449,10 +456,7 @@ void RemoteFlushJob::UnPackRemote(TransferService* node) {
   meta_.file_checksum_func_name = remote_metadata->file_checksum_func_name;
   meta_.unique_id = remote_metadata->unique_id;
   meta_.oldest_ancester_time = remote_metadata->oldest_ancester_time;
-  auto new_table_properties =
-      reinterpret_cast<TableProperties*>(TableProperties::UnPackRemote(node));
-  table_properties_ = *new_table_properties;
-  delete new_table_properties;
+  free(remote_metadata);
   LOG_CERR("rebuild table cache");
   std::unique_ptr<InternalIterator> it(cfd_->table_cache()->NewIterator(
       ReadOptions(), file_options_, cfd_->internal_comparator(), meta_,
@@ -468,9 +472,7 @@ void RemoteFlushJob::UnPackRemote(TransferService* node) {
       /*allow_unprepared_value*/ false));
   // close connection with remote worker
   db_mutex_->Lock();
-  cfd_->UnPackRemote(node);
   base_->Unref();
-  free(remote_metadata);
   LOG("RemoteFlushJob::UnPackRemote done");
 }
 
@@ -720,7 +722,7 @@ Status RemoteFlushJob::RunRemote(
     LOG(table_properties_.ToString());
     assert(stats_ == cfd_->ioptions()->stats);
   }
-
+  db_mutex_->AssertHeld();
   if (s.ok() && cfd_->IsDropped()) {
     s = Status::ColumnFamilyDropped("Column family dropped during compaction");
   }

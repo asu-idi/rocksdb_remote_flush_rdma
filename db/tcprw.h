@@ -1,11 +1,15 @@
 #pragma once
-
 #include <asm-generic/errno-base.h>
+#include <execinfo.h>
 #include <sys/types.h>
 #include <unistd.h>
 
 #include <cerrno>
 #include <cstdio>
+#include <cstring>
+#include <thread>
+
+#include "rocksdb/logger.hpp"
 #define ASSERT_RW(value) \
   do {                   \
     assert(value);       \
@@ -20,7 +24,21 @@ inline ssize_t readn(int fd, void *vptr, size_t n) {
       if (errno == EINTR)
         nread = 0;
       else {
-        fprintf(stderr, "read error, return %lu, nleft %lu\n", nread, nleft);
+        std::cout << std::this_thread::get_id() << "read error, return "
+                  << nread << ", nleft " << nleft << " , n " << n << " , fd "
+                  << fd << ", Error: " << strerror(errno) << std::endl;
+        const int maxStackTraceSize = 20;
+        void *stackTrace[maxStackTraceSize];
+        int stackTraceSize = backtrace(stackTrace, maxStackTraceSize);
+        char **stackTraceSymbols =
+            backtrace_symbols(stackTrace, stackTraceSize);
+
+        std::cout << "Call stack:" << std::endl;
+        for (int i = 0; i < stackTraceSize; ++i) {
+          std::cout << stackTraceSymbols[i] << std::endl;
+        }
+
+        free(stackTraceSymbols);
         return -1;
       }
     }
@@ -39,8 +57,19 @@ inline ssize_t writen(int fd, const void *vptr, size_t n) {
       if (nwritten < 0 && errno == EINTR)
         nwritten = 0;
       else {
-        fprintf(stderr, "writen error, return %lu, nleft %lu\n", nwritten,
-                nleft);
+        std::cout << std::this_thread::get_id() << "writen error, return "
+                  << nwritten << ", nleft " << nleft << " , n " << n << " , fd "
+                  << fd << ", Error: " << strerror(errno) << std::endl;
+        const int maxStackTraceSize = 20;
+        void *stackTrace[maxStackTraceSize];
+        int stackTraceSize = backtrace(stackTrace, maxStackTraceSize);
+        char **stackTraceSymbols =
+            backtrace_symbols(stackTrace, stackTraceSize);
+        std::cout << "Call stack:" << std::endl;
+        for (int i = 0; i < stackTraceSize; ++i) {
+          std::cout << stackTraceSymbols[i] << std::endl;
+        }
+        free(stackTraceSymbols);
         return -1;
       }
     }

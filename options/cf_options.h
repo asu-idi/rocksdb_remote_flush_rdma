@@ -122,7 +122,7 @@ struct ImmutableOptions : public ImmutableDBOptions, public ImmutableCFOptions {
     return reinterpret_cast<void*>(ret);
   }
   void PackRemote(TransferService* node) const {
-    if (stats == nullptr) {
+    if (true) {
       bool signal = false;
       node->send(reinterpret_cast<const void*>(&signal), sizeof(bool));
     } else {
@@ -133,7 +133,7 @@ struct ImmutableOptions : public ImmutableDBOptions, public ImmutableCFOptions {
   void UnPackRemote(TransferService* node) const {
     bool signal = false;
     node->receive(reinterpret_cast<void*>(&signal), sizeof(bool));
-    if (signal) {
+    if (false) {
       stats->UnPackRemote(node);
     }
   }

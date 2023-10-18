@@ -2863,196 +2863,204 @@ void DBImpl::MaybeScheduleFlushOrCompaction() {
 }
 
 void DBImpl::BGListenRemoteFlush() {
-  bool made_progress = false;
-  JobContext job_context(next_job_id_.fetch_add(1), true);
+  {
+    InstrumentedMutexLock l(&mutex_);
+    bool made_progress = false;
+    JobContext job_context(next_job_id_.fetch_add(1), true);
 
-  std::unique_ptr<std::list<uint64_t>::iterator> pending_outputs_inserted_elem(
-      new std::list<uint64_t>::iterator(
-          CaptureCurrentFileNumberInPendingOutputs()));
-  FlushReason reason = FlushReason::kOthers;
-  // Status s = BackgroundFlush(&made_progress, &job_context, nullptr, &reason);
-  Status s = error_handler_.GetBGError();
-  if (!s.ok()) return;
-  autovector<BGFlushArg> bg_flush_args;
-  std::vector<SuperVersionContext>& superversion_contexts =
-      job_context.superversion_contexts;
-  autovector<ColumnFamilyData*> column_families_not_to_flush;
-  while (!flush_queue_.empty()) {
-    // This cfd is already referenced
-    const FlushRequest& flush_req = PopFirstFromFlushQueue();
-    FlushReason flush_reason = flush_req.flush_reason;
-    superversion_contexts.clear();
-    superversion_contexts.reserve(
-        flush_req.cfd_to_max_mem_id_to_persist.size());
+    std::unique_ptr<std::list<uint64_t>::iterator>
+        pending_outputs_inserted_elem(new std::list<uint64_t>::iterator(
+            CaptureCurrentFileNumberInPendingOutputs()));
+    FlushReason reason = FlushReason::kOthers;
+    // Status s = BackgroundFlush(&made_progress, &job_context, nullptr,
+    // &reason);
+    Status s = error_handler_.GetBGError();
+    if (!s.ok()) return;
+    autovector<BGFlushArg> bg_flush_args;
+    std::vector<SuperVersionContext>& superversion_contexts =
+        job_context.superversion_contexts;
+    autovector<ColumnFamilyData*> column_families_not_to_flush;
+    while (!flush_queue_.empty()) {
+      // This cfd is already referenced
+      const FlushRequest& flush_req = PopFirstFromFlushQueue();
+      FlushReason flush_reason = flush_req.flush_reason;
+      superversion_contexts.clear();
+      superversion_contexts.reserve(
+          flush_req.cfd_to_max_mem_id_to_persist.size());
 
-    for (const auto& iter : flush_req.cfd_to_max_mem_id_to_persist) {
-      ColumnFamilyData* cfd = iter.first;
-      if (cfd->GetMempurgeUsed()) {
-        cfd->imm()->FlushRequested();
-      }
-
-      if (cfd->IsDropped() || !cfd->imm()->IsFlushPending()) {
-        column_families_not_to_flush.push_back(cfd);
-        continue;
-      }
-      superversion_contexts.emplace_back(SuperVersionContext(true));
-      bg_flush_args.emplace_back(cfd, iter.second,
-                                 &(superversion_contexts.back()), flush_reason);
-    }
-    if (!bg_flush_args.empty()) {
-      break;
-    }
-  }
-
-  if (!bg_flush_args.empty()) {
-    assert(bg_flush_args.size() == 1);
-    std::vector<SequenceNumber> snapshot_seqs;
-    SequenceNumber earliest_write_conflict_snapshot;
-    SnapshotChecker* snapshot_checker;
-    GetSnapshotContext(&job_context, &snapshot_seqs,
-                       &earliest_write_conflict_snapshot, &snapshot_checker);
-    const auto& bg_flush_arg = bg_flush_args[0];
-    ColumnFamilyData* cfd = bg_flush_arg.cfd_;
-    // intentional infrequent copy for each flush
-    MutableCFOptions mutable_cf_options_copy =
-        *cfd->GetLatestMutableCFOptions();
-    SuperVersionContext* superversion_context =
-        bg_flush_arg.superversion_context_;
-    FlushReason flush_reason = bg_flush_arg.flush_reason_;
-
-    const bool needs_to_sync_closed_wals =
-        logfile_number_ > 0 &&
-        versions_->GetColumnFamilySet()->NumberOfColumnFamilies() > 1;
-
-    uint64_t max_memtable_id = needs_to_sync_closed_wals
-                                   ? cfd->imm()->GetLatestMemTableID()
-                                   : std::numeric_limits<uint64_t>::max();
-
-    std::shared_ptr<RemoteFlushJob> flush_job =
-        RemoteFlushJob::CreateRemoteFlushJob(
-            dbname_, cfd, immutable_db_options_, mutable_cf_options_copy,
-            max_memtable_id, file_options_for_compaction_, versions_.get(),
-            &mutex_, &shutting_down_, snapshot_seqs,
-            earliest_write_conflict_snapshot, snapshot_checker, &job_context,
-            flush_reason, nullptr, directories_.GetDbDir(), GetDataDir(cfd, 0U),
-            GetCompressionFlush(*cfd->ioptions(), mutable_cf_options_copy),
-            stats_, &event_logger_, mutable_cf_options_copy.report_bg_io_stats,
-            true /* sync_output_directory */, true /* write_manifest */,
-            io_tracer_, seqno_time_mapping_,
-#ifdef ROCKSDB_RDMA
-            cfd->get_cflevel_client(),
-#endif  // ROCKSDB_RDMA
-            db_id_, db_session_id_, cfd->GetFullHistoryTsLow(),
-            &blob_callback_);
-    FileMetaData file_meta;
-    bool need_cancel = false;
-    IOStatus log_io_s = IOStatus::OK();
-    if (needs_to_sync_closed_wals) {
-      VersionEdit synced_wals;
-      mutex_.Unlock();
-      log_io_s = SyncClosedLogs(&job_context, &synced_wals);
-      mutex_.Lock();
-      if (log_io_s.ok() && synced_wals.IsWalAddition()) {
-        log_io_s = status_to_io_status(ApplyWALToManifest(&synced_wals));
-      }
-
-      if (!log_io_s.ok() && !log_io_s.IsShutdownInProgress() &&
-          !log_io_s.IsColumnFamilyDropped()) {
-        error_handler_.SetBGError(log_io_s, BackgroundErrorReason::kFlush);
-      }
-    }
-    s = log_io_s;
-
-    if (s.ok()) {
-      flush_job->PickMemTable();
-      need_cancel = true;
-    }
-    NotifyOnFlushBegin(cfd, &file_meta, mutable_cf_options_copy,
-                       job_context.job_id, flush_reason);
-
-    bool switched_to_mempurge = false;
-    if (s.ok()) {
-      LOG("flush job run remote: ptr = ", std::hex, flush_job.get(), std::dec);
-      std::function<int()> get_available_port = [&]() -> int {
-        int32_t port = port_index_.fetch_add(1);
-        return port % 100 + 11000;
-      };
-      s = flush_job->RunRemote(&memnodes_ip_port_, &get_available_port,
-                               local_ip_, &logs_with_prep_tracker_, &file_meta,
-                               &switched_to_mempurge);
-      need_cancel = false;
-    }
-
-    if (!s.ok() && need_cancel) {
-      flush_job->Cancel();
-    }
-
-    if (s.ok()) {
-      InstallSuperVersionAndScheduleWork(cfd, superversion_context,
-                                         mutable_cf_options_copy);
-      made_progress = true;
-    }
-
-    if (!s.ok() && !s.IsShutdownInProgress() && !s.IsColumnFamilyDropped()) {
-      if (log_io_s.ok()) {
-        if (!versions_->io_status().ok()) {
-          error_handler_.SetBGError(s,
-                                    BackgroundErrorReason::kManifestWriteNoWAL);
-        } else {
-          error_handler_.SetBGError(s, BackgroundErrorReason::kFlushNoWAL);
+      for (const auto& iter : flush_req.cfd_to_max_mem_id_to_persist) {
+        ColumnFamilyData* cfd = iter.first;
+        if (cfd->GetMempurgeUsed()) {
+          cfd->imm()->FlushRequested();
         }
-      } else {
-        assert(s == log_io_s);
-        Status new_bg_error = s;
-        error_handler_.SetBGError(new_bg_error, BackgroundErrorReason::kFlush);
+
+        if (cfd->IsDropped() || !cfd->imm()->IsFlushPending()) {
+          column_families_not_to_flush.push_back(cfd);
+          continue;
+        }
+        superversion_contexts.emplace_back(SuperVersionContext(true));
+        bg_flush_args.emplace_back(
+            cfd, iter.second, &(superversion_contexts.back()), flush_reason);
+      }
+      if (!bg_flush_args.empty()) {
+        break;
       }
     }
-    if (s.ok() && (!switched_to_mempurge)) {
-      // may temporarily unlock and lock the mutex.
-      NotifyOnFlushCompleted(cfd, mutable_cf_options_copy,
-                             flush_job->GetCommittedFlushJobsInfo());
-      auto sfm = static_cast<SstFileManagerImpl*>(
-          immutable_db_options_.sst_file_manager.get());
-      if (sfm) {
-        // Notify sst_file_manager that a new file was added
-        std::string file_path = MakeTableFileName(
-            cfd->ioptions()->cf_paths[0].path, file_meta.fd.GetNumber());
-        sfm->OnAddFile(file_path).PermitUncheckedError();
-        if (sfm->IsMaxAllowedSpaceReached()) {
-          Status new_bg_error =
-              Status::SpaceLimit("Max allowed space was reached");
-          TEST_SYNC_POINT_CALLBACK(
-              "DBImpl::FlushMemTableToOutputFile:MaxAllowedSpaceReached",
-              &new_bg_error);
+
+    if (!bg_flush_args.empty()) {
+      assert(bg_flush_args.size() == 1);
+      std::vector<SequenceNumber> snapshot_seqs;
+      SequenceNumber earliest_write_conflict_snapshot;
+      SnapshotChecker* snapshot_checker;
+      GetSnapshotContext(&job_context, &snapshot_seqs,
+                         &earliest_write_conflict_snapshot, &snapshot_checker);
+      const auto& bg_flush_arg = bg_flush_args[0];
+      ColumnFamilyData* cfd = bg_flush_arg.cfd_;
+      // intentional infrequent copy for each flush
+      MutableCFOptions mutable_cf_options_copy =
+          *cfd->GetLatestMutableCFOptions();
+      SuperVersionContext* superversion_context =
+          bg_flush_arg.superversion_context_;
+      FlushReason flush_reason = bg_flush_arg.flush_reason_;
+
+      const bool needs_to_sync_closed_wals =
+          logfile_number_ > 0 &&
+          versions_->GetColumnFamilySet()->NumberOfColumnFamilies() > 1;
+
+      uint64_t max_memtable_id = needs_to_sync_closed_wals
+                                     ? cfd->imm()->GetLatestMemTableID()
+                                     : std::numeric_limits<uint64_t>::max();
+
+      std::shared_ptr<RemoteFlushJob> flush_job =
+          RemoteFlushJob::CreateRemoteFlushJob(
+              dbname_, cfd, immutable_db_options_, mutable_cf_options_copy,
+              max_memtable_id, file_options_for_compaction_, versions_.get(),
+              &mutex_, &shutting_down_, snapshot_seqs,
+              earliest_write_conflict_snapshot, snapshot_checker, &job_context,
+              flush_reason, nullptr, directories_.GetDbDir(),
+              GetDataDir(cfd, 0U),
+              GetCompressionFlush(*cfd->ioptions(), mutable_cf_options_copy),
+              stats_, &event_logger_,
+              mutable_cf_options_copy.report_bg_io_stats,
+              true /* sync_output_directory */, true /* write_manifest */,
+              io_tracer_, seqno_time_mapping_,
+#ifdef ROCKSDB_RDMA
+              cfd->get_cflevel_client(),
+#endif  // ROCKSDB_RDMA
+              db_id_, db_session_id_, cfd->GetFullHistoryTsLow(),
+              &blob_callback_);
+      FileMetaData file_meta;
+      bool need_cancel = false;
+      IOStatus log_io_s = IOStatus::OK();
+      if (needs_to_sync_closed_wals) {
+        VersionEdit synced_wals;
+        mutex_.Unlock();
+        log_io_s = SyncClosedLogs(&job_context, &synced_wals);
+        mutex_.Lock();
+        if (log_io_s.ok() && synced_wals.IsWalAddition()) {
+          log_io_s = status_to_io_status(ApplyWALToManifest(&synced_wals));
+        }
+
+        if (!log_io_s.ok() && !log_io_s.IsShutdownInProgress() &&
+            !log_io_s.IsColumnFamilyDropped()) {
+          error_handler_.SetBGError(log_io_s, BackgroundErrorReason::kFlush);
+        }
+      }
+      s = log_io_s;
+
+      if (s.ok()) {
+        flush_job->PickMemTable();
+        need_cancel = true;
+      }
+      NotifyOnFlushBegin(cfd, &file_meta, mutable_cf_options_copy,
+                         job_context.job_id, flush_reason);
+
+      bool switched_to_mempurge = false;
+      if (s.ok()) {
+        LOG("flush job run remote: ptr = ", std::hex, flush_job.get(),
+            std::dec);
+        std::function<int()> get_available_port = [&]() -> int {
+          int32_t port = port_index_.fetch_add(1);
+          return port % 100 + 11000;
+        };
+        s = flush_job->RunRemote(&memnodes_ip_port_, &get_available_port,
+                                 local_ip_, &logs_with_prep_tracker_,
+                                 &file_meta, &switched_to_mempurge);
+        need_cancel = false;
+      }
+
+      if (!s.ok() && need_cancel) {
+        flush_job->Cancel();
+      }
+
+      if (s.ok()) {
+        InstallSuperVersionAndScheduleWork(cfd, superversion_context,
+                                           mutable_cf_options_copy);
+        made_progress = true;
+      }
+
+      if (!s.ok() && !s.IsShutdownInProgress() && !s.IsColumnFamilyDropped()) {
+        if (log_io_s.ok()) {
+          if (!versions_->io_status().ok()) {
+            error_handler_.SetBGError(
+                s, BackgroundErrorReason::kManifestWriteNoWAL);
+          } else {
+            error_handler_.SetBGError(s, BackgroundErrorReason::kFlushNoWAL);
+          }
+        } else {
+          assert(s == log_io_s);
+          Status new_bg_error = s;
           error_handler_.SetBGError(new_bg_error,
                                     BackgroundErrorReason::kFlush);
         }
       }
-    }
+      if (s.ok() && (!switched_to_mempurge)) {
+        // may temporarily unlock and lock the mutex.
+        NotifyOnFlushCompleted(cfd, mutable_cf_options_copy,
+                               flush_job->GetCommittedFlushJobsInfo());
+        auto sfm = static_cast<SstFileManagerImpl*>(
+            immutable_db_options_.sst_file_manager.get());
+        if (sfm) {
+          // Notify sst_file_manager that a new file was added
+          std::string file_path = MakeTableFileName(
+              cfd->ioptions()->cf_paths[0].path, file_meta.fd.GetNumber());
+          sfm->OnAddFile(file_path).PermitUncheckedError();
+          if (sfm->IsMaxAllowedSpaceReached()) {
+            Status new_bg_error =
+                Status::SpaceLimit("Max allowed space was reached");
+            TEST_SYNC_POINT_CALLBACK(
+                "DBImpl::FlushMemTableToOutputFile:MaxAllowedSpaceReached",
+                &new_bg_error);
+            error_handler_.SetBGError(new_bg_error,
+                                      BackgroundErrorReason::kFlush);
+          }
+        }
+      }
 
-    reason = bg_flush_args[0].flush_reason_;
-    for (auto& arg : bg_flush_args) {
-      ColumnFamilyData* cfd = arg.cfd_;
-      if (cfd->UnrefAndTryDelete()) {
-        arg.cfd_ = nullptr;
+      reason = bg_flush_args[0].flush_reason_;
+      for (auto& arg : bg_flush_args) {
+        ColumnFamilyData* cfd = arg.cfd_;
+        if (cfd->UnrefAndTryDelete()) {
+          arg.cfd_ = nullptr;
+        }
       }
     }
-  }
-  for (auto cfd : column_families_not_to_flush) {
-    cfd->UnrefAndTryDelete();
-  }
-
-  ReleaseFileNumberFromPendingOutputs(pending_outputs_inserted_elem);
-  FindObsoleteFiles(&job_context, !s.ok() && !s.IsShutdownInProgress() &&
-                                      !s.IsColumnFamilyDropped());
-  if (job_context.HaveSomethingToClean() ||
-      job_context.HaveSomethingToDelete()) {
-    mutex_.Unlock();
-    if (job_context.HaveSomethingToDelete()) {
-      PurgeObsoleteFiles(job_context);
+    for (auto cfd : column_families_not_to_flush) {
+      cfd->UnrefAndTryDelete();
     }
-    job_context.Clean();
-    mutex_.Lock();
+
+    ReleaseFileNumberFromPendingOutputs(pending_outputs_inserted_elem);
+    FindObsoleteFiles(&job_context, !s.ok() && !s.IsShutdownInProgress() &&
+                                        !s.IsColumnFamilyDropped());
+    if (job_context.HaveSomethingToClean() ||
+        job_context.HaveSomethingToDelete()) {
+      mutex_.Unlock();
+      if (job_context.HaveSomethingToDelete()) {
+        PurgeObsoleteFiles(job_context);
+      }
+      job_context.Clean();
+      mutex_.Lock();
+    }
   }
 }
 
