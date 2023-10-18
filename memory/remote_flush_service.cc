@@ -268,6 +268,8 @@ RDMANode::RDMANode() {
 
 RDMANode::~RDMANode() {
   resources_destroy();
+  conns_mtx.reset(nullptr);
+  executor_table_mtx.reset(nullptr);
   delete res;
 }
 
@@ -569,7 +571,7 @@ resources_create_exit:
       res->mr = nullptr;
     }
     if (res->buf) {
-      free(res->buf);
+      delete[] res->buf;
       res->buf = nullptr;
     }
     if (res->pd) {
@@ -742,7 +744,10 @@ int RDMANode::resources_destroy() {
       fprintf(stderr, "failed to deregister MR\n");
       rc = 1;
     }
-  if (res->buf) free(res->buf);
+  if (res->buf) {
+    delete[] res->buf;
+    res->buf = nullptr;
+  }
   if (res->pd)
     if (ibv_dealloc_pd(res->pd)) {
       fprintf(stderr, "failed to deallocate PD\n");

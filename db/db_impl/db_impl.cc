@@ -496,15 +496,14 @@ Status DBImpl::ListenAndScheduleFlushJob(int port) {
   listen_node->rdma_mem_.init(listen_node->buf_size);
   std::vector<std::thread*> threads;
   for (auto& i : memnodes_ip_port_) {
-    int poll_ = 0;
-    std::atomic<RDMANode::rdma_connection*> worker_conn[32];
-    for (auto& j : worker_conn) {
-      j = worker_node->sock_connect(i.first, i.second);
-    }
-    auto listen_conn = listen_node->sock_connect(i.first, i.second);
-    listen_node->register_executor_request(listen_conn);
-    auto wait_for_jobs = [this, worker_node, listen_node, &i, &worker_conn,
-                          &poll_, listen_conn] {
+    auto wait_for_jobs = [this, worker_node, listen_node, &i] {
+      int poll_ = 0;
+      std::atomic<RDMANode::rdma_connection*> worker_conn[32];
+      for (auto& j : worker_conn) {
+        j = worker_node->sock_connect(i.first, i.second);
+      }
+      auto listen_conn = listen_node->sock_connect(i.first, i.second);
+      listen_node->register_executor_request(listen_conn);
       while (true) {
         auto remote_seg = listen_node->wait_for_job_request(listen_conn);
         // choose worker_node
@@ -542,12 +541,10 @@ Status DBImpl::ListenAndScheduleFlushJob(int port) {
         }
         mutex_.Unlock();
       }
-#ifdef ROCKSDB_RDMA
     };
     threads.push_back(new std::thread(wait_for_jobs));
   }
   for (auto& thread : threads) thread->join();
-#endif
 
   return Status::OK();
 }
@@ -998,6 +995,11 @@ DBImpl::~DBImpl() {
   {
     const Status s = MaybeReleaseTimestampedSnapshotsAndCheck();
     s.PermitUncheckedError();
+  }
+
+  {
+    delete rdma_client_;
+    rdma_client_ = nullptr;
   }
 
   closing_status_ = CloseImpl();
@@ -3133,8 +3135,8 @@ void DBImpl::MultiGetWithCallback(
 #ifndef NDEBUG
   assert(!unref_only);
 #else
-      // Silence unused variable warning
-      (void)unref_only;
+  // Silence unused variable warning
+  (void)unref_only;
 #endif  // NDEBUG
 
   if (callback && read_options.snapshot == nullptr) {
@@ -5249,11 +5251,11 @@ void DBImpl::EraseThreadStatusDbInfo() const {
 }
 
 #else
-    void DBImpl::NewThreadStatusCfInfo(ColumnFamilyData * /*cfd*/) const {}
+void DBImpl::NewThreadStatusCfInfo(ColumnFamilyData* /*cfd*/) const {}
 
-    void DBImpl::EraseThreadStatusCfInfo(ColumnFamilyData * /*cfd*/) const {}
+void DBImpl::EraseThreadStatusCfInfo(ColumnFamilyData* /*cfd*/) const {}
 
-    void DBImpl::EraseThreadStatusDbInfo() const {}
+void DBImpl::EraseThreadStatusDbInfo() const {}
 #endif  // ROCKSDB_USING_THREAD_STATUS
 
 //

@@ -32,15 +32,17 @@ class RemoteMemTablePool {
 
   inline Status delete_remote_memtable(uint64_t id) {
     Status s = Status::OK();
+    std::lock_guard<std::mutex> lock(mtx_);
     if (id2ptr_.find(id) == id2ptr_.end()) {
       s = Status::NotFound("id not found");
     } else {
-      std::lock_guard<std::mutex> lock(mtx_);
       RemoteMemTable* rmem = id2ptr_[id];
       delete rmem->memtable;
       delete rmem->arena;
       delete rmem->key_cmp;
       delete rmem->prefix_extractor;
+      LOG_CERR("free rmem: ", rmem->id, ' ', id, ' ', rmem->data, ' ',
+               rmem->meta, ' ', rmem->data_size, ' ', rmem->meta_size);
       free(rmem->data);
       free(rmem->meta);
       id2ptr_.erase(id);

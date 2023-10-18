@@ -117,6 +117,8 @@ Status RemoteMemTablePool::rebuild_remote_memtable(void* data, size_t data_size,
       RemoteMemTable::rebuild_remote_memTable(data, data_size, meta, meta_size);
   if (rmt == nullptr) {
     s = Status::NotFound("rebuild parse failed");
+    free(data);
+    free(meta);
     return s;
   }
   if (s.ok()) {

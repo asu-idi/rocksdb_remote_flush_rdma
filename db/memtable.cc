@@ -370,9 +370,9 @@ MemTable::~MemTable() {
     char req_type = 7;
     ASSERT_RW(writen(rmem_info_->read_conn_->sock, &req_type,
                      sizeof(req_type)) == sizeof(req_type));
-    ASSERT_RW(
-        writen(rmem_info_->read_conn_->sock, &rmem_info_->mixed_id,
-               sizeof(rmem_info_->mixed_id) == sizeof(rmem_info_->mixed_id)));
+    ASSERT_RW(writen(rmem_info_->read_conn_->sock, &rmem_info_->mixed_id,
+                     sizeof(rmem_info_->mixed_id)) ==
+              sizeof(rmem_info_->mixed_id));
     ASSERT_RW(readn(rmem_info_->read_conn_->sock, &req_type,
                     sizeof(req_type)) == sizeof(req_type));
     rmem_info_->client_->disconnect_request(rmem_info_->read_conn_);
