@@ -858,9 +858,10 @@ Status RemoteFlushJob::MatchMemNode(
 }
 
 Status RemoteFlushJob::QuitRemoteWorker() {
-  const char* bye = "byebyemessage";
+  const char* bye = "endl";
   void* mem = reinterpret_cast<void*>(malloc(strlen(bye)));
-  local_generator_node.receive(&mem, strlen(bye));
+  ssize_t ret_len = read(local_generator_node.connection_info_.client_sockfd,
+                         mem, strlen(bye));
   assert(strncmp(reinterpret_cast<char*>(mem), bye, strlen(bye)) == 0);
   close(local_generator_node.connection_info_.client_sockfd);
   local_generator_node.connection_info_.client_sockfd = 0;

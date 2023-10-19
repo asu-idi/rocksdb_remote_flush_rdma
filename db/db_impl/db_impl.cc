@@ -429,8 +429,9 @@ void DBImpl::BackgroundCallRemoteFlush(
            flush_job_generator_ip_str, ':', flush_job_generator_port);
   TCPTransferService local_transfer_service(&unpack_tcp_node);
   local_handler->PackRemote(&local_transfer_service);
-  local_transfer_service.send("byebyemessage", strlen("byebyemessage"));
-
+  ssize_t write_end = write(unpack_tcp_node.connection_info_.client_sockfd,
+                            "endl", strlen("endl"));
+  assert(write_end == strlen("endl"));
   close(unpack_tcp_node.connection_info_.client_sockfd);
   LOG_CERR("finish meta feedback trans, start to do gc");
   for (size_t i = 0; i < tmp_memtables_.size(); i++)
