@@ -620,53 +620,95 @@ class Statistics : public Customizable {
   void PackRemote(TransferService* node) const {
     bool signal = true;
     node->send(&signal, sizeof(bool));
-    node->send(
-        remote_record_tick_.data(),
-        remote_record_tick_.size() * sizeof(std::pair<uint32_t, uint64_t>));
-    node->send(remote_report_time_to_histogram_.data(),
-               remote_report_time_to_histogram_.size() *
-                   sizeof(std::pair<uint32_t, uint64_t>));
-    node->send(remote_set_ticker_count_.data(),
-               remote_set_ticker_count_.size() *
-                   sizeof(std::pair<uint32_t, uint64_t>));
+    return;
+    size_t remote_record_tick_len = remote_record_tick_.size();
+    node->send(&remote_record_tick_len, sizeof(size_t));
+    LOG_CERR("remote_record_tick_len: ", remote_record_tick_len);
+    if (remote_record_tick_len > 0)
+      node->send(
+          remote_record_tick_.data(),
+          remote_record_tick_.size() * sizeof(std::pair<uint32_t, uint64_t>));
+
+    size_t remote_report_time_to_histogram_len =
+        remote_report_time_to_histogram_.size();
+    node->send(&remote_report_time_to_histogram_len, sizeof(size_t));
+    LOG_CERR("remote_report_time_to_histogram_len: ",
+             remote_report_time_to_histogram_len);
+    if (remote_report_time_to_histogram_len > 0)
+      node->send(remote_report_time_to_histogram_.data(),
+                 remote_report_time_to_histogram_.size() *
+                     sizeof(std::pair<uint32_t, uint64_t>));
+
+    size_t remote_set_ticker_count_len = remote_set_ticker_count_.size();
+    node->send(&remote_set_ticker_count_len, sizeof(size_t));
+    LOG_CERR("remote_set_ticker_count_len: ", remote_set_ticker_count_len);
+    if (remote_set_ticker_count_len > 0)
+      node->send(remote_set_ticker_count_.data(),
+                 remote_set_ticker_count_.size() *
+                     sizeof(std::pair<uint32_t, uint64_t>));
   }
   void UnPackRemote(TransferService* node) {
     size_t remote_record_tick_len = 0;
-    void* remote_record_tick_ptr = nullptr;
-    node->receive(&remote_record_tick_ptr, &remote_record_tick_len);
-    std::vector<std::pair<uint32_t, uint64_t>> remote_record_tick_info_;
-    remote_record_tick_info_.resize(remote_record_tick_len);
-    memcpy(reinterpret_cast<void*>(remote_record_tick_info_.data()),
-           remote_record_tick_ptr, remote_record_tick_len);
-    for (auto& i : remote_record_tick_info_) {
-      recordTick(i.first, i.second);
+    node->receive(&remote_record_tick_len, sizeof(size_t));
+    if (remote_record_tick_len > 0) {
+      void* remote_record_tick_ptr = malloc(
+          remote_record_tick_len * sizeof(std::pair<uint32_t, uint64_t>));
+      node->receive(
+          &remote_record_tick_ptr,
+          remote_record_tick_len * sizeof(std::pair<uint32_t, uint64_t>));
+      std::vector<std::pair<uint32_t, uint64_t>> remote_record_tick_info_;
+      remote_record_tick_info_.resize(remote_record_tick_len);
+      memcpy(reinterpret_cast<void*>(remote_record_tick_info_.data()),
+             remote_record_tick_ptr,
+             remote_record_tick_len * sizeof(std::pair<uint32_t, uint64_t>));
+      for (auto& i : remote_record_tick_info_) {
+        recordTick(i.first, i.second);
+      }
+      free(remote_record_tick_ptr);
     }
 
     size_t remote_report_time_to_histogram_len = 0;
-    void* remote_report_time_to_histogram_ptr = nullptr;
-    node->receive(&remote_report_time_to_histogram_ptr,
-                  &remote_report_time_to_histogram_len);
-    std::vector<std::pair<uint32_t, uint64_t>>
-        remote_report_time_to_histogram_info_;
-    remote_report_time_to_histogram_info_.resize(
-        remote_report_time_to_histogram_len);
-    memcpy(
-        reinterpret_cast<void*>(remote_report_time_to_histogram_info_.data()),
-        remote_report_time_to_histogram_ptr,
-        remote_report_time_to_histogram_len);
-    for (auto& i : remote_report_time_to_histogram_info_) {
-      recordInHistogram(i.first, i.second);
+    node->receive(&remote_report_time_to_histogram_len, sizeof(size_t));
+    if (remote_report_time_to_histogram_len > 0) {
+      void* remote_report_time_to_histogram_ptr =
+          malloc(remote_report_time_to_histogram_len *
+                 sizeof(std::pair<uint32_t, uint64_t>));
+      node->receive(&remote_report_time_to_histogram_ptr,
+                    remote_report_time_to_histogram_len *
+                        sizeof(std::pair<uint32_t, uint64_t>));
+      std::vector<std::pair<uint32_t, uint64_t>>
+          remote_report_time_to_histogram_info_;
+      remote_report_time_to_histogram_info_.resize(
+          remote_report_time_to_histogram_len);
+      memcpy(
+          reinterpret_cast<void*>(remote_report_time_to_histogram_info_.data()),
+          remote_report_time_to_histogram_ptr,
+          remote_report_time_to_histogram_len *
+              sizeof(std::pair<uint32_t, uint64_t>));
+      for (auto& i : remote_report_time_to_histogram_info_) {
+        recordInHistogram(i.first, i.second);
+      }
+      free(remote_report_time_to_histogram_ptr);
     }
 
     size_t remote_set_ticker_count_len = 0;
-    void* remote_set_ticker_count_ptr = nullptr;
-    node->receive(&remote_set_ticker_count_ptr, &remote_set_ticker_count_len);
-    std::vector<std::pair<uint32_t, uint64_t>> remote_set_ticker_count_info_;
-    remote_set_ticker_count_info_.resize(remote_set_ticker_count_len);
-    memcpy(reinterpret_cast<void*>(remote_set_ticker_count_info_.data()),
-           remote_set_ticker_count_ptr, remote_set_ticker_count_len);
-    for (auto& i : remote_set_ticker_count_info_) {
-      setTickerCount(i.first, i.second);
+    node->receive(&remote_set_ticker_count_len, sizeof(size_t));
+    if (remote_set_ticker_count_len > 0) {
+      void* remote_set_ticker_count_ptr = malloc(
+          remote_set_ticker_count_len * sizeof(std::pair<uint32_t, uint64_t>));
+      node->receive(
+          &remote_set_ticker_count_ptr,
+          remote_set_ticker_count_len * sizeof(std::pair<uint32_t, uint64_t>));
+      std::vector<std::pair<uint32_t, uint64_t>> remote_set_ticker_count_info_;
+      remote_set_ticker_count_info_.resize(remote_set_ticker_count_len);
+      memcpy(
+          reinterpret_cast<void*>(remote_set_ticker_count_info_.data()),
+          remote_set_ticker_count_ptr,
+          remote_set_ticker_count_len * sizeof(std::pair<uint32_t, uint64_t>));
+      for (auto& i : remote_set_ticker_count_info_) {
+        setTickerCount(i.first, i.second);
+      }
+      free(remote_set_ticker_count_ptr);
     }
   }
   bool get_remote_trigger() { return remote_trigger_; }

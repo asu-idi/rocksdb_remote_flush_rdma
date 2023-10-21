@@ -1903,6 +1903,13 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
   } else {
     assert(impl->init_logger_creation_s_.ok());
   }
+
+#ifdef ROCKSDB_RDMA
+  if (s.ok()) {
+    s = impl->InitRDMAClient();
+  }
+#endif  // ROCKSDB_RDMA
+
   s = impl->env_->CreateDirIfMissing(impl->immutable_db_options_.GetWalDir());
   if (s.ok()) {
     std::vector<std::string> paths;
@@ -2196,11 +2203,6 @@ Status DBImpl::Open(const DBOptions& db_options, const std::string& dbname,
     delete impl;
     *dbptr = nullptr;
   }
-#ifdef ROCKSDB_RDMA
-  if (s.ok()) {
-    s = impl->InitRDMAClient();
-  }
-#endif  // ROCKSDB_RDMA
 
   return s;
 }

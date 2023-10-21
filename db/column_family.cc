@@ -13,14 +13,17 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cinttypes>
 #include <cstddef>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -40,10 +43,12 @@
 #include "db/range_del_aggregator.h"
 #include "db/table_cache.h"
 #include "db/table_properties_collector.h"
+#include "db/tcprw.h"
 #include "db/version_set.h"
 #include "db/write_controller.h"
 #include "file/sst_file_manager_impl.h"
 #include "logging/logging.h"
+#include "monitoring/instrumented_mutex.h"
 #include "monitoring/thread_status_util.h"
 #include "options/cf_options.h"
 #include "options/db_options.h"
@@ -589,7 +594,15 @@ ColumnFamilyData::ColumnFamilyData(
       last_memtable_id_(0),
       db_paths_registered_(false),
       mempurge_used_(false),
-      next_epoch_number_(1) {
+      next_epoch_number_(1),
+      meta_conn_(nullptr),
+      memtable_conn_(nullptr),
+      cflevel_client_(nullptr),
+      reginfo_(nullptr),
+      imm_que(new std::queue<MemTable*>),
+      imm_que_mtx(new std::mutex),
+      memtable_ip_port(new std::pair<std::string, size_t>),
+      memtable_thread(new std::thread) {
   LOG("CHECK : ", "initial_cf_options_:",
       initial_cf_options_.server_use_remote_flush == true ? "true" : "false");
   if (id_ != kDummyColumnFamilyDataId) {
@@ -681,6 +694,11 @@ ColumnFamilyData::ColumnFamilyData(
               bbto->block_cache)));
     }
   }
+  if (db_options.server_remote_flush) {
+    std::string memnode_ip = "10.10.1.5";
+    init_cf_level_rdma_client(memnode_ip, 9091);
+    background_schedule_imm_trans();
+  }
 }
 
 // DB mutex held
@@ -738,6 +756,57 @@ ColumnFamilyData::~ColumnFamilyData() {
           id_, name_.c_str());
     }
   }
+
+  should_drop = true;
+  if (memtable_thread->joinable()) {
+    memtable_thread->join();
+    delete memtable_thread;
+    memtable_thread = nullptr;
+  }
+  if (memtable_conn_) {
+    cflevel_client_->disconnect_request(memtable_conn_);
+  }
+  if (meta_conn_) {
+    cflevel_client_->disconnect_request(meta_conn_);
+  }
+  if (reginfo_) delete reginfo_;
+  if (imm_que) delete imm_que;
+  if (imm_que_mtx) delete imm_que_mtx;
+  if (memtable_ip_port) delete memtable_ip_port;
+  if (cflevel_client_) delete cflevel_client_;
+}
+
+Status ColumnFamilyData::background_schedule_imm_trans() {
+  if (memtable_thread->joinable()) {
+    fprintf(stderr, "memtable thread already created\n");
+    return Status::Aborted();
+  }
+  *memtable_thread = std::move(std::thread([this]() {
+    MemTable* imm_to_trans = nullptr;
+    while (!should_drop) {
+      assert(imm_que);
+      imm_que_mtx->lock();
+      if (imm_que->empty()) {
+        imm_que_mtx->unlock();
+        continue;
+      } else {
+        imm_to_trans = imm_que->front();
+        imm_que->pop();
+        imm_que_mtx->unlock();
+      }
+      Status s = imm_to_trans->SendToRemote(
+          cflevel_client_, memtable_conn_, reginfo_->imm_meta_remote_offset,
+          reginfo_->imm_meta_local_offset, reginfo_->imm_data_remote_offset,
+          reginfo_->imm_data_local_offset, *memtable_ip_port, id_);
+      if (!s.ok()) {
+        fprintf(stderr,
+                "immutable memtable sent remote failed, reschedule task\n");
+        std::lock_guard<std::mutex> lck(*imm_que_mtx);
+        imm_que->push(imm_to_trans);
+      }
+    }
+  }));
+  return Status::OK();
 }
 
 void ColumnFamilyData::free_remote() {
@@ -765,10 +834,11 @@ void ColumnFamilyData::UnPackRemote(TransferService* node) {
   LOG("ColumnFamilyData::UnPackRemote done.");
 }
 
-void ColumnFamilyData::PackLocal(TransferService* node) const {
+void ColumnFamilyData::PackLocal(TransferService* node,
+                                 InstrumentedMutex* db_mutex) const {
+  assert(internal_comparator_.user_comparator() ==
+         initial_cf_options_.comparator);
   initial_cf_options_.PackLocal(node);
-  current_->PackLocal(node);
-  assert(current_->cfd() == this);
   ioptions_.PackLocal(node);
   mutable_cf_options_.PackLocal(node);
   // int_tbl_prop_collector_factories_.PackLocal(sockfd);
@@ -787,19 +857,22 @@ void ColumnFamilyData::PackLocal(TransferService* node) const {
   node->send(reinterpret_cast<const void*>(&ret_val), sizeof(size_t));
   node->send(reinterpret_cast<const void*>(name_.data()), name_.size());
 
+  std::chrono::time_point<std::chrono::system_clock> now =
+      std::chrono::system_clock::now();
+  db_mutex->Lock();
+  current_->PackLocal(node);
+  assert(current_->cfd() == this);
   node->send(reinterpret_cast<const void*>(this), sizeof(ColumnFamilyData));
-  //  todo: remove this
-  LOG("server CHECK cfd_ Comparator: ");
-  assert(internal_comparator_.user_comparator() ==
-         initial_cf_options_.comparator);
+  LOG_CERR("cfd_itself::PackLocal time: ",
+           std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::system_clock::now() - now)
+               .count());
 }
 
 void* ColumnFamilyData::UnPackLocal(TransferService* node) {
   void* mem = malloc(sizeof(ColumnFamilyData));
   auto* worker_initial_cf_options_ = reinterpret_cast<ColumnFamilyOptions*>(
       ColumnFamilyOptions::UnPackLocal(node));
-  auto* worker_current_ =
-      reinterpret_cast<Version*>(Version::UnPackLocal(node, mem));
   auto* worker_ioptions_ = reinterpret_cast<ImmutableOptions*>(
       ImmutableOptions::UnPackLocal(node, *worker_initial_cf_options_));
   auto* worker_mutable_cf_options_ =
@@ -818,6 +891,8 @@ void* ColumnFamilyData::UnPackLocal(TransferService* node) {
   std::string worker_name_(ret_val, '\0');
   node->receive(reinterpret_cast<void*>(worker_name_.data()), ret_val);
 
+  auto* worker_current_ =
+      reinterpret_cast<Version*>(Version::UnPackLocal(node, mem));
   node->receive(reinterpret_cast<void*>(mem), sizeof(ColumnFamilyData));
   auto* worker_cfd_ = reinterpret_cast<ColumnFamilyData*>(mem);
   new (const_cast<ColumnFamilyOptions*>(&worker_cfd_->initial_cf_options_))
@@ -1676,6 +1751,74 @@ void ColumnFamilyData::RecoverEpochNumbers() {
   auto* vstorage = current_->storage_info();
   assert(vstorage);
   vstorage->RecoverEpochNumbers(this);
+}
+
+Status ColumnFamilyData::init_cf_level_rdma_client(std::string& ip, int port) {
+  Status s = Status::OK();
+  cflevel_client_ = new RDMAClient();
+  reginfo_ = new struct built_memreg_info;
+  memtable_ip_port->first = ip;
+  memtable_ip_port->second = port;
+
+  // memory for each column family
+  size_t maintain_mr_size =
+      100 /*memtable meta*/ + mutable_cf_options_.write_buffer_size +
+      2500 /*memtable data*/ + (64 << 20) + 1000 /*read request*/;
+  cflevel_client_->resources_create(maintain_mr_size);
+  cflevel_client_->rdma_mem_.init(maintain_mr_size);
+
+  meta_conn_ = cflevel_client_->sock_connect(ip, port);
+  if (meta_conn_ == nullptr) {
+    fprintf(stderr, "meta_conn_ connect failed\n");
+    s = Status::IOError("meta_conn_ connect failed");
+    return s;
+  }
+
+  // allocate mem for meta
+  char req_type = 9;
+  ASSERT_RW(writen(meta_conn_.load()->sock, reinterpret_cast<void*>(&req_type),
+                   sizeof(char)) == sizeof(char));
+  auto meta_offset = cflevel_client_->rdma_mem_.allocate(40000);
+  auto remote_meta_reg =
+      cflevel_client_->allocate_mem_request(meta_conn_, 40000);
+  reginfo_->rf_meta_local_offset = meta_offset;
+  reginfo_->rf_meta_remote_offset.first = remote_meta_reg.first;
+  reginfo_->rf_meta_remote_offset.second = remote_meta_reg.second;
+
+  memtable_conn_ = cflevel_client_->sock_connect(ip, port);
+  if (memtable_conn_ == nullptr) {
+    fprintf(stderr, "memtable_conn_ connect failed\n");
+    s = Status::IOError("memtable_conn_ connect failed");
+    return s;
+  }
+
+  req_type = 5;
+  ASSERT_RW(writen(memtable_conn_->sock, reinterpret_cast<void*>(&req_type),
+                   sizeof(char)) == sizeof(char));
+  auto memtable_meta_offset =
+      cflevel_client_->rdma_mem_.allocate(53);  // imm metadata
+  auto memtable_offset = cflevel_client_->rdma_mem_.allocate(
+      mutable_cf_options_.write_buffer_size + 2500);  // imm raw data
+  auto remote_memmeta_reg =
+      cflevel_client_->allocate_mem_request(memtable_conn_, 53);
+  reginfo_->imm_meta_remote_offset.first = remote_memmeta_reg.first;
+  reginfo_->imm_meta_remote_offset.second = remote_memmeta_reg.second;
+
+  auto remote_memdata_reg = cflevel_client_->allocate_mem_request(
+      memtable_conn_, (int64_t)mutable_cf_options_.write_buffer_size + 2500);
+  reginfo_->imm_data_remote_offset.first = remote_memdata_reg.first;
+  reginfo_->imm_data_remote_offset.second = remote_memdata_reg.second;
+
+  reginfo_->imm_data_local_offset = memtable_offset;
+  reginfo_->imm_meta_local_offset = memtable_meta_offset;
+  fprintf(stderr,
+          "init_cf_level_rdma_client, rmem-meta: %ld %ld %d rmem-data %ld %ld "
+          "%d\n",
+          reginfo_->imm_meta_remote_offset.first,
+          reginfo_->imm_meta_remote_offset.second, memtable_meta_offset,
+          reginfo_->imm_data_remote_offset.first,
+          reginfo_->imm_data_remote_offset.second, memtable_offset);
+  return s;
 }
 
 ColumnFamilySet::ColumnFamilySet(const std::string& dbname,

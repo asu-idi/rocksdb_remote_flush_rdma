@@ -50,16 +50,15 @@ class SystemClock;
 struct ImmutableMemTableOptions {
  public:
   void PackLocal(TransferService* node) const {
-    LOG("ImmutableMemTableOptions::PackLocal");
+    LOG_CERR("ImmutableMemTableOptions::PackLocal");
     node->send(reinterpret_cast<const void*>(this), sizeof(*this));
   }
   static void* UnPackLocal(TransferService* node) {
-    LOG("ImmutableMemTableOptions::UnPackLocal");
+    LOG_CERR("ImmutableMemTableOptions::UnPackLocal");
     void* mem = malloc(sizeof(ImmutableMemTableOptions));
-    size_t size = sizeof(ImmutableMemTableOptions);
-    node->receive(&mem, &size);
+    node->receive(&mem, sizeof(ImmutableMemTableOptions));
     auto* ptr = reinterpret_cast<ImmutableMemTableOptions*>(mem);
-    ptr->info_log = nullptr;  // todo(iaIm14)
+    ptr->info_log = nullptr;
     return mem;
   }
 
@@ -108,6 +107,28 @@ using MultiGetRange = MultiGetContext::Range;
 // written to (aka the 'immutable memtables').
 class MemTable {
  public:
+  struct rmem_info {
+    std::mutex read_mtx;
+    size_t local_read_offset{0};
+    std::pair<size_t, size_t> remote_read_offset{0, 0};
+    RDMANode::rdma_connection* read_conn_{nullptr};
+    RDMAClient* client_{nullptr};
+    uint64_t mixed_id{0};
+  };
+  inline void set_local_begin(void* local) { table_->set_local_begin(local); }
+  inline int32_t get_head_offset() { return table_->get_head_offset(); }
+  inline std::pair<char*, size_t> local_begin() const {
+    return table_->local_begin();
+  }
+  Status SendToRemote(RDMAClient* client,
+                      RDMANode::rdma_connection* memtable_conn,
+                      const std::pair<size_t, size_t>& remote_meta_reg,
+                      const size_t local_meta_offset,
+                      const std::pair<size_t, size_t>& remote_data_reg,
+                      const size_t local_data_reg,
+                      const std::pair<std::string, size_t> memnode_ip_port,
+                      uint64_t cfd_id);
+  Status RemoteRead();
   void free_remote() {
     flush_job_info_.reset();
     delete arena_;
@@ -115,8 +136,8 @@ class MemTable {
     delete table_;
     delete range_del_table_;
   }
-  static void* UnPackLocal(TransferService* node);
-  void PackLocal(TransferService* node) const;
+  static void* UnPackLocal(TransferService* node, MemTableRep* rep);
+  void PackLocal(TransferService* node, uint64_t mixed_id) const;
   void PackRemote(TransferService* node) const;
   void UnPackRemote(TransferService* node);
 
@@ -541,6 +562,8 @@ class MemTable {
 
   uint64_t GetID() const { return id_; }
 
+  bool IsTransferCompleted() const { return table_->IsRemote(); }
+
   void SetFlushCompleted(bool completed) { flush_completed_ = completed; }
 
   uint64_t GetFileNumber() const { return file_number_; }
@@ -583,6 +606,19 @@ class MemTable {
   static Status VerifyEntryChecksum(const char* entry,
                                     size_t protection_bytes_per_key,
                                     bool allow_data_in_errors = false);
+
+  inline void TESTContinuous() {
+    LOG_CERR("MemTable TESTContinuous");
+    void* head = reinterpret_cast<void*>(this);
+    LOG_CERR(table_->ApproximateMemoryUsage(), ' ',
+             range_del_table_->ApproximateMemoryUsage(), ' ',
+             arena_->ApproximateMemoryUsage(), ' ',
+             arena_->MemoryAllocatedBytes());
+    table_->TESTContinuous();
+    range_del_table_->TESTContinuous();
+    arena_->TESTContinuous();
+    LOG_CERR("Memtable TESTContinuous finish");
+  }
 
  private:
   enum FlushStateEnum { FLUSH_NOT_REQUESTED, FLUSH_REQUESTED, FLUSH_SCHEDULED };
@@ -668,6 +704,8 @@ class MemTable {
 
   // Flush job info of the current memtable.
   std::unique_ptr<FlushJobInfo> flush_job_info_;
+
+  rmem_info* rmem_info_{nullptr};
 
   // Updates flush_state_ using ShouldFlushNow()
   void UpdateFlushState();

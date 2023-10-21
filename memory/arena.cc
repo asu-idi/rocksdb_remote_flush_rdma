@@ -26,10 +26,8 @@
 namespace ROCKSDB_NAMESPACE {
 
 void Arena::PackLocal(TransferService* node) const {
-  LOG("Arena::PackLocal");
-  std::string name = "Arena";
-  name.resize(15);
-  node->send(name.data(), 15);
+  int msg = 2;
+  node->send(&msg, sizeof(int));
 }
 
 void* Arena::UnPackLocal(TransferService*) {

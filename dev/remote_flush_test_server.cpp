@@ -22,14 +22,14 @@
 #include "rocksdb/logger.hpp"
 #include "rocksdb/options.h"
 #include "rocksdb/remote_flush_service.h"
+#include "rocksdb/rocksdb_namespace.h"
 #include "rocksdb/slice_transform.h"
 #include "rocksdb/status.h"
 #include "rocksdb/utilities/options_type.h"
 #include "utilities/merge_operators.h"
 #define ROOT_DIR "/root/code/rocksdb_remote_flush/"
-using namespace std;
-using namespace rocksdb;
 
+using namespace ROCKSDB_NAMESPACE;
 std::string find_local_ip() {
   struct ifaddrs* ifaddr;
   int result1 = getifaddrs(&ifaddr);

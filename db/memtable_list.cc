@@ -6,7 +6,9 @@
 #include "db/memtable_list.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cassert>
+#include <chrono>
 #include <cinttypes>
 #include <cstddef>
 #include <limits>
@@ -162,15 +164,32 @@ bool MemTableListVersion::GetFromList(
     SequenceNumber* seq, const ReadOptions& read_opts, ReadCallback* callback,
     bool* is_blob_index) {
   *seq = kMaxSequenceNumber;
-
+  LOG_CERR("GetFromList: Start Search through immtables: ",
+           key.memtable_key().data());
+  bool porter = false;
+  if (list->size() >= 5) porter = true;
+  std::chrono::time_point<std::chrono::system_clock>
+      start = std::chrono::system_clock::now(),
+      end;
   for (auto& memtable : *list) {
     assert(memtable->IsFragmentedRangeTombstonesConstructed());
     SequenceNumber current_seq = kMaxSequenceNumber;
-
+    std::chrono::time_point<std::chrono::system_clock> now_start =
+        std::chrono::system_clock::now();
     bool done =
         memtable->Get(key, value, columns, timestamp, s, merge_context,
                       max_covering_tombstone_seq, &current_seq, read_opts,
                       true /* immutable_memtable */, callback, is_blob_index);
+    if (porter) {
+      std::chrono::time_point<std::chrono::system_clock> now_end =
+          std::chrono::system_clock::now();
+      LOG_CERR("GetFromList: Memtable::Get ", key.memtable_key().data(),
+               " in memtable:", memtable->GetID(), " in ",
+               std::chrono::duration_cast<std::chrono::microseconds>(now_end -
+                                                                     now_start)
+                   .count(),
+               " us");
+    }
     if (*seq == kMaxSequenceNumber) {
       // Store the most recent sequence number of any operation on this key.
       // Since we only care about the most recent change, we only need to
@@ -184,11 +203,35 @@ bool MemTableListVersion::GetFromList(
 
     if (done) {
       assert(*seq != kMaxSequenceNumber || s->IsNotFound());
+      if (porter) {
+        end = std::chrono::system_clock::now();
+        LOG_CERR(
+            "GetFromList: Found ", key.memtable_key().data(), " in ",
+            std::chrono::duration_cast<std::chrono::microseconds>(end - start)
+                .count(),
+            " us");
+      }
       return true;
     }
     if (!done && !s->ok() && !s->IsMergeInProgress() && !s->IsNotFound()) {
+      if (porter) {
+        end = std::chrono::system_clock::now();
+        LOG_CERR(
+            "GetFromList: Not Found ", key.memtable_key().data(),
+            " because of corruption in",
+            std::chrono::duration_cast<std::chrono::microseconds>(end - start)
+                .count(),
+            " us");
+      }
       return false;
     }
+  }
+  if (porter) {
+    end = std::chrono::system_clock::now();
+    LOG_CERR("GetFromList: Not Found ", key.memtable_key().data(), " in ",
+             std::chrono::duration_cast<std::chrono::microseconds>(end - start)
+                 .count(),
+             " us");
   }
   return false;
 }

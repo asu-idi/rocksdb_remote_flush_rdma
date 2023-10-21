@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <cassert>
+#include <cstdint>
 #include <deque>
 #include <functional>
 #include <limits>
@@ -1720,8 +1721,13 @@ class DBImpl : public DB {
 #ifdef ROCKSDB_RDMA
     RDMAClient* rdma_client_;
     struct RDMANode::rdma_connection* rdma_conn_;
-    std::pair<long long, long long> remote_seg_;
+    std::atomic<RDMANode::rdma_connection*>* rdma_conn_ret_;
+    std::pair<int64_t, int64_t> remote_seg_;
 #endif
+  };
+
+  struct RflushThreadArg {
+    DBImpl* db_;
   };
 
   // Information for a manual compaction
@@ -2093,14 +2099,15 @@ class DBImpl : public DB {
   static void UnscheduleRemoteFlushCallback(void* arg);
   static void UnscheduleCompactionCallback(void* arg);
   static void UnscheduleFlushCallback(void* arg);
-  void BackgroundCallRemoteFlush(int sockfd,
+  void BackgroundCallRemoteFlush(
+      int sockfd,
 #ifdef ROCKSDB_RDMA
-
-                                 RDMAClient* rdma_client,
-                                 struct RDMANode::rdma_connection* conn,
-                                 std::pair<long long, long long> remote_seg,
+      RDMAClient* rdma_client, struct RDMANode::rdma_connection* conn,
+      std::pair<int64_t, int64_t> remote_seg,
+      std::atomic<RDMANode::rdma_connection*>* rdma_conn_ret,
 #endif  // ROCKSDB_RDMA
-                                 Env::Priority thread_pri);
+      Env::Priority thread_pri);
+  void BGListenRemoteFlush();
   void BackgroundCallCompaction(PrepickedCompaction* prepicked_compaction,
                                 Env::Priority thread_pri);
   void BackgroundCallFlush(Env::Priority thread_pri);

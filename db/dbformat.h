@@ -688,11 +688,11 @@ class IterKey {
 // internal keys.
 class InternalKeySliceTransform : public SliceTransform {
  public:
+  int64_t identifier() const override { return 0; }
   void PackLocal(TransferService* node) const override {
     LOG("InternalKeySliceTransform::PackLocal");
-    int64_t info = 0;
-    info += (0x00);
-    node->send(&info, sizeof(info));
+    std::pair<uint8_t, size_t> msg(0, 0);
+    node->send(&msg, sizeof(msg));
     transform_->PackLocal(node);
   }
   static void* UnPackLocal(void* transform);

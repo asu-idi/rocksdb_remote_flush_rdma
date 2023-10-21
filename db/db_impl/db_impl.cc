@@ -13,12 +13,16 @@
 
 #include <atomic>
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <thread>
 
 #include "db/remote_flush_job.h"
+#include "db/tcprw.h"
+#include "memory/remote_memtable_service.h"
 #include "rocksdb/configurable.h"
+#include "rocksdb/memtablerep.h"
 #include "rocksdb/remote_flush_service.h"
 #include "rocksdb/remote_transfer_service.h"
 #ifdef OS_SOLARIS
@@ -318,28 +322,57 @@ void DBImpl::BackgroundCallRemoteFlush(
     int sockfd,
 #ifdef ROCKSDB_RDMA
     RDMAClient* rdma_client, struct RDMANode::rdma_connection* rdma_conn,
-    std::pair<long long, long long> remote_seg,
+    std::pair<int64_t, int64_t> remote_seg,
+    std::atomic<RDMANode::rdma_connection*>* rdma_conn_ret,
 #endif  // ROCKSDB_RDMA
     Env::Priority thread_pri) {
   TEST_SYNC_POINT("DBImpl::BackgroundCallRemoteFlush:Start");
 #ifdef ROCKSDB_RDMA
-  // TODO(rdma): fix this. non-zero index is not supported. We need
-  // multi-thread.
-  size_t local_offset =
+  int64_t local_offset =
       rdma_client->rdma_mem_.allocate(remote_seg.second - remote_seg.first);
+  assert(remote_seg.second - remote_seg.first == 40000);
   assert(local_offset != -1);
   rdma_client->rdma_read(rdma_conn, remote_seg.second - remote_seg.first,
                          local_offset, remote_seg.first);
   assert(rdma_client->poll_completion(rdma_conn) == 0);
-  assert(rdma_client->modify_mem_request(rdma_conn, remote_seg, 0));
+  char req_type = 2;
+  ASSERT_RW(writen(rdma_conn->sock, &req_type, sizeof(char)) == sizeof(char));
+  rdma_client->free_mem_request(rdma_conn, remote_seg.first,
+                                remote_seg.second - remote_seg.first);
   RDMATransferService transfer_service(rdma_client, local_offset);
 #else
   auto* worker_node = new TCPNode({}, sockfd);
   TCPTransferService transfer_service(worker_node);
 #endif  // ROCKSDB_RDMA
 
-  auto* local_handler = reinterpret_cast<RemoteFlushJob*>(
-      RemoteFlushJob::UnPackLocal(&transfer_service, this));
+  size_t memtable_size = 0;
+  std::vector<MemTable*> tmp_memtables_;
+  std::vector<RemoteMemTable*> tmp_memreps_;
+  transfer_service.receive(&memtable_size, sizeof(size_t));
+  for (int i = 0; i < memtable_size; i++) {
+    uint64_t mixed_id = 0;
+    transfer_service.receive(&mixed_id, sizeof(uint64_t));
+    void *mem_meta = nullptr, *mem_data = nullptr;
+    int64_t meta_size = 0, data_size = 0;
+    LOG_CERR("worker need to fetch memtable ", mixed_id);
+    char req_type = 10;
+    ASSERT_RW(writen(rdma_conn->sock, &req_type, sizeof(char)) == sizeof(char));
+    rdma_client->fetch_memtable_request(rdma_conn, mixed_id, mem_meta,
+                                        meta_size, mem_data, data_size);
+    RemoteMemTable* rep = RemoteMemTable::rebuild_remote_memTable(
+        mem_data, data_size, mem_meta, meta_size);
+    tmp_memreps_.emplace_back(rep);
+  }
+  for (int i = 0; i < memtable_size; i++) {
+    auto* memtable = reinterpret_cast<MemTable*>(
+        MemTable::UnPackLocal(&transfer_service, tmp_memreps_[i]->memtable));
+    tmp_memtables_.emplace_back(memtable);
+  }
+
+  auto* local_handler =
+      reinterpret_cast<RemoteFlushJob*>(RemoteFlushJob::UnPackLocal(
+          rdma_client, &transfer_service, this, tmp_memtables_));
+
   void* flush_job_generator_ip = nullptr;
   size_t ip_size = 0;
   int flush_job_generator_port = 0;
@@ -359,7 +392,8 @@ void DBImpl::BackgroundCallRemoteFlush(
 #endif
 
 #ifdef ROCKSDB_RDMA
-  // TODO(rdma): close connection with memnode or do nothing
+  rdma_conn_ret->store(rdma_conn);
+  rdma_conn = nullptr;
   rdma_client->rdma_mem_.free(local_offset);
 #else
   close(worker_node->connection_info_.client_sockfd);
@@ -395,10 +429,25 @@ void DBImpl::BackgroundCallRemoteFlush(
            flush_job_generator_ip_str, ':', flush_job_generator_port);
   TCPTransferService local_transfer_service(&unpack_tcp_node);
   local_handler->PackRemote(&local_transfer_service);
-  local_transfer_service.send("byebyemessage", strlen("byebyemessage"));
-
+  ssize_t write_end = write(unpack_tcp_node.connection_info_.client_sockfd,
+                            "endl", strlen("endl"));
+  assert(write_end == strlen("endl"));
   close(unpack_tcp_node.connection_info_.client_sockfd);
-
+  LOG_CERR("finish meta feedback trans, start to do gc");
+  for (size_t i = 0; i < tmp_memtables_.size(); i++)
+    free(reinterpret_cast<char*>(tmp_memtables_[i]));
+  for (size_t i = 0; i < tmp_memreps_.size(); i++) {
+    auto it = tmp_memreps_[i];
+    delete it->memtable;
+    delete it->arena;
+    delete it->key_cmp;
+    delete it->prefix_extractor;
+    free(it->data);
+    free(it->meta);
+    delete it;
+  }
+  tmp_memreps_.clear();
+  tmp_memtables_.clear();
 #ifndef ROCKSDB_RDMA
   delete worker_node;
 #endif
@@ -423,7 +472,7 @@ void DBImpl::BGWorkRemoteFlush(void* arg) {
   static_cast_with_check<DBImpl>(fta.db_)->BackgroundCallRemoteFlush(
       fta.sockfd_,
 #ifdef ROCKSDB_RDMA
-      fta.rdma_client_, fta.rdma_conn_, fta.remote_seg_,
+      fta.rdma_client_, fta.rdma_conn_, fta.remote_seg_, fta.rdma_conn_ret_,
 #endif  // ROCKSDB_RDMA
       fta.thread_pri_);
   LOG("Remote flush job finished: ", fta.sockfd_);
@@ -441,53 +490,39 @@ Status DBImpl::ListenAndScheduleFlushJob(int port) {
   }
   mutex_.Unlock();
 
-#ifdef ROCKSDB_RDMA
   auto *worker_node = new RDMAClient(), *listen_node = new RDMAClient();
-  worker_node->resources_create(1ull << 27);
+  worker_node->resources_create(1ull << 30);  // 1GB
   worker_node->rdma_mem_.init(worker_node->buf_size);
   listen_node->resources_create(1ull << 20);
   listen_node->rdma_mem_.init(listen_node->buf_size);
   std::vector<std::thread*> threads;
   for (auto& i : memnodes_ip_port_) {
-    auto worker_conn = worker_node->sock_connect(i.first, i.second);
-    auto listen_conn = listen_node->sock_connect(i.first, i.second);
-    listen_node->register_executor_request(listen_conn);
-    auto wait_for_jobs = [this, worker_node, listen_node, &i, worker_conn,
-                          listen_conn] {
+    auto wait_for_jobs = [this, worker_node, listen_node, &i] {
+      int poll_ = 0;
+      std::atomic<RDMANode::rdma_connection*> worker_conn[32];
+      for (auto& j : worker_conn) {
+        j = worker_node->sock_connect(i.first, i.second);
+      }
+      auto listen_conn = listen_node->sock_connect(i.first, i.second);
+      listen_node->register_executor_request(listen_conn);
       while (true) {
         auto remote_seg = listen_node->wait_for_job_request(listen_conn);
-#else
-  int server_fd, new_socket;
-  struct sockaddr_in address;
-  int opt = ~O_NONBLOCK;
-  int addrlen = sizeof(address);
-  if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-    LOG("socket failed");
-    return Status::IOError("socket failed");
-  }
-  if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt,
-                 sizeof(opt))) {
-    LOG("setsockopt failed");
-    return Status::IOError("setsockopt failed");
-  }
-  address.sin_family = AF_INET;
-  address.sin_addr.s_addr = INADDR_ANY;
-  address.sin_port = htons(port);
-  if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
-    LOG("bind failed");
-    return Status::IOError("bind failed");
-  }
-  if (listen(server_fd, 10) < 0) {
-    LOG("listen failed");
-    return Status::IOError("listen failed");
-  }
-  while (true) {
-    if ((new_socket = accept(server_fd, (struct sockaddr*)&address,
-                             (socklen_t*)&addrlen)) < 0) {
-      LOG("accept failed");
-      return Status::IOError("accept failed");
-    }
-#endif
+        // choose worker_node
+        bool found = false;
+        RDMANode::rdma_connection* chose = nullptr;
+        auto* fta = new RemoteFlushThreadArg();
+        while (!found) {
+          chose = worker_conn[poll_].exchange(nullptr);
+          if (chose != nullptr) {
+            found = true;
+            fta->rdma_conn_ret_ = &worker_conn[poll_];
+            fta->remote_seg_ = remote_seg;
+            fta->rdma_conn_ = chose;
+            fta->rdma_client_ = worker_node;
+          }
+          poll_ = (poll_ + 1) % 32;
+        }
+
         mutex_.Lock();
         Status s = Status::OK();
         auto bg_job_limits = GetBGJobLimits();
@@ -496,24 +531,10 @@ Status DBImpl::ListenAndScheduleFlushJob(int port) {
         if (!is_flush_pool_empty &&
             bg_flush_scheduled_ < bg_job_limits.max_flushes) {
           bg_flush_scheduled_++;
-          auto* fta = new RemoteFlushThreadArg();
           fta->thread_pri_ = Env::Priority::HIGH;
           fta->db_ = this;
-#ifdef ROCKSDB_RDMA
-          fta->rdma_client_ = worker_node;
-          fta->rdma_conn_ = worker_conn;
-          fta->remote_seg_ = remote_seg;
-#else
-      fta->sockfd_ = new_socket;
-#endif
           env_->Schedule(&DBImpl::BGWorkRemoteFlush, fta, Env::Priority::HIGH,
                          this, &DBImpl::UnscheduleRemoteFlushCallback);
-#ifdef ROCKSDB_RDMA
-          LOG("Scheduled worker thread for remote flush job: ",
-              memnodes_ip_port_[i].first, ":", memnodes_ip_port_[i].second);
-#else
-      LOG("Scheduled worker thread for remote flush job: ", new_socket);
-#endif
         } else {
           LOG("worker pool is full:", is_flush_pool_empty, " ",
               unscheduled_flushes_, " ", bg_flush_scheduled_, " ",
@@ -521,12 +542,10 @@ Status DBImpl::ListenAndScheduleFlushJob(int port) {
         }
         mutex_.Unlock();
       }
-#ifdef ROCKSDB_RDMA
     };
     threads.push_back(new std::thread(wait_for_jobs));
   }
   for (auto& thread : threads) thread->join();
-#endif
 
   return Status::OK();
 }
@@ -977,6 +996,11 @@ DBImpl::~DBImpl() {
   {
     const Status s = MaybeReleaseTimestampedSnapshotsAndCheck();
     s.PermitUncheckedError();
+  }
+
+  {
+    delete rdma_client_;
+    rdma_client_ = nullptr;
   }
 
   closing_status_ = CloseImpl();

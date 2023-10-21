@@ -22,11 +22,12 @@ int main(int argc, char** argv) {
     fprintf(stderr, "Parameters: [mem_size] [port]\n");
     return 0;
   }
-  size_t mem_size = argc >= 2 ? std::atoll(argv[1]) : 1ull << 28;  // 256MB
+  int64_t mem_size = argc >= 2 ? std::atoll(argv[1]) : 1ull << 34;  // 16G
   rocksdb::RDMAServer server;
+  server.resources_create(mem_size);
+  fprintf(stderr, "create mempool: %lu\n", mem_size);
   // if(argc >= 3) server.config.tcp_port = std::atoi(argv[2]);
   server.connect_clients(10086);
-  server.resources_create(mem_size);
   server.sock_connect();
   while (true) {
     std::string command;

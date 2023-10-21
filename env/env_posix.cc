@@ -133,6 +133,8 @@ class PosixDynamicLibrary : public DynamicLibrary {
 
 class PosixClock : public SystemClock {
  public:
+  using SystemClock::PackLocal;
+
   static const char* kClassName() { return "PosixClock"; }
   const char* Name() const override { return kDefaultName(); }
   const char* NickName() const override { return kClassName(); }
@@ -422,7 +424,7 @@ PosixEnv::PosixEnv()
       allow_non_owner_access_(allow_non_owner_access_storage_) {
 #ifdef HDFS
   std::shared_ptr<FileSystem> fs;
-  Status s = NewHdfsFileSystem("hdfs://localhost:9000/", &fs);
+  Status s = NewHdfsFileSystem("hdfs://hdfs-storage-node:9000/", &fs);
   assert(s.ok());
   file_system_ = std::move(fs);
 #endif

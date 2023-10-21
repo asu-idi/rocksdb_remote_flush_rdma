@@ -47,6 +47,7 @@
 
 #include "rocksdb/customizable.h"
 #include "rocksdb/logger.hpp"
+#include "rocksdb/macro.hpp"
 #include "rocksdb/remote_flush_service.h"
 #include "rocksdb/remote_transfer_service.h"
 #include "rocksdb/slice.h"
@@ -66,7 +67,45 @@ extern Slice GetLengthPrefixedSlice(const char* data);
 extern int VarintLength(uint64_t v);
 class MemTableRep {
  public:
-  virtual void PackLocal(TransferService*, size_t) const {
+  virtual bool IsRemote() const { assert(false); }
+  virtual void* get_allocator() const { assert(false); }
+  virtual void* get_prefix_extractor() const { assert(false); }
+  virtual void* get_comparator() const { assert(false); }
+  virtual void set_local_begin(void*) {
+    LOG("MemTableRep::set_local_begin: error: not implemented");
+    assert(false);
+  }
+  virtual void set_head_offset(int32_t offset) {
+    LOG("MemTableRep::set_head_offset: error: not implemented");
+    assert(false);
+  }
+  virtual int32_t get_head_offset() {
+    LOG("MemTableRep::get_head_offset: error: not implemented");
+    assert(false);
+  }
+  virtual std::pair<char*, size_t> local_begin() {
+    LOG("MemTableRep::get_remote_begin: error: not implemented");
+    assert(false);
+    return std::make_pair(nullptr, 0);
+  }
+  virtual Status MemnodeRebuild() {
+    LOG("MemTableRep::MemnodeRebuild: error: not implemented");
+    assert(false);
+  }
+  virtual Status SendToRemote(RDMAClient*, RDMANode::rdma_connection*,
+                              const std::pair<size_t, size_t>&, size_t,
+                              const std::pair<size_t, size_t>&, size_t,
+                              uint64_t, int) {
+    LOG("MemTableRep::SendToRemote: error: not implemented");
+    assert(false);
+  }
+  virtual void TESTContinuous() const {
+    LOG("MemTableRep::TESTContinuous");
+    assert(false);
+    LOG("MemTableRep::TESTContinuous finish");
+  }
+  virtual void PackLocal(TransferService*,
+                         size_t protection_bytes_per_key) const {
     LOG("MemTableRep::PackLocal: error: not implemented");
     assert(false);
   }
@@ -201,7 +240,7 @@ class MemTableRep {
   // does nothing.  After MarkReadOnly() is called, this table rep will
   // not be written to (ie No more calls to Allocate(), Insert(),
   // or any writes done directly to entries accessed through the iterator.)
-  virtual void MarkReadOnly() { LOG("Default MarkReadOnly"); }
+  virtual void MarkReadOnly() { LOG_CERR("MemTableRep MarkReadOnly"); }
 
   // Notify this table rep that it has been flushed to stable storage.
   // By default, does nothing.

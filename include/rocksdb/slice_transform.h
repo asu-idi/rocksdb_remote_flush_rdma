@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <cassert>
 #include <memory>
 #include <string>
 
@@ -37,6 +38,7 @@ struct ConfigOptions;
 // including data loss, unreported corruption, deadlocks, and more.
 class SliceTransform : public Customizable {
  public:
+  virtual int64_t identifier() const { assert(false); }
   virtual void PackLocal(TransferService*) const {
     LOG("SliceTransform::PackLocal: error: not implemented");
     assert(false);

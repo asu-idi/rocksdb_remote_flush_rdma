@@ -88,7 +88,7 @@ class RemoteFlushJob {
       CompressionType output_compression, Statistics* stats,
       EventLogger* event_logger, bool measure_io_stats,
       const bool sync_output_directory, const bool write_manifest,
-      Env::Priority thread_pri, const std::shared_ptr<IOTracer>& io_tracer,
+      const std::shared_ptr<IOTracer>& io_tracer,
       const SeqnoToTimeMapping& seq_time_mapping,
 #ifdef ROCKSDB_RDMA
       RDMAClient* rdma_client,
@@ -97,7 +97,8 @@ class RemoteFlushJob {
       std::string full_history_ts_low = "",
       BlobFileCompletionCallback* blob_callback = nullptr);
   void PackLocal(TransferService* node) const;
-  static void* UnPackLocal(TransferService* node, DBImpl* remote_db);
+  static void* UnPackLocal(RDMAClient* client, TransferService* node,
+                           DBImpl* remote_db, std::vector<MemTable*>& mems);
   void PackRemote(TransferService* node) const;
   void UnPackRemote(TransferService* node);
 
@@ -119,7 +120,6 @@ class RemoteFlushJob {
                  CompressionType output_compression, Statistics* stats,
                  EventLogger* event_logger, bool measure_io_stats,
                  const bool sync_output_directory, const bool write_manifest,
-                 Env::Priority thread_pri,
                  const std::shared_ptr<IOTracer>& io_tracer,
                  const SeqnoToTimeMapping& seq_time_mapping,
 #ifdef ROCKSDB_RDMA
@@ -242,7 +242,6 @@ class RemoteFlushJob {
   VersionEdit* edit_;
   Version* base_;
   bool pick_memtable_called;
-  Env::Priority thread_pri_;
 
   SystemClock* clock_;
 

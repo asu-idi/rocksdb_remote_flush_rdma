@@ -60,6 +60,10 @@ class LegacySystemClock : public SystemClock {
   Env* env_;
 
  public:
+  void PackLocal(TransferService* node) const override {
+    uint8_t type = 1;
+    node->send(&type, sizeof(type));
+  }
   explicit LegacySystemClock(Env* env) : env_(env) {}
   const char* Name() const override { return "LegacySystemClock"; }
 

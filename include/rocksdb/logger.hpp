@@ -97,7 +97,7 @@ void LocalLogger::output2cerr(const std::thread::id &thread_id,
   stream.read(buffer, stream.str().size());
   {
     std::lock_guard<std::mutex> lock(mtx);
-    std::cerr << buffer;
+    std::cerr << id << ":::" << buffer;
     std::cerr.flush();
   }
 }

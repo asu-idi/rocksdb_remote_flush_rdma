@@ -11,7 +11,9 @@
 
 #include <atomic>
 #include <cstddef>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -272,34 +274,29 @@ class ColumnFamilySet;
 // Most methods require DB mutex held, unless otherwise noted
 class ColumnFamilyData {
  public:
-  struct cfd_pack_remote_data {
-    struct CompactionStats {
-      uint64_t micros;
-      uint64_t cpu_micros;
-      uint64_t bytes_read_non_output_levels;
-      uint64_t bytes_read_output_level;
-      uint64_t bytes_read_blob;
-      uint64_t bytes_written;
-      uint64_t bytes_written_blob;
-      uint64_t bytes_moved;
-      int num_input_files_in_non_output_levels;
-      int num_input_files_in_output_level;
-      int num_output_files;
-      int num_output_files_blob;
-      uint64_t num_input_records;
-      uint64_t num_dropped_records;
-      uint64_t num_output_records;
-      int count;
-      int counts[static_cast<int>(CompactionReason::kNumOfReasons)]{};
-    };
-    std::vector<CompactionStats> compaction_stats;
-    std::vector<CompactionJobStats> compaction_stats_by_pri;
+  struct built_memreg_info {
+    int64_t imm_meta_local_offset;
+    std::pair<int64_t, int64_t> imm_meta_remote_offset;
+    int64_t imm_data_local_offset;
+    std::pair<int64_t, int64_t> imm_data_remote_offset;
+    int64_t rf_meta_local_offset;
+    std::pair<int64_t, int64_t> rf_meta_remote_offset;
   };
+  void register_imm_trans(MemTable* memtable) {
+    std::lock_guard<std::mutex> lck(*imm_que_mtx);
+    imm_que->push(memtable);
+  }
+  Status background_schedule_imm_trans();
   void free_remote();
-  void PackLocal(TransferService* node) const;
+  void PackLocal(TransferService* node, InstrumentedMutex* db_mutex) const;
   static void* UnPackLocal(TransferService* node);
   void PackRemote(TransferService* node) const;
   void UnPackRemote(TransferService* node);
+  Status init_cf_level_rdma_client(std::string& ip, int port);
+  inline built_memreg_info* get_built_memreg_info() { return reginfo_; }
+  [[nodiscard]] inline RDMANode::rdma_connection* get_memtable_conn() const {
+    return memtable_conn_;
+  }
 
  public:
   ~ColumnFamilyData();
@@ -573,9 +570,17 @@ class ColumnFamilyData {
   // Recover the next epoch number of this CF and epoch number
   // of its files (if missing)
   void RecoverEpochNumbers();
+  inline RDMANode::rdma_connection* try_get_meta_conn() {
+    return meta_conn_.exchange(nullptr);
+  }
+  inline void putback_meta_conn(RDMANode::rdma_connection* conn) {
+    meta_conn_.store(conn);
+  }
+  inline RDMAClient* get_cflevel_client() { return cflevel_client_; }
 
  private:
   friend class ColumnFamilySet;
+  friend class RDMANode;
   ColumnFamilyData(uint32_t id, const std::string& name,
                    Version* dummy_versions, Cache* table_cache,
                    WriteBufferManager* write_buffer_manager,
@@ -676,6 +681,16 @@ class ColumnFamilyData {
   bool mempurge_used_;
 
   std::atomic<uint64_t> next_epoch_number_;
+  std::atomic<RDMANode::rdma_connection*> meta_conn_;
+
+  RDMANode::rdma_connection* memtable_conn_;
+  RDMAClient* cflevel_client_;
+  built_memreg_info* reginfo_;
+  std::queue<MemTable*>* imm_que;
+  std::mutex* imm_que_mtx;
+  std::pair<std::string, size_t>* memtable_ip_port;
+  std::thread* memtable_thread;
+  bool should_drop{false};
 };
 
 // ColumnFamilySet has interesting thread-safety requirements
@@ -784,6 +799,7 @@ class ColumnFamilySet {
   std::shared_ptr<IOTracer> io_tracer_;
   const std::string& db_id_;
   std::string db_session_id_;
+  RDMAClient* client_;
 };
 
 // A wrapper for ColumnFamilySet that supports releasing DB mutex during each
