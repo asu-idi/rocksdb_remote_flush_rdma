@@ -1214,7 +1214,7 @@ bool RDMAClient::register_client_in_get_service_request(
 uint64_t obtain_wr_id(){
   static std::mutex mtx;
   std::lock_guard<std::mutex> lk(mtx);
-  static uint64_t global_wr_id = 0;
+  static uint64_t global_wr_id = 1;
   return global_wr_id++;
 }
 
@@ -1377,10 +1377,12 @@ bool RDMAServer::service(struct rdma_connection *conn) {
       case 10: {
         LOG_CERR("SERVICE:fetch memtable service");
         fetch_memtable_service(conn);
+        break;
       }
       case 11: {
         LOG_CERR("SERVICE:register client in get service");
         register_client_in_get_service_service(conn);
+        break;
       }
       default:
         fprintf(stderr, "Unknown request type from client: %d\n", req_type);

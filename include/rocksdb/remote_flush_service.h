@@ -242,11 +242,11 @@ class RDMANode {
   struct rdma_connection *sock_connect(const std::string &server_name = "",
                                        u_int32_t tcp_port = 9091);
   int send(struct rdma_connection *idx, size_t msg_size,
-           long long local_offset, uint64_t wr_id = -1) {
+           long long local_offset, uint64_t wr_id = 0) {
     return post_send(idx, msg_size, IBV_WR_SEND, local_offset, 0, wr_id);
   }
   int receive(struct rdma_connection *idx, size_t msg_size,
-              long long local_offset, uint64_t wr_id = -1) {
+              long long local_offset, uint64_t wr_id = 0) {
     return post_receive(idx, msg_size, local_offset, wr_id);
   }
   int rdma_read(struct rdma_connection *idx, size_t msg_size,
@@ -259,7 +259,7 @@ class RDMANode {
     return post_send(idx, msg_size, IBV_WR_RDMA_WRITE, local_offset,
                      remote_offset);
   }
-  int poll_completion(struct rdma_connection *idx, uint64_t wr_id = -1);
+  int poll_completion(struct rdma_connection *idx, uint64_t wr_id = 0);
   char *get_buf() { return res->buf; }
   struct resources *res;
   size_t buf_size;
