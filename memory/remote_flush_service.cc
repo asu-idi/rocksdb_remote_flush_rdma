@@ -373,7 +373,7 @@ int RDMANode::sock_sync_data(int sock, int xfer_size, const char *local_data,
   return rc;
 }
 
-int RDMANode::poll_completion(struct rdma_connection *conn) {
+int RDMANode::poll_completion(struct rdma_connection *conn, uint64_t wr_id) {
   struct ibv_wc wc;
   unsigned long start_time_msec;
   unsigned long cur_time_msec;
@@ -384,7 +384,22 @@ int RDMANode::poll_completion(struct rdma_connection *conn) {
   gettimeofday(&cur_time, NULL);
   start_time_msec = (cur_time.tv_sec * 1000) + (cur_time.tv_usec / 1000);
   do {
-    poll_result = ibv_poll_cq(conn->cq, 1, &wc);
+    std::lock_guard<std::mutex> lk(poll_cq_mtx);
+    poll_result = 0;
+    if(!wc_buf.empty())
+      for(auto iter = wc_buf.begin(); iter != wc_buf.end(); iter++)
+        if(iter->wr_id == wr_id){
+          wc = *iter;
+          wc_buf.erase(iter);
+          poll_result = 1;
+          break;
+        }
+    if(poll_result == 0)
+      poll_result = ibv_poll_cq(conn->cq, 1, &wc);
+    if(poll_result == 1 && wc.wr_id != wr_id){
+      wc_buf.push_back(wc);
+      poll_result = 0;
+    }
     gettimeofday(&cur_time, NULL);
     cur_time_msec = (cur_time.tv_sec * 1000) + (cur_time.tv_usec / 1000);
   } while ((poll_result == 0) &&
@@ -413,7 +428,7 @@ int RDMANode::poll_completion(struct rdma_connection *conn) {
 }
 int RDMANode::post_send(struct rdma_connection *conn, size_t msg_size,
                         ibv_wr_opcode opcode, long long local_offset,
-                        long long remote_offset) {
+                        long long remote_offset, uint64_t wr_id) {
   struct ibv_send_wr sr;
   struct ibv_sge sge;
   struct ibv_send_wr *bad_wr = nullptr;
@@ -426,7 +441,7 @@ int RDMANode::post_send(struct rdma_connection *conn, size_t msg_size,
   // prepare the send work request
   memset(&sr, 0, sizeof(sr));
   sr.next = nullptr;
-  sr.wr_id = 0;
+  sr.wr_id = wr_id;
   sr.sg_list = &sge;
   sr.num_sge = 1;
   sr.opcode = opcode;
@@ -460,7 +475,7 @@ int RDMANode::post_send(struct rdma_connection *conn, size_t msg_size,
 }
 
 int RDMANode::post_receive(struct rdma_connection *conn, size_t msg_size,
-                           long long local_offset) {
+                           long long local_offset, uint64_t wr_id) {
   struct ibv_recv_wr rr;
   struct ibv_sge sge;
   struct ibv_recv_wr *bad_wr;
@@ -473,7 +488,7 @@ int RDMANode::post_receive(struct rdma_connection *conn, size_t msg_size,
   // prepare the receive work request
   memset(&rr, 0, sizeof(rr));
   rr.next = nullptr;
-  rr.wr_id = 0;
+  rr.wr_id = wr_id;
   rr.sg_list = &sge;
   rr.num_sge = 1;
   // post the Receive Request to the RQ
@@ -1184,6 +1199,110 @@ void RDMAServer::wait_for_job_service(struct rdma_connection *conn) {
                    sizeof(int64_t) * 2) == sizeof(int64_t) * 2);
 }
 
+bool RDMAClient::register_client_in_get_service_request(
+    struct rdma_connection *conn) {
+  char req_type = 11;
+  bool ret[1];
+  int remote_size = sizeof(bool) * 1;
+  ASSERT_RW(writen(conn->sock, reinterpret_cast<void *>(&req_type),
+                   sizeof(char)) == sizeof(char));
+  ASSERT_RW(readn(conn->sock, reinterpret_cast<char *>(&ret),
+                  remote_size) == remote_size);
+  return ret[0];
+}
+
+uint64_t obtain_wr_id(){
+  static std::mutex mtx;
+  std::lock_guard<std::mutex> lk(mtx);
+  static uint64_t global_wr_id = 0;
+  return global_wr_id++;
+}
+
+void RDMAServer::register_client_in_get_service_service(struct rdma_connection *conn) {
+  bool ret[1];
+  {
+    std::lock_guard<std::mutex> lk(*mempool_mtx);
+    for(int i = 0; i < MAX_PARALLEL_GET_PER_CLIENT; i++){
+	    size_t req_ofs = rdma_mem_.allocate(sizeof(GetRequest));
+	    size_t res_ofs = rdma_mem_.allocate(sizeof(GetResponse));
+      size_t wr_id = obtain_wr_id();
+      wr_info[wr_id] = (struct request_info) {conn, req_ofs, res_ofs};
+      receive(conn, sizeof(GetRequest), req_ofs, wr_id);
+    }
+    if(!poll_receive_completion_launched){
+      poll_receive_completion_launched = true;
+      auto func = [this] {this->poll_receive_completion();};
+      threads.push_back(new std::thread(func));
+    }
+  }
+  ret[0] = true;
+  size_t remote_size = sizeof(bool) * 1;
+  ASSERT_RW(writen(conn->sock, reinterpret_cast<void *>(&ret),
+                  remote_size) == remote_size);
+}
+
+void RDMAServer::poll_receive_completion() {
+  while(true){
+    std::vector<uint64_t> done_wr;
+    std::lock_guard<std::mutex> lk(*mempool_mtx);
+    for(auto& iter: wr_info){
+      uint64_t wr_id = iter.first;
+      auto info = iter.second;
+      auto conn = info.conn;
+      struct ibv_wc wc;
+      int poll_result = 0;
+      std::lock_guard<std::mutex> lk(poll_cq_mtx);
+
+      if(!wc_buf.empty())
+        for(auto iter = wc_buf.begin(); iter != wc_buf.end(); iter++)
+          if(iter->wr_id == wr_id){
+            wc = *iter;
+            wc_buf.erase(iter);
+            poll_result = 1;
+            break;
+          }
+      if(poll_result == 0)
+        poll_result = ibv_poll_cq(conn->cq, 1, &wc);
+      if(poll_result == 1 && wc.wr_id != wr_id){
+        wc_buf.push_back(wc);
+        poll_result = 0;
+      }
+      if (poll_result < 0){
+        fprintf(stderr, "poll CQ failed\n");
+        return;
+      }
+      if (poll_result == 0)
+        continue;
+      if (wc.status != IBV_WC_SUCCESS) {
+        fprintf(stderr,
+                "got bad completion with status: 0x%x, vendor syndrome: 0x%x\n",
+                wc.status, wc.vendor_err);
+        return;
+      }
+
+      // polling succeed
+      done_wr.push_back(wr_id);
+      auto req = (GetRequest*)(get_buf() + info.req_ofs);
+      auto res = (GetResponse*)(get_buf() + info.res_ofs);
+
+      auto func = [this, req, res, conn, info] {
+        // Having GetRequest, access local memtable and produce GetResponse.
+        res->value = req->lookup_key * 12345678;
+
+        uint64_t send_id = obtain_wr_id(), recv_id = obtain_wr_id();
+        receive(conn, sizeof(GetRequest), info.req_ofs, recv_id);
+        send(conn, sizeof(GetResponse), info.res_ofs, send_id);
+        poll_completion(conn, send_id);
+        this->wr_info[recv_id] = info;
+      };
+      std::thread thd(func);
+      thd.detach();
+    }
+    for(auto &wr_id: done_wr)
+      wr_info.erase(wr_id);
+  }
+}
+
 bool RDMAServer::service(struct rdma_connection *conn) {
   bool should_close = false;
   int64_t meta_offset = 0, meta_size = 0, mem_offset = 0, mem_size = 0;
@@ -1258,6 +1377,10 @@ bool RDMAServer::service(struct rdma_connection *conn) {
       case 10: {
         LOG_CERR("SERVICE:fetch memtable service");
         fetch_memtable_service(conn);
+      }
+      case 11: {
+        LOG_CERR("SERVICE:register client in get service");
+        register_client_in_get_service_service(conn);
       }
       default:
         fprintf(stderr, "Unknown request type from client: %d\n", req_type);

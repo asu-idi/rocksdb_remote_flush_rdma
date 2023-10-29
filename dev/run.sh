@@ -20,6 +20,8 @@ make rdma_server -j $(nproc)
 make tcp_server -j $(nproc)
 make db_bench -j $(nproc)
 make memtable_test -j $(nproc)
+make sample_server -j $(nproc)
+make sample_client -j $(nproc)
 
 cd $PROJECT_ROOT/dev
 
@@ -31,6 +33,8 @@ cp ../build/rdma_server ./
 cp ../build/remote_flush_test_server ./
 cp ../build/db_bench ./
 cp ../build/memtable_test ./
+cp ../build/sample_server ./
+cp ../build/sample_client ./
 
 rm Log-*
 rm -rf memtable_result/
