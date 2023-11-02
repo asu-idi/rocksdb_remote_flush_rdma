@@ -89,11 +89,11 @@ class RDMAMemNode {
   RDMAMemNode() = default;
   ~RDMAMemNode() { mempool_.clear(); }
   void init(size_t buf_size) { buf_size_ = buf_size; }
-  int allocate(size_t size) {
+  size_t allocate(size_t size) {
     while (true) {
       std::lock_guard<std::mutex> lock(mtx_);
       bool flag = false;
-      int offset = 0;
+      size_t offset = 0;
       if (mempool_.empty()) {
         if (size <= buf_size_)
           offset = 0, flag = true;
@@ -223,9 +223,9 @@ class RDMANode {
                      char *remote_data);
   int post_send(struct rdma_connection *idx, size_t msg_size,
                 ibv_wr_opcode opcode, long long local_offset,
-                long long remote_offset);
+                long long remote_offset, uint64_t wr_id = 0);
   int post_receive(struct rdma_connection *idx, size_t msg_size,
-                   long long local_offset);
+                   long long local_offset, uint64_t wr_id = 0);
   int modify_qp_to_init(struct ibv_qp *qp);
   int modify_qp_to_rtr(struct ibv_qp *qp, uint32_t remote_qpn, uint16_t dlid,
                        uint8_t *dgid);
@@ -242,16 +242,12 @@ class RDMANode {
   struct rdma_connection *sock_connect(const std::string &server_name = "",
                                        u_int32_t tcp_port = 9091);
   int send(struct rdma_connection *idx, size_t msg_size,
-           long long local_offset) {
-    return post_send(idx, msg_size, IBV_WR_SEND, local_offset, 0);
-  }
-  int sendV2(struct rdma_connection *conn, size_t msg_size,
-             long long local_offset, long long remote_offset) {
-    return post_send(conn, msg_size, IBV_WR_SEND, local_offset, remote_offset);
+           long long local_offset, uint64_t wr_id = 0) {
+    return post_send(idx, msg_size, IBV_WR_SEND, local_offset, 0, wr_id);
   }
   int receive(struct rdma_connection *idx, size_t msg_size,
-              long long local_offset) {
-    return post_receive(idx, msg_size, local_offset);
+              long long local_offset, uint64_t wr_id = 0) {
+    return post_receive(idx, msg_size, local_offset, wr_id);
   }
   int rdma_read(struct rdma_connection *idx, size_t msg_size,
                 long long local_offset, long long remote_offset) {
@@ -263,11 +259,14 @@ class RDMANode {
     return post_send(idx, msg_size, IBV_WR_RDMA_WRITE, local_offset,
                      remote_offset);
   }
-  int poll_completion(struct rdma_connection *idx);
+  int poll_completion(struct rdma_connection *idx, uint64_t wr_id = 0);
   char *get_buf() { return res->buf; }
   struct resources *res;
   size_t buf_size;
   struct config_t config;
+  std::list<struct ibv_wc> wc_buf;
+  std::mutex poll_cq_mtx;
+  RDMAMemNode rdma_mem_;
 };
 struct PlacementDriver {
   const int max_background_job_num_{32};
@@ -316,6 +315,16 @@ class RDMAServer : public RDMANode {
   void register_memtable_read_service(struct rdma_connection *idx,
                                       std::thread *t, bool *should_close);
   void fetch_memtable_service(struct rdma_connection *conn);
+  void register_client_in_get_service_service(struct rdma_connection *conn);
+  void poll_receive_completion();
+
+  struct request_info{
+    struct rdma_connection* conn;
+    size_t req_ofs, res_ofs;
+  };
+  std::unordered_map<uint64_t, request_info> wr_info;
+  bool poll_receive_completion_launched = false;
+
   RemoteMemTablePool *remote_memtable_pool_;
   std::unique_ptr<std::mutex> mempool_mtx;
   std::set<std::pair<long long /*offset*/, long long /*len*/>> pinned_mem;
@@ -388,10 +397,10 @@ class RDMAClient : public RDMANode {
                               void *&meta_ptr, int64_t &meta_size,
                               void *&mem_ptr,
                               int64_t &mem_size);  // req_type=10
+  bool register_client_in_get_service_request(struct rdma_connection *conn);
   std::pair<int64_t, int64_t> wait_for_job_request(struct rdma_connection *idx);
   size_t port = -1;
   RegularMemNode memory_;
-  RDMAMemNode rdma_mem_;
 
  private:
   void after_connect_qp(struct rdma_connection *idx) override {}
@@ -574,5 +583,20 @@ class PDClient {
     heartbeatport_ = port;
   }
 };
+
+struct GetRequest {
+  uint32_t lookup_key;
+};
+typedef struct GetRequest GetRequest;
+struct GetResponse {
+  uint64_t value;
+};
+typedef struct GetResponse GetResponse;
+
+#define MAX_NUMBER_OF_PARALLEL_GET_CLIENTS 10u
+#define MAX_PARALLEL_GET_PER_CLIENT 10u
+#define REQUEST_BUFFER_UNIT_SIZE (2ull * (sizeof(rocksdb::GetRequest) >= sizeof(rocksdb::GetResponse) ? sizeof(rocksdb::GetRequest) : sizeof(rocksdb::GetResponse)))
+
+uint64_t obtain_wr_id();
 
 }  // namespace ROCKSDB_NAMESPACE

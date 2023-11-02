@@ -1581,6 +1581,8 @@ if(WITH_DEV)
   # dev/trace_memtable_test.cpp
   dev/rdma_server.cc
   memory/tcp_server.cc
+  dev/sample_server.cc
+  dev/sample_client.cc
   )
   foreach(sourcefile ${DEVELOP})
     message(STATUS "CHECK DEV: ${sourcefile}")
